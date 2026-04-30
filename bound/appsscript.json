@@ -19,25 +19,32 @@
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8",
   "sheets": {
-    "macros": [{
-      "menuName": "BIGBIN2DEC",
-      "functionName": "BIGBIN2DEC"
-    }, {
-      "menuName": "BIGDEC2BIN",
-      "functionName": "BIGDEC2BIN"
-    }, {
-      "menuName": "concatTypedArrays",
-      "functionName": "concatTypedArrays"
-    }, {
-      "menuName": "decrypt",
-      "functionName": "decrypt",
-      "defaultShortcut": "Ctrl+Alt+Shift+1"
-    }, {
-      "menuName": "encrypt",
-      "functionName": "encrypt"
-    }, {
-      "menuName": "onEdit",
-      "functionName": "onEdit"
-    }]
+    "macros": [
+      {
+        "menuName": "BIGBIN2DEC",
+        "functionName": "BIGBIN2DEC"
+      },
+      {
+        "menuName": "BIGDEC2BIN",
+        "functionName": "BIGDEC2BIN"
+      },
+      {
+        "menuName": "concatTypedArrays",
+        "functionName": "concatTypedArrays"
+      },
+      {
+        "menuName": "decrypt",
+        "functionName": "decrypt",
+        "defaultShortcut": "Ctrl+Alt+Shift+1"
+      },
+      {
+        "menuName": "encrypt",
+        "functionName": "encrypt"
+      },
+      {
+        "menuName": "onEdit",
+        "functionName": "onEdit"
+      }
+    ]
   }
 }
