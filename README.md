@@ -155,24 +155,17 @@ python3 update.py
 
 This pulls the creator's full file set, restores your edits, and auto-merges any changes the creator made to `appsscript.json` (new macros, etc.). It warns you if anything needs manual review. If the manifest changed, review and commit it before pushing.
 
-**5. Update `PREVIOUS_VERSION`**
-
-In `bound/onOpen.js`, update the constant at the top:
-
-```javascript
-const PREVIOUS_VERSION = '5.07';  // the version you're migrating FROM
-```
-
-**6. Push**
+**5. Push**
 
 ```bash
 clasp push -f
 ```
 
-**7. Run the migration**
+**6. Run the migration**
 
 - Reload the spreadsheet tab
-- Menu: Upload PokeRogue Data → Migrate from previous version
+- Menu: Upload PokeRogue Data → **Migrate from previous version**
+- Enter the version you're migrating FROM when prompted (e.g. `5.07`)
 - Wait for the completion alert (~2 minutes)
 
 **8. Upload your save**

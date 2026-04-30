@@ -1,5 +1,3 @@
-const PREVIOUS_VERSION = '5.06';
-
 function onOpen() {
 
   ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
@@ -27,17 +25,31 @@ function highlightChanges() { OfflineDexLib.highlightChanges(); }
 function clearHighlights()  { OfflineDexLib.clearHighlights(); }
 
 function runMigration() {
+  const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const match = ss.getName().match(/\d+\.\d+/);
-  if (!match) {
-    SpreadsheetApp.getUi().alert(
-      'Could not determine current version from spreadsheet name "' +
-      ss.getName() + '". Expected format: "Offline RogueDex X.YY".'
-    );
+
+  const destMatch = ss.getName().match(/\d+\.\d+/);
+  if (!destMatch) {
+    ui.alert('Could not determine current version from spreadsheet name "' +
+      ss.getName() + '". Expected format: "Offline RogueDex X.YY".');
     return;
   }
-  const destVersion = match[0];
-  OfflineDexLib.portAll(PREVIOUS_VERSION, destVersion);
+  const destVersion = destMatch[0];
+
+  const response = ui.prompt(
+    'Migrate from previous version',
+    'Enter the version you are migrating FROM (e.g. 5.07):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const sourceVersion = response.getResponseText().trim();
+  if (!sourceVersion.match(/^\d+\.\d+$/)) {
+    ui.alert('"' + sourceVersion + '" doesn\'t look like a version number. Expected format: X.YY');
+    return;
+  }
+
+  OfflineDexLib.portAll(sourceVersion, destVersion);
 }
 
 // ============================================================
