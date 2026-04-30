@@ -1,6 +1,15 @@
 # clasp — Script IDs, never commit these
 **/.clasp.json
 
+# Creator's unmodified bound files — pulled by clasp but not ours to track
+bound/*
+!bound/onOpen.js
+!bound/LoadPlayerData.js
+!bound/UploadPlayerData.html
+!bound/appsscript.json
+!bound/update.py
+!bound/.claspignore
+
 # macOS
 .DS_Store
 
