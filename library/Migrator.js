@@ -12,6 +12,9 @@ const INSERT_COLUMN_L_IN_DAILY_MODE = true;
 const B16_MERGE_RANGE = 'B16:M131';
 
 function portAll(sourceVersion, destVersion) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  resetToastProgress();
+
   const srcId = findFileIdByVersion(sourceVersion);
   const dstId = findFileIdByVersion(destVersion);
   Logger.log('Source: ' + sourceVersion + ' -> ' + srcId);
@@ -22,22 +25,31 @@ function portAll(sourceVersion, destVersion) {
 
   const log = [];
   const safeRun = (label, fn) => {
-    try { fn(); log.push('OK  ' + label); }
-    catch (e) { log.push('ERR ' + label + ': ' + e.message); }
+    startStep(ss, label);
+    try {
+      fn();
+      finishStep();
+      log.push('OK  ' + label);
+    } catch (e) {
+      finishStep();
+      log.push('ERR ' + label + ': ' + e.message);
+    }
   };
 
-  safeRun('1. Quick Checklist header (rows 1-10)', () => portQuickChecklistHeader(src, dst));
-  safeRun('2. Form Checklist sort by column C',    () => sortFormChecklistByDone(dst));
-  safeRun('3. Daily Mode formatting',              () => portDailyModeFormatting(src, dst));
-  safeRun('4. B16 formula and L12:M14 values',     () => portDailyModeCells(src, dst));
-  safeRun('5. Hidden sheets',                      () => portHiddenSheets(src, dst));
+  safeRun('Quick Checklist header', () => portQuickChecklistHeader(src, dst));
+  safeRun('Form Checklist sort',    () => sortFormChecklistByDone(dst));
+  safeRun('Daily Mode formatting',  () => portDailyModeFormatting(src, dst));
+  safeRun('Daily Mode cells',       () => portDailyModeCells(src, dst));
+  safeRun('Hidden sheets',          () => portHiddenSheets(src, dst));
+
+  const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1);
+  const body = LAST_STEP_LABEL
+    ? LAST_STEP_LABEL + ' completed in ' + LAST_STEP_ELAPSED + 's'
+    : '';
+  ss.toast(body, 'Migration complete in ' + totalElapsed + 's', 10);
+  FLOW_START = 0;
 
   Logger.log(log.join('\n'));
-  try {
-    SpreadsheetApp.getUi().alert('Port complete:\n\n' + log.join('\n'));
-  } catch (e) {
-    // No UI context; log already has the summary.
-  }
 }
 
 function portQuickChecklistHeader(src, dst) {
