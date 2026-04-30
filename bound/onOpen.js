@@ -10,7 +10,7 @@ function onOpen() {
     .addItem('Highlight Changes', 'highlightChanges')
     .addItem('Clear Highlights', 'clearHighlights')
     .addSeparator()
-    .addItem('Migrate from previous version', 'runMigration')
+    .addItem('Migrate from Previous Version', 'runMigration')
     .addToUi();
 
   forceUpdate(true);
@@ -37,8 +37,8 @@ function runMigration() {
   const destVersion = destMatch[0];
 
   const response = ui.prompt(
-    'Migrate from previous version',
-    'Enter the version you are migrating from:',
+    'Migrate from Previous Version',
+    'Version you are migrating from:',
     ui.ButtonSet.OK_CANCEL
   );
   if (response.getSelectedButton() !== ui.Button.OK) return;
