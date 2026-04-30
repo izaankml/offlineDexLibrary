@@ -4,14 +4,14 @@
     "libraries": [
       {
         "userSymbol": "OfflineDexLib",
-        "libraryId": "FILL_IN_LIBRARY_SCRIPT_ID",
+        "libraryId": "1vPLtrHsiTIjUsLLjNJoWY968IlnmtjJoVsJES9c3BCPaSKg0-Dwz3UyH",
         "version": "1",
         "developmentMode": false
       },
       {
         "userSymbol": "cCryptoGS",
-        "libraryId": "FILL_IN_CCRYPTOGS_SCRIPT_ID",
-        "version": "3",
+        "libraryId": "1IEkpeS8hsMSVLRdCMprij996zG6ek9UvGwcCJao_hlDMlgbWWvJpONrs",
+        "version": "4",
         "developmentMode": false
       }
     ]
