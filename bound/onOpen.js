@@ -38,7 +38,7 @@ function runMigration() {
 
   const response = ui.prompt(
     'Migrate from previous version',
-    'Enter the version you are migrating FROM (e.g. 5.07):',
+    'Enter the version you are migrating from:',
     ui.ButtonSet.OK_CANCEL
   );
   if (response.getSelectedButton() !== ui.Button.OK) return;
