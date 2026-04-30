@@ -22,6 +22,16 @@ Automation on top of the OfflineDex spreadsheet: save-change highlighting and pe
 
 ---
 
+## First-time setup (after cloning)
+
+```bash
+./install.sh
+```
+
+Wires up the git hooks so `git push` auto-runs `clasp push` for whichever project changed.
+
+---
+
 ## Prerequisites
 
 - Node.js v20+
