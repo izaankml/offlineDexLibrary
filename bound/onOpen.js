@@ -3,7 +3,7 @@ function onOpen() {
   ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
 
   SpreadsheetApp.getUi()
-    .createMenu('Upload PokeRogue Data')
+    .createMenu('RogueDex Functions')
     .addItem('Upload Data', 'openAttachmentDialog')
     .addSeparator()
     .addItem('Snapshot Data', 'snapshot')

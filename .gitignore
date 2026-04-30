@@ -7,5 +7,5 @@
 # IDE
 .vscode/
 
-# Node (if you ever add local tooling)
+# Node
 node_modules/
