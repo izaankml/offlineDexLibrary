@@ -85,6 +85,9 @@ const TRACKERS = [
     headerRows: 2,
     // L, U, AA, AB, AG, AI, AL, AO, BO, CQ, EE
     borderColumns: [12, 21, 27, 28, 33, 35, 38, 41, 67, 95, 135],
+    // E, N, AB, AG, AH — auto-calculated columns, never highlight
+    excludeDisplayColumns: new Set([5, 14, 28, 33, 34]),
+    useFilter: true,
   },
   {
     key: 'FullDex',
@@ -97,6 +100,9 @@ const TRACKERS = [
     headerRows: 2,
     // O, X, AD, AE, AJ, AL, AO, AR, BR, CT, EH (+3 from Starter Dex)
     borderColumns: [15, 24, 30, 31, 36, 38, 41, 44, 70, 98, 138],
+    // H, Q, AE, AJ, AK — auto-calculated columns, never highlight (+3 from Starter Dex)
+    excludeDisplayColumns: new Set([8, 17, 31, 36, 37]),
+    useFilter: true,
   },
 ];
 
@@ -242,6 +248,7 @@ function applyHighlightsForTracker(ss, t) {
 
   const displayCols = Object.values(t.columnMap);
   const displayMaxCol = Math.max(...displayCols);
+  const markerCol = t.useFilter ? displayMaxCol + 1 : null;
 
   let totalChanged = 0;
   for (let offset = 0; offset < snapDataRows; offset += CHUNK_ROWS) {
@@ -253,17 +260,21 @@ function applyHighlightsForTracker(ss, t) {
     const currentValues = data.getRange(dataRow, minDataCol, chunkSize, dataColCount).getValues();
 
     const backgrounds = [];
+    const rowChanged = [];
     for (let r = 0; r < chunkSize; r++) {
       backgrounds.push(new Array(displayMaxCol).fill(null));
+      rowChanged.push(false);
     }
 
     for (let r = 0; r < chunkSize; r++) {
       for (const dataColStr of Object.keys(t.columnMap)) {
         const dataCol = parseInt(dataColStr, 10);
         const displayCol = t.columnMap[dataCol];
+        if (t.excludeDisplayColumns && t.excludeDisplayColumns.has(displayCol)) continue;
         const idx = dataCol - minDataCol;
         if (String(snapValues[r][idx]) !== String(currentValues[r][idx])) {
           backgrounds[r][displayCol - 1] = HIGHLIGHT_COLOR;
+          rowChanged[r] = true;
           totalChanged++;
         }
       }
@@ -278,6 +289,12 @@ function applyHighlightsForTracker(ss, t) {
         }
       }
     }
+
+    if (markerCol) {
+      display.getRange(displayRow, markerCol, chunkSize, 1)
+        .setValues(rowChanged.map(changed => [changed ? '●' : '']));
+    }
+
     SpreadsheetApp.flush();
   }
 
@@ -294,7 +311,13 @@ function clearHighlightsForTracker(ss, t) {
 
   const displayCols = Object.values(t.columnMap);
   const maxCol = Math.max(...displayCols);
+  const markerCol = t.useFilter ? maxCol + 1 : null;
   const numRows = lastRow - t.displayFirstRow + 1;
+
+  if (markerCol) {
+    display.getRange(t.displayFirstRow, markerCol, numRows, 1).clearContent();
+    SpreadsheetApp.flush();
+  }
 
   for (let offset = 0; offset < numRows; offset += CHUNK_ROWS) {
     const chunkSize = Math.min(CHUNK_ROWS, numRows - offset);

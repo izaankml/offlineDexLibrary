@@ -71,8 +71,7 @@ def main():
         print(f'\n  WARNING: creator changed {", ".join(warned)} — check manually.')
 
     print('\n── Next steps ─────────────────────────────────')
-    print('  1. Update PREVIOUS_VERSION in onOpen.js')
-    print('  2. clasp push -f')
+    print('  1. clasp push -f')
 
 
 if __name__ == '__main__':

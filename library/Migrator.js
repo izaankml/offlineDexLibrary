@@ -42,6 +42,7 @@ function portAll(sourceVersion, destVersion) {
   safeRun('Formatting Daily Mode',      () => portDailyModeFormatting(src, dst));
   safeRun('Updating Daily Mode Cells',  () => portDailyModeCells(src, dst));
   safeRun('Hiding sheets',              () => portHiddenSheets(src, dst));
+  safeRun('Creating filter views',      () => createChangesFilterViews(dst));
 
   const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1);
   const body = LAST_STEP_LABEL
@@ -157,12 +158,14 @@ function portDailyModeCells(src, dst) {
   mergeRange.breakApart();
   mergeRange.merge();
 
+  const b16Cell = dSheet.getRange('B16');
   const b16Formula = sSheet.getRange('B16').getFormula();
   if (b16Formula) {
-    dSheet.getRange('B16').setFormula(b16Formula);
+    b16Cell.setFormula(b16Formula);
   } else {
-    dSheet.getRange('B16').setValue(sSheet.getRange('B16').getValue());
+    b16Cell.setValue(sSheet.getRange('B16').getValue());
   }
+  b16Cell.setVerticalAlignment('top');
 
   const srcBlock = sSheet.getRange('L12:M14');
   const formulas = srcBlock.getFormulas();
@@ -186,6 +189,65 @@ function portHiddenSheets(src, dst) {
     }
   });
   Logger.log('Hidden in dst: ' + (hiddenList.join(', ') || '(none)'));
+}
+
+function createChangesFilterViews(dst) {
+  const dstId = dst.getId();
+  const VIEW_NAME = 'View Changes';
+
+  const spreadsheet = Sheets.Spreadsheets.get(dstId, {
+    fields: 'sheets(properties(sheetId,title),filterViews(filterViewId,title))'
+  });
+
+  const sheetInfoMap = {};
+  (spreadsheet.sheets || []).forEach(s => {
+    sheetInfoMap[s.properties.title] = {
+      sheetId: s.properties.sheetId,
+      filterViews: s.filterViews || []
+    };
+  });
+
+  const requests = [];
+  TRACKERS.filter(t => t.useFilter).forEach(t => {
+    const info = sheetInfoMap[t.displaySheet];
+    if (!info) return;
+
+    const sheet = dst.getSheetByName(t.displaySheet);
+    const markerCol1 = Math.max(...Object.values(t.columnMap)) + 1;   // 1-based
+    const headerStartRow1 = t.displayFirstRow - (t.headerRows || 1);  // 1-based
+
+    info.filterViews.forEach(fv => {
+      if (fv.title === VIEW_NAME) {
+        requests.push({ deleteFilterView: { filterId: fv.filterViewId } });
+      }
+    });
+
+    requests.push({
+      addFilterView: {
+        filter: {
+          title: VIEW_NAME,
+          range: {
+            sheetId: info.sheetId,
+            startRowIndex: headerStartRow1 - 1,  // 0-based inclusive
+            endRowIndex: sheet.getMaxRows(),      // 0-based exclusive
+            startColumnIndex: 0,
+            endColumnIndex: markerCol1,           // 0-based exclusive
+          },
+          criteria: {
+            [String(markerCol1 - 1)]: {           // 0-based column index as string key
+              condition: { type: 'NOT_BLANK' }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  if (requests.length > 0) {
+    Sheets.Spreadsheets.batchUpdate({ requests }, dstId);
+    Logger.log('Created "' + VIEW_NAME + '" filter views on: ' +
+      TRACKERS.filter(t => t.useFilter).map(t => t.displaySheet).join(', '));
+  }
 }
 
 function findFileIdByVersion(version) {

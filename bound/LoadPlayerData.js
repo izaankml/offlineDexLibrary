@@ -131,7 +131,7 @@ function writeJsonToSheet(jsonContent) {
 function uploadFile(obj) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   OfflineDexLib.resetToastProgress();
-  OfflineDexLib.startStep(ss, 'Importing save data');
+  OfflineDexLib.startStep(ss, 'Importing Save Data');
 
   var blob = createBlob(obj);
   var plaintext = decryptFile(blob);
