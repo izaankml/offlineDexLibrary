@@ -1,0 +1,21 @@
+{
+  "timeZone": "America/Los_Angeles",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "OfflineDexLib",
+        "libraryId": "FILL_IN_LIBRARY_SCRIPT_ID",
+        "version": "1",
+        "developmentMode": false
+      },
+      {
+        "userSymbol": "cCryptoGS",
+        "libraryId": "FILL_IN_CCRYPTOGS_SCRIPT_ID",
+        "version": "3",
+        "developmentMode": false
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}
