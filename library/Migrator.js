@@ -15,13 +15,14 @@ function portAll(sourceVersion, destVersion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   resetToastProgress();
 
+  startStep(ss, 'Looking up spreadsheets');
   const srcId = findFileIdByVersion(sourceVersion);
   const dstId = findFileIdByVersion(destVersion);
   Logger.log('Source: ' + sourceVersion + ' -> ' + srcId);
   Logger.log('Dest:   ' + destVersion + ' -> ' + dstId);
-
   const src = SpreadsheetApp.openById(srcId);
   const dst = SpreadsheetApp.openById(dstId);
+  finishStep();
 
   const log = [];
   const safeRun = (label, fn) => {
