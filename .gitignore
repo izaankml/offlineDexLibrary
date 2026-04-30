@@ -4,5 +4,8 @@
 # macOS
 .DS_Store
 
+# IDE
+.vscode/
+
 # Node (if you ever add local tooling)
 node_modules/

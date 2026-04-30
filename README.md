@@ -137,25 +137,15 @@ Edit (or create) `bound/.clasp.json`:
 }
 ```
 
-**4. Pull the creator's files**
-
-This fetches ALL files from the fresh bound script, including `ImportDB.js` and `StatusSheetGenerator.js` that you don't modify but that must be present for `clasp push` to not delete them.
+**4. Pull, restore, and merge**
 
 ```bash
-clasp pull
+python3 update.py
 ```
 
-**5. Restore your files**
+This pulls the creator's full file set, restores your edits, and auto-merges any changes the creator made to `appsscript.json` (new macros, etc.). It warns you if anything needs manual review. If the manifest changed, review and commit it before pushing.
 
-`clasp pull` overwrites your edits with the creator's originals. Restore your versions:
-
-```bash
-git restore .
-```
-
-This brings back `onOpen.js`, `LoadPlayerData.js`, `UploadPlayerData.html`, and `appsscript.json` (with both library dependencies).
-
-**6. Update `PREVIOUS_VERSION`**
+**5. Update `PREVIOUS_VERSION`**
 
 In `bound/onOpen.js`, update the constant at the top:
 
@@ -163,19 +153,19 @@ In `bound/onOpen.js`, update the constant at the top:
 const PREVIOUS_VERSION = '5.07';  // the version you're migrating FROM
 ```
 
-**7. Push**
+**6. Push**
 
 ```bash
 clasp push -f
 ```
 
-**8. Run the migration**
+**7. Run the migration**
 
 - Reload the spreadsheet tab
 - Menu: Upload PokeRogue Data → Migrate from previous version
 - Wait for the completion alert (~2 minutes)
 
-**9. Upload your save**
+**8. Upload your save**
 
 - Menu: Upload PokeRogue Data → Upload Data
 
