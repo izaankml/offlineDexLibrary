@@ -36,11 +36,11 @@ function portAll(sourceVersion, destVersion) {
     }
   };
 
-  safeRun('Quick Checklist header', () => portQuickChecklistHeader(src, dst));
-  safeRun('Form Checklist sort',    () => sortFormChecklistByDone(dst));
-  safeRun('Daily Mode formatting',  () => portDailyModeFormatting(src, dst));
-  safeRun('Daily Mode cells',       () => portDailyModeCells(src, dst));
-  safeRun('Hidden sheets',          () => portHiddenSheets(src, dst));
+  safeRun('Formatting Quick Checklist', () => portQuickChecklistHeader(src, dst));
+  safeRun('Formatting Form Checklist',  () => sortFormChecklistByDone(dst));
+  safeRun('Formatting Daily Mode',      () => portDailyModeFormatting(src, dst));
+  safeRun('Updating Daily Mode Cells',  () => portDailyModeCells(src, dst));
+  safeRun('Hiding sheets',              () => portHiddenSheets(src, dst));
 
   const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1);
   const body = LAST_STEP_LABEL
