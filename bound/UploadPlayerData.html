@@ -1,66 +1,73 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
+  <head>
+    <base target="_top" />
+    <link
+      rel="stylesheet"
+      href="https://ssl.gstatic.com/docs/script/css/add-ons1.css"
+    />
+  </head>
 
-<head>
-  <base target="_top">
-  <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
-</head>
+  <body>
+    <input type="file" name="upload" id="files" />
+    <input
+      type="button"
+      id="uploadButton"
+      value="Upload"
+      onclick="getFiles()"
+      class="action"
+    />
+    <br /><br />
+    <div id="progress"></div>
+    <script>
+      function getFiles() {
+        document.getElementById('uploadButton').disabled = true
+        const progressText = document.getElementById('progress')
+        const f = document.getElementById('files')
+        const file = f.files[0]
 
-<body>
-  <input type="file" name="upload" id="files"/>
-  <input type='button' id="uploadButton" value='Upload' onclick='getFiles()' class="action">
-  <br><br>
-  <div id="progress"> </div>
-  <script>
-    function getFiles() {
-      document.getElementById("uploadButton").disabled = true;
-      const progressText = document.getElementById("progress");
-      const f = document.getElementById('files');
-      const file = f.files[0];
+        if (!file) {
+          alert('No file selected.')
+          return
+        }
 
-      if (!file) {
-        alert('No file selected.');
-        return;
+        const fr = new FileReader()
+
+        fr.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const percentLoaded = Math.round((e.loaded / e.total) * 100)
+            progressText.innerHTML = `Reading file: ${percentLoaded}%`
+          }
+        }
+
+        fr.onload = (e) => {
+          try {
+            progressText.innerHTML = 'Uploading file...'
+            const data = e.target.result.split(',')
+            const obj = {
+              fileName: file.name,
+              mimeType: data[0].match(/:(\w.+);/)[1],
+              data: data[1],
+            }
+            google.script.run.uploadFile(obj)
+            // Close after a brief delay so the dispatch fully registers
+            // server-side. Server-side processing continues in the background.
+            setTimeout(() => google.script.host.close(), 500)
+          } catch (error) {
+            console.error('Error during file processing:', error)
+            progressText.innerHTML = 'Failed to process file'
+            document.getElementById('uploadButton').disabled = false
+          }
+        }
+
+        fr.onerror = (e) => {
+          console.error('Error reading file:', fr.error)
+          progressText.innerHTML = 'Failed to read file'
+          document.getElementById('uploadButton').disabled = false
+        }
+
+        fr.readAsDataURL(file)
       }
-
-      const fr = new FileReader();
-
-      fr.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const percentLoaded = Math.round((e.loaded / e.total) * 100);
-          progressText.innerHTML = `Reading file: ${percentLoaded}%`;
-        }
-      };
-
-      fr.onload = (e) => {
-        try {
-          progressText.innerHTML = "Uploading file...";
-          const data = e.target.result.split(",");
-          const obj = {
-            fileName: file.name,
-            mimeType: data[0].match(/:(\w.+);/)[1],
-            data: data[1]
-          };
-          google.script.run.uploadFile(obj);
-          // Close after a brief delay so the dispatch fully registers
-          // server-side. Server-side processing continues in the background.
-          setTimeout(() => google.script.host.close(), 500);
-        } catch (error) {
-          console.error('Error during file processing:', error);
-          progressText.innerHTML = "Failed to process file";
-          document.getElementById("uploadButton").disabled = false;
-        }
-      };
-
-      fr.onerror = (e) => {
-        console.error('Error reading file:', fr.error);
-        progressText.innerHTML = "Failed to read file";
-        document.getElementById("uploadButton").disabled = false;
-      };
-
-      fr.readAsDataURL(file);
-    }
-  </script>
-</body>
-
+    </script>
+  </body>
 </html>

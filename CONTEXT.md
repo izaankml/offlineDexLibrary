@@ -34,6 +34,7 @@ offlinedex-scripts/
 ```
 
 Notes:
+
 - clasp uses `.js` locally; converts to `.gs` on push
 - `.clasp.json` is gitignored because it contains Script IDs
 
@@ -57,7 +58,7 @@ const TRACKERS = [
     displaySheet: 'Quick Checklist',
     dataFirstRow: 12,
     displayFirstRow: 12,
-    columnMap: buildShiftMap(4, 11, 4),     // D-K -> H-O (+4 shift)
+    columnMap: buildShiftMap(4, 11, 4), // D-K -> H-O (+4 shift)
     includeHeaders: true,
     headerRows: 1,
     borderColumns: [],
@@ -68,7 +69,7 @@ const TRACKERS = [
     displaySheet: 'Starter Dex Checklist',
     dataFirstRow: 3,
     displayFirstRow: 4,
-    columnMap: buildShiftMap(10, 141, -6),  // J-EK -> D-EE (-6 shift)
+    columnMap: buildShiftMap(10, 141, -6), // J-EK -> D-EE (-6 shift)
     includeHeaders: true,
     headerRows: 2,
     // L, U, AA, AB, AG, AI, AL, AO, BO, CQ, EE
@@ -80,18 +81,19 @@ const TRACKERS = [
     displaySheet: 'Full Dex Checklist',
     dataFirstRow: 3,
     displayFirstRow: 4,
-    columnMap: buildShiftMap(7, 138, 0),    // G-EH -> G-EH (no shift)
+    columnMap: buildShiftMap(7, 138, 0), // G-EH -> G-EH (no shift)
     includeHeaders: true,
     headerRows: 2,
     // O, X, AD, AE, AJ, AL, AO, AR, BR, CT, EH (+3 from Starter Dex)
     borderColumns: [15, 24, 30, 31, 36, 38, 41, 44, 70, 98, 138],
   },
-];
+]
 ```
 
 Why these column shifts: the display sheets have extra leading columns (dex#, name, etc.) that the data sheets don't have. The shift between data column and display column is consistent within a sheet but varies per tracker because each display sheet has a different number of leading columns.
 
 **The flow on each save upload:**
+
 1. `clearHighlights()` - wipe orange borders from previous run, redraw structural black borders
 2. `highlightChanges()` - compare current data values to snapshot, paint thick green borders on changed cells
 3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
@@ -152,23 +154,23 @@ I only modify `uploadFile()` to wrap the import in toast tracking and trigger `p
 
 ```javascript
 function uploadFile(obj) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  OfflineDexLib.resetToastProgress();
-  OfflineDexLib.startStep(ss, 'Importing save data');
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  OfflineDexLib.resetToastProgress()
+  OfflineDexLib.startStep(ss, 'Importing save data')
 
-  var blob = createBlob(obj);
-  var plaintext = decryptFile(blob);
-  var jsonContent = parseJsonContent(plaintext);
-  writeJsonToSheet(jsonContent);
-  SpreadsheetApp.flush();
-  Utilities.sleep(2000);  // give formulas time to recalculate
+  var blob = createBlob(obj)
+  var plaintext = decryptFile(blob)
+  var jsonContent = parseJsonContent(plaintext)
+  writeJsonToSheet(jsonContent)
+  SpreadsheetApp.flush()
+  Utilities.sleep(2000) // give formulas time to recalculate
 
-  OfflineDexLib.finishStep();
+  OfflineDexLib.finishStep()
 
   try {
-    OfflineDexLib.processChanges();
+    OfflineDexLib.processChanges()
   } catch (e) {
-    Logger.log('processChanges failed: ' + e.message);
+    Logger.log('processChanges failed: ' + e.message)
   }
 }
 ```
@@ -180,8 +182,8 @@ The 2-second sleep is important: after `writeJsonToSheet` fills in `newJSON`, fo
 The creator's dialog. I modify `fr.onload` to dispatch `uploadFile` and close the dialog after a 500ms delay so the dialog dismisses while server-side processing continues. Without the delay, closing too fast cancels the request.
 
 ```javascript
-google.script.run.uploadFile(obj);
-setTimeout(() => google.script.host.close(), 500);
+google.script.run.uploadFile(obj)
+setTimeout(() => google.script.host.close(), 500)
 ```
 
 ### Files I don't modify
