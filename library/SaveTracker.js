@@ -85,8 +85,8 @@ const TRACKERS = [
     headerRows: 2,
     // L, U, AA, AB, AG, AI, AL, AO, BO, CQ, EE
     borderColumns: [12, 21, 27, 28, 33, 35, 38, 41, 67, 95, 135],
-    // E, N, AB, AG, AH — auto-calculated columns, never highlight
-    excludeDisplayColumns: new Set([5, 14, 28, 33, 34]),
+    // E, AG, AH, AI — auto-calculated columns, never highlight
+    excludeDisplayColumns: new Set([5, 33, 34, 35]),
     useFilter: true,
   },
   {
@@ -100,8 +100,8 @@ const TRACKERS = [
     headerRows: 2,
     // O, X, AD, AE, AJ, AL, AO, AR, BR, CT, EH (+3 from Starter Dex)
     borderColumns: [15, 24, 30, 31, 36, 38, 41, 44, 70, 98, 138],
-    // H, Q, AE, AJ, AK — auto-calculated columns, never highlight (+3 from Starter Dex)
-    excludeDisplayColumns: new Set([8, 17, 31, 36, 37]),
+    // H, AJ, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
+    excludeDisplayColumns: new Set([8, 36, 37, 38]),
     useFilter: true,
   },
 ]
