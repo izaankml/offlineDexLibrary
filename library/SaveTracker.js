@@ -9,7 +9,7 @@
 //   runProcessChanges() - standalone full flow with reset
 //   snapshot()          - capture current values to snapshots
 //   highlightChanges()  - paint cells that differ from snapshot
-//   clearHighlights()   - clear highlight borders, redraw structural
+//   clearHighlights()   - clear highlight backgrounds
 //
 //   resetToastProgress()- start a toast flow (called by uploadFile)
 //   startStep(ss, lbl)  - mark start of a tracked step
@@ -17,6 +17,7 @@
 // ============================================================
 
 const HIGHLIGHT_COLOR = '#38761d' // dark green 1
+const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#b45f06' // dark orange 2
 const CHUNK_ROWS = 200
 
 // Module-level state for toast progress tracking.
@@ -25,6 +26,10 @@ let LAST_STEP_ELAPSED = ''
 let CURRENT_STEP_START = 0
 let FLOW_START = 0
 
+/**
+ * Start a new toast-tracked flow. Call once at the top of a multi-step
+ * operation (e.g., uploadFile) before the first startStep.
+ */
 function resetToastProgress() {
   LAST_STEP_LABEL = ''
   LAST_STEP_ELAPSED = ''
@@ -32,6 +37,12 @@ function resetToastProgress() {
   FLOW_START = Date.now()
 }
 
+/**
+ * Mark the start of a tracked step. Shows a sticky toast whose title is the
+ * new step's label and whose body summarizes the previous step's timing.
+ * @param {Spreadsheet} ss
+ * @param {string} label
+ */
 function startStep(ss, label) {
   const title = label
   const body = LAST_STEP_LABEL
@@ -42,10 +53,19 @@ function startStep(ss, label) {
   LAST_STEP_LABEL = label
 }
 
+/** Record how long the in-progress step took, in seconds (one decimal). */
 function finishStep() {
   LAST_STEP_ELAPSED = ((Date.now() - CURRENT_STEP_START) / 1000).toFixed(1)
 }
 
+/**
+ * Run `fn` as part of an outer flow if one exists, otherwise as a self-managed
+ * standalone flow: reset toast state before, show a completion toast after.
+ * Lets the public snapshot/highlight/clear entry points be usable either way.
+ * @param {Spreadsheet} ss
+ * @param {string} label - used in the standalone completion toast
+ * @param {function():void} fn
+ */
 function runStandaloneIfNeeded(ss, label, fn) {
   if (FLOW_START) {
     fn()
@@ -53,12 +73,21 @@ function runStandaloneIfNeeded(ss, label, fn) {
   }
   resetToastProgress()
   fn()
+  finishFlow(ss, label + ' done')
+}
+
+/**
+ * Show the final "X in Ns" toast for the current flow and clear FLOW_START
+ * so the next entry point starts a fresh flow.
+ * @param {Spreadsheet} ss
+ * @param {string} title - the leading phrase; total elapsed is appended
+ */
+function finishFlow(ss, title) {
   const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1)
-  const title = label + ' done in ' + totalElapsed + 's'
   const body = LAST_STEP_LABEL
     ? LAST_STEP_LABEL + ' completed in ' + LAST_STEP_ELAPSED + 's'
     : ''
-  ss.toast(body, title, 5)
+  ss.toast(body, title + ' in ' + totalElapsed + 's', 5)
   FLOW_START = 0
 }
 
@@ -72,7 +101,8 @@ const TRACKERS = [
     columnMap: buildShiftMap(4, 11, 4),
     includeHeaders: true,
     headerRows: 1,
-    borderColumns: [],
+    highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
+    useFilter: true,
   },
   {
     key: 'StarterDex',
@@ -83,8 +113,6 @@ const TRACKERS = [
     columnMap: buildShiftMap(10, 141, -6),
     includeHeaders: true,
     headerRows: 2,
-    // L, U, AA, AB, AG, AI, AL, AO, BO, CQ, EE
-    borderColumns: [12, 21, 27, 28, 33, 35, 38, 41, 67, 95, 135],
     // E, AG, AH, AI — auto-calculated columns, never highlight
     excludeDisplayColumns: new Set([5, 33, 34, 35]),
     useFilter: true,
@@ -98,14 +126,20 @@ const TRACKERS = [
     columnMap: buildShiftMap(7, 138, 0),
     includeHeaders: true,
     headerRows: 2,
-    // O, X, AD, AE, AJ, AL, AO, AR, BR, CT, EH (+3 from Starter Dex)
-    borderColumns: [15, 24, 30, 31, 36, 38, 41, 44, 70, 98, 138],
     // H, AJ, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
     excludeDisplayColumns: new Set([8, 36, 37, 38]),
     useFilter: true,
   },
 ]
 
+/**
+ * Build a column map for a contiguous range of data columns shifted to
+ * display columns. `{dataCol: dataCol + shift}` for every col in [start, end].
+ * @param {number} dataStart - first data column (1-based)
+ * @param {number} dataEnd - last data column (1-based, inclusive)
+ * @param {number} shift - displayCol - dataCol
+ * @return {Object<number, number>}
+ */
 function buildShiftMap(dataStart, dataEnd, shift) {
   const map = {}
   for (let c = dataStart; c <= dataEnd; c++) {
@@ -114,25 +148,29 @@ function buildShiftMap(dataStart, dataEnd, shift) {
   return map
 }
 
+/** Standalone entry point: resets toast state, then runs the full flow. */
 function runProcessChanges() {
   resetToastProgress()
   processChanges()
 }
 
+/**
+ * Full save-upload flow: clear stale highlights, paint cells that changed
+ * since the last snapshot, then capture a new snapshot for next time.
+ * Assumes the caller (uploadFile or runProcessChanges) already reset toast state.
+ */
 function processChanges() {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   clearHighlights()
   highlightChanges()
   snapshot()
-  const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1)
-  const title = 'All sheets processed in ' + totalElapsed + 's'
-  const body = LAST_STEP_LABEL
-    ? LAST_STEP_LABEL + ' completed in ' + LAST_STEP_ELAPSED + 's'
-    : ''
-  ss.toast(body, title, 5)
-  FLOW_START = 0
+  finishFlow(ss, 'All sheets processed')
 }
 
+/**
+ * Public entry: capture the current values of every tracker's data sheet into
+ * its hidden `_snapshot_<key>` sheet. Used as the baseline for the next diff.
+ */
 function snapshot() {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   runStandaloneIfNeeded(ss, 'Snapshot', () => {
@@ -147,27 +185,12 @@ function snapshot() {
   })
 }
 
-function highlightChanges() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  runStandaloneIfNeeded(ss, 'Highlight changes', () => {
-    TRACKERS.forEach((t) => {
-      try {
-        applyHighlightsForTracker(ss, t)
-      } catch (e) {
-        Logger.log('Highlight failed for ' + t.key + ': ' + e.message)
-        throw e
-      }
-    })
-  })
-}
-
-function clearHighlights() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  runStandaloneIfNeeded(ss, 'Clear highlights', () => {
-    TRACKERS.forEach((t) => clearHighlightsForTracker(ss, t))
-  })
-}
-
+/**
+ * Write a single tracker's current data values into its hidden snapshot sheet,
+ * creating the sheet on first run. Reads/writes in CHUNK_ROWS-sized batches.
+ * @param {Spreadsheet} ss
+ * @param {Object} t - a TRACKERS entry
+ */
 function captureSnapshotForTracker(ss, t) {
   startStep(ss, 'Snapshotting ' + t.displaySheet)
   const data = ss.getSheetByName(t.dataSheet)
@@ -216,7 +239,6 @@ function captureSnapshotForTracker(ss, t) {
     snap
       .getRange(snapDataStartRow + offset, minDataCol, chunkSize, dataColCount)
       .setValues(values)
-    SpreadsheetApp.flush()
   }
 
   if (minDataCol > 1) {
@@ -237,7 +259,34 @@ function captureSnapshotForTracker(ss, t) {
   )
 }
 
+/**
+ * Public entry: diff each tracker's data sheet against its snapshot and paint
+ * the highlight color onto the matching display cells. Also writes a marker
+ * column ('●') on changed rows for filter-view use.
+ */
+function highlightChanges() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  runStandaloneIfNeeded(ss, 'Highlight changes', () => {
+    TRACKERS.forEach((t) => {
+      try {
+        applyHighlightsForTracker(ss, t)
+      } catch (e) {
+        Logger.log('Highlight failed for ' + t.key + ': ' + e.message)
+        throw e
+      }
+    })
+  })
+}
+
+/**
+ * Diff a single tracker's snapshot against current data and paint changed
+ * cells on the display sheet. Skips columns in `excludeDisplayColumns` and
+ * writes a per-row marker in the column after `displayMaxCol` when `useFilter`.
+ * @param {Spreadsheet} ss
+ * @param {Object} t - a TRACKERS entry
+ */
 function applyHighlightsForTracker(ss, t) {
+  const highlightColor = t.highlightColor || HIGHLIGHT_COLOR
   startStep(ss, 'Highlighting ' + t.displaySheet)
   const data = ss.getSheetByName(t.dataSheet)
   const display = ss.getSheetByName(t.displaySheet)
@@ -266,6 +315,22 @@ function applyHighlightsForTracker(ss, t) {
   const displayMaxCol = Math.max(...displayCols)
   const markerCol = t.useFilter ? displayMaxCol + 1 : null
 
+  if (markerCol) {
+    display.hideColumns(markerCol)
+  }
+
+  const cellMappings = []
+  for (const dataCol of dataCols) {
+    const displayCol = t.columnMap[dataCol]
+    if (t.excludeDisplayColumns && t.excludeDisplayColumns.has(displayCol)) {
+      continue
+    }
+    cellMappings.push({
+      idx: dataCol - minDataCol,
+      displayIdx: displayCol - 1,
+    })
+  }
+
   let totalChanged = 0
   for (let offset = 0; offset < snapDataRows; offset += CHUNK_ROWS) {
     const chunkSize = Math.min(CHUNK_ROWS, snapDataRows - offset)
@@ -287,46 +352,26 @@ function applyHighlightsForTracker(ss, t) {
     }
 
     for (let r = 0; r < chunkSize; r++) {
-      for (const dataColStr of Object.keys(t.columnMap)) {
-        const dataCol = parseInt(dataColStr, 10)
-        const displayCol = t.columnMap[dataCol]
-        if (t.excludeDisplayColumns && t.excludeDisplayColumns.has(displayCol))
-          continue
-        const idx = dataCol - minDataCol
-        if (String(snapValues[r][idx]) !== String(currentValues[r][idx])) {
-          backgrounds[r][displayCol - 1] = HIGHLIGHT_COLOR
+      const snapRow = snapValues[r]
+      const currentRow = currentValues[r]
+      for (const m of cellMappings) {
+        if (String(snapRow[m.idx]) !== String(currentRow[m.idx])) {
+          backgrounds[r][m.displayIdx] = highlightColor
           rowChanged[r] = true
           totalChanged++
         }
       }
     }
 
-    for (let r = 0; r < chunkSize; r++) {
-      for (let c = 0; c < displayMaxCol; c++) {
-        if (backgrounds[r][c] === HIGHLIGHT_COLOR) {
-          display
-            .getRange(displayRow + r, c + 1)
-            .setBorder(
-              true,
-              true,
-              true,
-              true,
-              false,
-              false,
-              HIGHLIGHT_COLOR,
-              SpreadsheetApp.BorderStyle.SOLID_THICK
-            )
-        }
-      }
-    }
+    display
+      .getRange(displayRow, 1, chunkSize, displayMaxCol)
+      .setBackgrounds(backgrounds)
 
     if (markerCol) {
       display
         .getRange(displayRow, markerCol, chunkSize, 1)
         .setValues(rowChanged.map((changed) => [changed ? '●' : '']))
     }
-
-    SpreadsheetApp.flush()
   }
 
   finishStep()
@@ -340,6 +385,46 @@ function applyHighlightsForTracker(ss, t) {
   )
 }
 
+/** Public entry: clear highlight backgrounds (and markers) on every tracker. */
+function clearHighlights() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  runStandaloneIfNeeded(ss, 'Clear highlights', () => {
+    TRACKERS.forEach((t) => clearHighlightsForTracker(ss, t))
+  })
+}
+
+/**
+ * Collapse a sorted list of row offsets into contiguous {start, count} runs,
+ * so we can clear them in a few large ranges instead of one call per row.
+ * @param {number[]} sortedOffsets
+ * @return {{start: number, count: number}[]}
+ */
+function toRuns(sortedOffsets) {
+  const runs = []
+  let i = 0
+  while (i < sortedOffsets.length) {
+    const start = sortedOffsets[i]
+    let end = start
+    while (
+      i + 1 < sortedOffsets.length &&
+      sortedOffsets[i + 1] === sortedOffsets[i] + 1
+    ) {
+      i++
+      end = sortedOffsets[i]
+    }
+    runs.push({ start, count: end - start + 1 })
+    i++
+  }
+  return runs
+}
+
+/**
+ * Clear highlight backgrounds for one tracker. When `useFilter` is set, reads
+ * the marker column to clear only the rows that were actually highlighted
+ * (much faster than blanking every row); otherwise clears in chunks.
+ * @param {Spreadsheet} ss
+ * @param {Object} t - a TRACKERS entry
+ */
 function clearHighlightsForTracker(ss, t) {
   startStep(ss, 'Clearing ' + t.displaySheet)
   const display = ss.getSheetByName(t.displaySheet)
@@ -353,38 +438,32 @@ function clearHighlightsForTracker(ss, t) {
   const numRows = lastRow - t.displayFirstRow + 1
 
   if (markerCol) {
+    const markerValues = display
+      .getRange(t.displayFirstRow, markerCol, numRows, 1)
+      .getValues()
+
+    const changedOffsets = []
+    for (let r = 0; r < numRows; r++) {
+      if (markerValues[r][0] !== '') changedOffsets.push(r)
+    }
+
+    if (changedOffsets.length > 0) {
+      const runs = toRuns(changedOffsets)
+      runs.forEach(({ start, count }) => {
+        display
+          .getRange(t.displayFirstRow + start, 1, count, maxCol)
+          .setBackground(null)
+      })
+    }
+
     display.getRange(t.displayFirstRow, markerCol, numRows, 1).clearContent()
-    SpreadsheetApp.flush()
-  }
-
-  for (let offset = 0; offset < numRows; offset += CHUNK_ROWS) {
-    const chunkSize = Math.min(CHUNK_ROWS, numRows - offset)
-    const range = display.getRange(
-      t.displayFirstRow + offset,
-      1,
-      chunkSize,
-      maxCol
-    )
-    range.setBackground(null)
-    range.setBorder(false, false, false, false, false, false)
-    SpreadsheetApp.flush()
-  }
-
-  if (t.borderColumns && t.borderColumns.length > 0) {
-    t.borderColumns.forEach((col) => {
+  } else {
+    for (let offset = 0; offset < numRows; offset += CHUNK_ROWS) {
+      const chunkSize = Math.min(CHUNK_ROWS, numRows - offset)
       display
-        .getRange(t.displayFirstRow, col, numRows, 1)
-        .setBorder(
-          null,
-          null,
-          null,
-          true,
-          null,
-          null,
-          '#000000',
-          SpreadsheetApp.BorderStyle.SOLID_MEDIUM
-        )
-    })
+        .getRange(t.displayFirstRow + offset, 1, chunkSize, maxCol)
+        .setBackground(null)
+    }
   }
 
   finishStep()

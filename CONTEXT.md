@@ -104,7 +104,7 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 **Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
 
-**Chunking:** all the heavy operations (read, write, clear, highlight) chunk in 200-row batches with a `flush()` between chunks. Without chunking, "Service error: Spreadsheets" hits on the larger sheets (Full Dex tracks 132 columns × ~1100 rows).
+**Chunking:** all the heavy operations (read, write, clear, highlight) chunk in 200-row batches. Without chunking, "Service error: Spreadsheets" hits on the larger sheets (Full Dex tracks 132 columns × ~1100 rows). No explicit `flush()` is needed between chunks — Apps Script handles batching the writes itself, and per-chunk flushes added several round-trips of latency for no correctness benefit.
 
 **Toast progress UI:** a single replacing toast shows what's currently running. Title = current step, body = previous step's elapsed time. State variables: `LAST_STEP_LABEL`, `LAST_STEP_ELAPSED`, `CURRENT_STEP_START`, `FLOW_START`. The `runStandaloneIfNeeded` helper makes individual functions self-managing if called directly, but skips reset/finalize when called as part of a larger flow.
 
@@ -221,7 +221,7 @@ When the creator releases a new version (e.g., 5.08):
 - **Conditional formatting overrides backgrounds:** changed-cell highlights couldn't use background colors because conditional formatting wins. Borders work because CF can't change borders.
 - **Apps Script can't read borders:** there's no `getBorder()` method. So we can't restore original borders after clearing. Solution: re-apply known structural borders explicitly.
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
-- **Service errors on big ranges:** chunking in 200-row batches with `flush()` between is required for the Full Dex sheet (132 cols × 1100 rows).
+- **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.
 - **Apps Script library scope:** library functions are accessed as `OfflineDexLib.functionName(...)`. Library top-level constants/functions all share scope within the library.
 - **Menu items can't call library functions directly:** must go through bound-script wrapper functions.

@@ -11,6 +11,13 @@ const FILE_NAME_PATTERN = 'Offline RogueDex {v}'
 const INSERT_COLUMN_L_IN_DAILY_MODE = true
 const B16_MERGE_RANGE = 'B16:M131'
 
+/**
+ * Top-level migration entry. Runs each step against the source and destination
+ * spreadsheets, swallowing per-step errors so one failure doesn't block the
+ * rest. Logs an OK/ERR summary at the end and shows a completion toast.
+ * @param {string} sourceVersion - e.g. '5.07'
+ * @param {string} destVersion - e.g. '5.08'
+ */
 function portAll(sourceVersion, destVersion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   resetToastProgress()
@@ -56,6 +63,14 @@ function portAll(sourceVersion, destVersion) {
   Logger.log(log.join('\n'))
 }
 
+/**
+ * Port rows 1-10 of the Quick Checklist sheet: cell formatting, row heights,
+ * column widths, hidden states. Also ports formulas (falling back to values)
+ * for row 1 columns H-O and all of row 10. Uses a temp copy of the source
+ * sheet inside the destination because copyTo() can't cross spreadsheets.
+ * @param {Spreadsheet} src
+ * @param {Spreadsheet} dst
+ */
 function portQuickChecklistHeader(src, dst) {
   const sName = 'Quick Checklist'
   const sSheet = src.getSheetByName(sName)
@@ -104,6 +119,11 @@ function portQuickChecklistHeader(src, dst) {
   }
 }
 
+/**
+ * Sort the Form Checklist sheet by column C ascending so unchecked rows
+ * appear before checked rows. Header row is preserved.
+ * @param {Spreadsheet} dst
+ */
 function sortFormChecklistByDone(dst) {
   const sheet = dst.getSheetByName('Form Checklist')
   if (!sheet) throw new Error('Form Checklist not found in destination')
@@ -116,6 +136,14 @@ function sortFormChecklistByDone(dst) {
   range.sort({ column: 3, ascending: true })
 }
 
+/**
+ * Port Daily Mode formatting: cell formats, column widths for L/M, and
+ * conditional formatting rules (with their ranges remapped to the destination
+ * sheet). When `INSERT_COLUMN_L_IN_DAILY_MODE` is true and the destination is
+ * narrower than the source, inserts a blank column L first.
+ * @param {Spreadsheet} src
+ * @param {Spreadsheet} dst
+ */
 function portDailyModeFormatting(src, dst) {
   const name = 'Daily Mode'
   const sSheet = src.getSheetByName(name)
@@ -160,6 +188,13 @@ function portDailyModeFormatting(src, dst) {
   }
 }
 
+/**
+ * Port Daily Mode cell content that formatting alone doesn't carry:
+ * unmerges + re-merges B16:M131, copies the B16 formula/value with top
+ * vertical alignment, and copies L12:M14 formulas (falling back to values).
+ * @param {Spreadsheet} src
+ * @param {Spreadsheet} dst
+ */
 function portDailyModeCells(src, dst) {
   const name = 'Daily Mode'
   const sSheet = src.getSheetByName(name)
@@ -188,6 +223,12 @@ function portDailyModeCells(src, dst) {
   dSheet.getRange('L12:M14').setValues(merged)
 }
 
+/**
+ * For every sheet hidden in the source, hide the same-named sheet in the
+ * destination (if it exists). Names not present in the destination are skipped.
+ * @param {Spreadsheet} src
+ * @param {Spreadsheet} dst
+ */
 function portHiddenSheets(src, dst) {
   const srcSheets = src.getSheets()
   const dstByName = {}
@@ -205,6 +246,12 @@ function portHiddenSheets(src, dst) {
   Logger.log('Hidden in dst: ' + (hiddenList.join(', ') || '(none)'))
 }
 
+/**
+ * Create (or replace) a "View Changes" filter view on every tracker sheet
+ * that uses the filter marker column. The view filters to rows whose marker
+ * cell is NOT_BLANK. Issued via the Sheets advanced service batchUpdate.
+ * @param {Spreadsheet} dst
+ */
 function createChangesFilterViews(dst) {
   const dstId = dst.getId()
   const VIEW_NAME = 'View Changes'
@@ -271,6 +318,14 @@ function createChangesFilterViews(dst) {
   }
 }
 
+/**
+ * Look up the Drive file ID of an Offline RogueDex spreadsheet by version.
+ * Searches by name using FILE_NAME_PATTERN, ignores `PUBLIC_*` copies, and
+ * if multiple matches exist returns the most recently updated one (logging
+ * the others). Throws if no file matches.
+ * @param {string} version - e.g. '5.07'
+ * @return {string} Drive file ID
+ */
 function findFileIdByVersion(version) {
   const targetName = FILE_NAME_PATTERN.replace('{v}', version)
   const query =
