@@ -16,7 +16,7 @@
 //   finishStep()        - mark end of a tracked step
 // ============================================================
 
-const HIGHLIGHT_COLOR = '#93c47d' // dark green 1
+const HIGHLIGHT_COLOR = '#93c47d' // light green 1
 const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#b45f06' // dark orange 2
 const CHUNK_ROWS = 200
 
