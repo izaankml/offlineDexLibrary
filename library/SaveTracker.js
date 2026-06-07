@@ -113,8 +113,8 @@ const TRACKERS = [
     columnMap: buildShiftMap(10, 141, -6),
     includeHeaders: true,
     headerRows: 2,
-    // E, AG, AH, AI — auto-calculated columns, never highlight
-    excludeDisplayColumns: new Set([5, 33, 34, 35]),
+    // E, AH, AI — auto-calculated columns, never highlight
+    excludeDisplayColumns: new Set([5, 34, 35]),
     useFilter: true,
   },
   {
@@ -126,8 +126,8 @@ const TRACKERS = [
     columnMap: buildShiftMap(7, 138, 0),
     includeHeaders: true,
     headerRows: 2,
-    // H, AJ, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
-    excludeDisplayColumns: new Set([8, 36, 37, 38]),
+    // H, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
+    excludeDisplayColumns: new Set([8, 37, 38]),
     useFilter: true,
   },
 ]
