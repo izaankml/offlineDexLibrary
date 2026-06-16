@@ -16,8 +16,9 @@
 //   finishStep()        - mark end of a tracked step
 // ============================================================
 
-const HIGHLIGHT_COLOR = '#93c47d' // light green 1
-const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#b45f06' // dark orange 2
+const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00' // yellow
+const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
+const CAUGHT_HATCH_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
 const CHUNK_ROWS = 200
 
 // Module-level state for toast progress tracking.
@@ -115,6 +116,8 @@ const TRACKERS = [
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight
     excludeDisplayColumns: new Set([5, 34, 35]),
+    // N, AB — caught-hatch columns get the purple highlight
+    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
     useFilter: true,
   },
   {
@@ -128,6 +131,8 @@ const TRACKERS = [
     headerRows: 2,
     // H, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
     excludeDisplayColumns: new Set([8, 37, 38]),
+    // Q, AE — caught-hatch columns get the purple highlight
+    columnHighlightColors: { 17: CAUGHT_HATCH_HIGHLIGHT_COLOR, 31: CAUGHT_HATCH_HIGHLIGHT_COLOR },
     useFilter: true,
   },
 ]
@@ -286,7 +291,7 @@ function highlightChanges() {
  * @param {Object} t - a TRACKERS entry
  */
 function applyHighlightsForTracker(ss, t) {
-  const highlightColor = t.highlightColor || HIGHLIGHT_COLOR
+  const highlightColor = t.highlightColor || DEX_HIGHLIGHT_COLOR
   startStep(ss, 'Highlighting ' + t.displaySheet)
   const data = ss.getSheetByName(t.dataSheet)
   const display = ss.getSheetByName(t.displaySheet)
@@ -328,6 +333,9 @@ function applyHighlightsForTracker(ss, t) {
     cellMappings.push({
       idx: dataCol - minDataCol,
       displayIdx: displayCol - 1,
+      color:
+        (t.columnHighlightColors && t.columnHighlightColors[displayCol]) ||
+        highlightColor,
     })
   }
 
@@ -356,7 +364,7 @@ function applyHighlightsForTracker(ss, t) {
       const currentRow = currentValues[r]
       for (const m of cellMappings) {
         if (String(snapRow[m.idx]) !== String(currentRow[m.idx])) {
-          backgrounds[r][m.displayIdx] = highlightColor
+          backgrounds[r][m.displayIdx] = m.color
           rowChanged[r] = true
           totalChanged++
         }
