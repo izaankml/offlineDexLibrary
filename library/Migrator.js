@@ -9,14 +9,28 @@
 const FILE_NAME_PATTERN = 'Offline RogueDex {v}'
 
 const INSERT_COLUMN_L_IN_DAILY_MODE = true
+const DELETE_COLUMN_E_IN_QUICK_CHECKLIST = true
 const B16_MERGE_RANGE = 'B16:M131'
+
+// Daily Mode cells whose formatting I customized, copied from the old sheet:
+// the merged B16:M131 block and L12:M14. After the column-L insertion the
+// source and destination share the same column layout, so these A1 ranges line
+// up without any remapping.
+const DAILY_MODE_FORMAT_RANGES = [B16_MERGE_RANGE, 'L12:M14']
+
+// IV conditional formatting on the dex checklists. The source sheets ship with
+// a rule that fills a cell yellow when it equals 31 (a perfect IV); we swap it
+// for one that fills red when the cell is NOT 31, over the same range.
+const DEX_IV_HIGHLIGHT_SHEETS = ['Starter Dex Checklist', 'Full Dex Checklist']
+const DEX_IV_PERFECT_VALUE = '31'
+const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
 
 /**
  * Top-level migration entry. Runs each step against the source and destination
  * spreadsheets, swallowing per-step errors so one failure doesn't block the
  * rest. Logs an OK/ERR summary at the end and shows a completion toast.
- * @param {string} sourceVersion - e.g. '5.07'
- * @param {string} destVersion - e.g. '5.08'
+ * @param {string} sourceVersion - e.g. 'X.YY'
+ * @param {string} destVersion - e.g. 'X.YY'
  */
 function portAll(sourceVersion, destVersion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
@@ -51,7 +65,7 @@ function portAll(sourceVersion, destVersion) {
   safeRun('Formatting Daily Mode', () => portDailyModeFormatting(src, dst))
   safeRun('Updating Daily Mode Cells', () => portDailyModeCells(src, dst))
   safeRun('Hiding sheets', () => portHiddenSheets(src, dst))
-  safeRun('Creating filter views', () => createChangesFilterViews(dst))
+  safeRun('Updating dex IV highlights', () => portDexIvHighlight(dst))
 
   const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1)
   const body = LAST_STEP_LABEL
@@ -65,9 +79,15 @@ function portAll(sourceVersion, destVersion) {
 
 /**
  * Port rows 1-10 of the Quick Checklist sheet: cell formatting, row heights,
- * column widths, hidden states. Also ports formulas (falling back to values)
- * for row 1 columns H-O and all of row 10. Uses a temp copy of the source
+ * column widths, and row hidden states (column hidden states are NOT ported,
+ * so columns are never hidden). Also ports formulas (falling back to values)
+ * for row 1 columns E-O and all of row 10. Uses a temp copy of the source
  * sheet inside the destination because copyTo() can't cross spreadsheets.
+ *
+ * First deletes the destination's column E (when
+ * `DELETE_COLUMN_E_IN_QUICK_CHECKLIST` is true and the destination is wider
+ * than the source) so the new version's extra column doesn't shift everything
+ * out of alignment before the formatting/formula port.
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
  */
@@ -76,6 +96,17 @@ function portQuickChecklistHeader(src, dst) {
   const sSheet = src.getSheetByName(sName)
   const dSheet = dst.getSheetByName(sName)
   if (!sSheet || !dSheet) throw new Error('Quick Checklist not found')
+
+  // The new version added a column E the old version lacks, shifting every
+  // later column. Delete it so source and destination line up before we copy
+  // across. Guarded by a column-count check so a re-run won't delete a real
+  // column (mirrors the Daily Mode column-L insert).
+  if (
+    DELETE_COLUMN_E_IN_QUICK_CHECKLIST &&
+    dSheet.getMaxColumns() > sSheet.getMaxColumns()
+  ) {
+    dSheet.deleteColumn(5)
+  }
 
   const tempSheet = sSheet.copyTo(dst)
   try {
@@ -93,13 +124,10 @@ function portQuickChecklistHeader(src, dst) {
         dSheet.showRows(r)
       }
     }
+    // Column widths only — column hidden states are no longer ported, so the
+    // migrator never hides Quick Checklist columns.
     for (let c = 1; c <= cols; c++) {
       dSheet.setColumnWidth(c, tempSheet.getColumnWidth(c))
-      if (tempSheet.isColumnHiddenByUser(c)) {
-        dSheet.hideColumns(c)
-      } else {
-        dSheet.showColumns(c)
-      }
     }
 
     const portRowSlice = (rowNum, startCol, endCol) => {
@@ -112,7 +140,7 @@ function portQuickChecklistHeader(src, dst) {
       )
       dSheet.getRange(rowNum, startCol, 1, numCols).setValues(merged)
     }
-    portRowSlice(1, 8, 15)
+    portRowSlice(1, 5, 15)
     portRowSlice(10, 1, cols)
   } finally {
     dst.deleteSheet(tempSheet)
@@ -137,10 +165,15 @@ function sortFormChecklistByDone(dst) {
 }
 
 /**
- * Port Daily Mode formatting: cell formats, column widths for L/M, and
- * conditional formatting rules (with their ranges remapped to the destination
- * sheet). When `INSERT_COLUMN_L_IN_DAILY_MODE` is true and the destination is
- * narrower than the source, inserts a blank column L first.
+ * Port Daily Mode formatting for only the cells I customized
+ * (`DAILY_MODE_FORMAT_RANGES`) plus the column L and M widths. When
+ * `INSERT_COLUMN_L_IN_DAILY_MODE` is true and the destination is narrower than
+ * the source, inserts a blank column L first.
+ *
+ * Deliberately does NOT touch conditional formatting: inserting column L
+ * auto-shifts the destination's own CF ranges to match, so the new version's
+ * rules already line up — copying the old version's rules over them would
+ * overwrite the new version's (potentially updated) formatting.
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
  */
@@ -159,30 +192,19 @@ function portDailyModeFormatting(src, dst) {
 
   const tempSheet = sSheet.copyTo(dst)
   try {
-    const rows = Math.min(tempSheet.getMaxRows(), dSheet.getMaxRows())
-    const cols = Math.min(tempSheet.getMaxColumns(), dSheet.getMaxColumns())
-    const srcRange = tempSheet.getRange(1, 1, rows, cols)
-    const dstRange = dSheet.getRange(1, 1, rows, cols)
+    DAILY_MODE_FORMAT_RANGES.forEach((a1) => {
+      tempSheet
+        .getRange(a1)
+        .copyTo(
+          dSheet.getRange(a1),
+          SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+          false
+        )
+    })
 
-    srcRange.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false)
-
+    // Widths for the custom column L and the adjacent M (whose width I changed).
     dSheet.setColumnWidth(12, tempSheet.getColumnWidth(12))
     dSheet.setColumnWidth(13, tempSheet.getColumnWidth(13))
-
-    const remappedRules = tempSheet.getConditionalFormatRules().map((rule) => {
-      const newRanges = rule
-        .getRanges()
-        .map((r) =>
-          dSheet.getRange(
-            r.getRow(),
-            r.getColumn(),
-            r.getNumRows(),
-            r.getNumColumns()
-          )
-        )
-      return rule.copy().setRanges(newRanges).build()
-    })
-    dSheet.setConditionalFormatRules(remappedRules)
   } finally {
     dst.deleteSheet(tempSheet)
   }
@@ -247,75 +269,76 @@ function portHiddenSheets(src, dst) {
 }
 
 /**
- * Create (or replace) a "View Changes" filter view on every tracker sheet
- * that uses the filter marker column. The view filters to rows whose marker
- * cell is NOT_BLANK. Issued via the Sheets advanced service batchUpdate.
+ * Replace the "perfect IV" conditional-format rule on each dex checklist.
+ * The freshly copied new version ships with a rule that fills a cell yellow
+ * when it equals 31; this swaps that for a rule that fills red whenever the
+ * cell is NOT 31, over the exact same range(s), leaving every other CF rule on
+ * the sheet untouched. Each matched rule is rebuilt one-range-at-a-time so the
+ * custom formula's relative reference stays anchored to that range's top-left.
  * @param {Spreadsheet} dst
  */
-function createChangesFilterViews(dst) {
-  const dstId = dst.getId()
-  const VIEW_NAME = 'View Changes'
-
-  const spreadsheet = Sheets.Spreadsheets.get(dstId, {
-    fields: 'sheets(properties(sheetId,title),filterViews(filterViewId,title))',
-  })
-
-  const sheetInfoMap = {}
-  ;(spreadsheet.sheets || []).forEach((s) => {
-    sheetInfoMap[s.properties.title] = {
-      sheetId: s.properties.sheetId,
-      filterViews: s.filterViews || [],
+function portDexIvHighlight(dst) {
+  DEX_IV_HIGHLIGHT_SHEETS.forEach((name) => {
+    const sheet = dst.getSheetByName(name)
+    if (!sheet) {
+      Logger.log('IV highlight: "' + name + '" not found, skipping')
+      return
     }
-  })
 
-  const requests = []
-  TRACKERS.filter((t) => t.useFilter).forEach((t) => {
-    const info = sheetInfoMap[t.displaySheet]
-    if (!info) return
-
-    const sheet = dst.getSheetByName(t.displaySheet)
-    const markerCol1 = Math.max(...Object.values(t.columnMap)) + 1 // 1-based
-    const headerStartRow1 = t.displayFirstRow - (t.headerRows || 1) // 1-based
-
-    info.filterViews.forEach((fv) => {
-      if (fv.title === VIEW_NAME) {
-        requests.push({ deleteFilterView: { filterId: fv.filterViewId } })
+    const updated = []
+    let replaced = 0
+    sheet.getConditionalFormatRules().forEach((rule) => {
+      if (!isPerfectIvRule(rule)) {
+        updated.push(rule)
+        return
       }
+      rule.getRanges().forEach((range) => {
+        const topLeft = range.getCell(1, 1).getA1Notation() // relative ref
+        updated.push(
+          SpreadsheetApp.newConditionalFormatRule()
+            .whenFormulaSatisfied(
+              '=TO_TEXT(' + topLeft + ')<>"' + DEX_IV_PERFECT_VALUE + '"'
+            )
+            .setBackground(DEX_IV_IMPERFECT_COLOR)
+            .setRanges([range])
+            .build()
+        )
+        replaced++
+      })
     })
 
-    requests.push({
-      addFilterView: {
-        filter: {
-          title: VIEW_NAME,
-          range: {
-            sheetId: info.sheetId,
-            startRowIndex: headerStartRow1 - 1, // 0-based inclusive
-            endRowIndex: sheet.getMaxRows(), // 0-based exclusive
-            startColumnIndex: 0,
-            endColumnIndex: markerCol1, // 0-based exclusive
-          },
-          criteria: {
-            [String(markerCol1 - 1)]: {
-              // 0-based column index as string key
-              condition: { type: 'NOT_BLANK' },
-            },
-          },
-        },
-      },
-    })
+    if (replaced === 0) {
+      Logger.log(
+        'IV highlight: no "=' +
+          DEX_IV_PERFECT_VALUE +
+          '" rule found on "' +
+          name +
+          '", left unchanged'
+      )
+      return
+    }
+    sheet.setConditionalFormatRules(updated)
+    Logger.log('IV highlight: replaced ' + replaced + ' rule(s) on "' + name + '"')
   })
+}
 
-  if (requests.length > 0) {
-    Sheets.Spreadsheets.batchUpdate({ requests }, dstId)
-    Logger.log(
-      'Created "' +
-        VIEW_NAME +
-        '" filter views on: ' +
-        TRACKERS.filter((t) => t.useFilter)
-          .map((t) => t.displaySheet)
-          .join(', ')
-    )
-  }
+/**
+ * True if a CF rule is the "perfect IV" highlight: a boolean condition that
+ * matches when the cell equals 31, as text ("Text is exactly 31") or number.
+ * Gradient/color-scale rules have no boolean condition and never match.
+ * @param {ConditionalFormatRule} rule
+ * @return {boolean}
+ */
+function isPerfectIvRule(rule) {
+  const cond = rule.getBooleanCondition()
+  if (!cond) return false
+  const type = cond.getCriteriaType()
+  const value = String(cond.getCriteriaValues()[0])
+  const Crit = SpreadsheetApp.BooleanCriteria
+  return (
+    (type === Crit.TEXT_EQUAL_TO || type === Crit.NUMBER_EQUAL_TO) &&
+    value === DEX_IV_PERFECT_VALUE
+  )
 }
 
 /**
@@ -323,7 +346,7 @@ function createChangesFilterViews(dst) {
  * Searches by name using FILE_NAME_PATTERN, ignores `PUBLIC_*` copies, and
  * if multiple matches exist returns the most recently updated one (logging
  * the others). Throws if no file matches.
- * @param {string} version - e.g. '5.07'
+ * @param {string} version - e.g. 'X.YY'
  * @return {string} Drive file ID
  */
 function findFileIdByVersion(version) {

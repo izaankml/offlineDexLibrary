@@ -1,7 +1,7 @@
 # Updating to a New OfflineDex Version
 
 The end-to-end runbook for moving your customizations to a newly released
-spreadsheet version (e.g. `5.07 → 6.01`). Assumes the one-time setup in
+spreadsheet version (e.g. `<old> → <new>`). Assumes the one-time setup in
 [README.md](README.md) is already done (clasp installed + logged in, the
 `OfflineDex Library` project deployed, your committed `bound/appsscript.json`
 in place).
@@ -20,8 +20,8 @@ in place).
   the creator's fresh code with your edits, so the creator's updated functions *and*
   your customizations both survive (see [How `update.py` merges](#how-updatepy-merges)).
 - **Your data/customizations** (formatting, hidden sheets, Daily Mode column, cell
-  formulas, filter views) get carried over by the in-sheet **migration**, which reads
-  them out of your previous version's spreadsheet.
+  formulas, dex IV highlighting) get carried over by the in-sheet **migration**, which
+  reads them out of your previous version's spreadsheet.
 
 So a version update has two distinct halves:
 1. **Code reconciliation** (terminal) — get your bound code into the new copy.
@@ -31,19 +31,19 @@ So a version update has two distinct halves:
 
 ## Prerequisites for each update
 
-- Your previous version's spreadsheet (e.g. `Offline RogueDex 5.07`) still exists in
+- Your previous version's spreadsheet (e.g. `Offline RogueDex <old>`) still exists in
   Drive, untrashed. The migrator reads your customizations out of it.
 - You are on the `main` branch with a **clean working tree** (everything committed).
   `update.py` switches branches and merges, both of which require a clean tree.
 
 ---
 
-## Step-by-step (example: 5.07 → 6.01)
+## Step-by-step (example: `<old> → <new>`)
 
 ### 1. Make your copy of the new version
 
-- Open the creator's public **6.01** spreadsheet → **File → Make a copy** into your Drive.
-- Rename the copy to **exactly** `Offline RogueDex 6.01` — no `PUBLIC_` prefix.
+- Open the creator's public spreadsheet for the **new version** → **File → Make a copy** into your Drive.
+- Rename the copy to **exactly** `Offline RogueDex <new>` — no `PUBLIC_` prefix.
   The migrator finds both the source and destination files by this exact name.
 
 ### 2. Point clasp at the new copy
@@ -53,12 +53,12 @@ So a version update has two distinct halves:
 > any of your own edits to it — otherwise the `creator` branch records your customized
 > code as the "creator baseline" and future merges will be wrong.
 
-- In the 6.01 sheet: **Extensions → Apps Script → Project Settings** → copy the **Script ID**.
+- In the new copy: **Extensions → Apps Script → Project Settings** → copy the **Script ID**.
 - Edit [bound/.clasp.json](bound/.clasp.json) (gitignored; create if missing):
 
   ```json
   {
-    "scriptId": "NEW_6.01_SCRIPT_ID",
+    "scriptId": "NEW_SHEET_SCRIPT_ID",
     "rootDir": "."
   }
   ```
@@ -67,7 +67,7 @@ So a version update has two distinct halves:
 
 ```bash
 cd bound
-python3 update.py 6.01      # the version label is used in the creator commit message
+python3 update.py <new>      # the version label is used in the creator commit message
 ```
 
 This pulls the creator's fresh code onto the `creator` branch, commits it, then
@@ -93,10 +93,10 @@ clasp push -f
 
 ### 5. Run the migration (in the sheet)
 
-- Reload the 6.01 spreadsheet tab so the menu rebuilds.
+- Reload the new spreadsheet tab so the menu rebuilds.
 - **RogueDex Functions → Migrate from Previous Version**.
-- At the prompt *"Version you are migrating from:"*, enter `5.07`.
-  (The destination `6.01` is auto-derived from the filename.)
+- At the prompt *"Version you are migrating from:"*, enter `<old>`.
+  (The destination `<new>` is auto-derived from the filename.)
 - Wait ~2 minutes. A toast tracks each step and ends with *"Migration complete in Ns"*.
 
 ### 6. Load your latest save
@@ -119,9 +119,9 @@ one commit per version, exactly as `clasp pull` delivers it, with none of your e
 `main` holds your customized code. Each update is a 3-way merge:
 
 ```
-creator:  v5.07-pristine ──► v6.01-pristine        (clasp pull, committed by update.py)
+creator:  v<old>-pristine ──► v<new>-pristine      (clasp pull, committed by update.py)
                 │                  │
-main:    ...your 5.07 edits ─────► merge ─────►     (git merge creator)
+main:    ...your <old> edits ─────► merge ─────►   (git merge creator)
 ```
 
 Git's 3-way merge compares the **previous** creator commit (the merge base), the **new**
@@ -163,7 +163,7 @@ the baseline.
   log for any `ERR` lines.
 - **Daily Mode sheet**: confirm your custom column L looks right (see caveat below).
 - **Highlights**: after the save upload, changed Pokemon should be filled with the
-  highlight colors, and each tracked sheet should have a **"View Changes"** filter view.
+  highlight colors.
 
 ---
 
@@ -202,11 +202,11 @@ the baseline.
 # 0. On main, working tree clean
 
 cd bound
-python3 update.py 6.01   # pull creator code onto `creator`, 3-way merge into main
+python3 update.py <new>   # pull creator code onto `creator`, 3-way merge into main
 # resolve any conflicts (keep both sides), then git add + git commit
 clasp push -f            # upload reconciled bound code
 
 # Then in the sheet:
-#   RogueDex Functions → Migrate from Previous Version → enter old version (e.g. 5.07)
+#   RogueDex Functions → Migrate from Previous Version → enter old version (`<old>`)
 #   RogueDex Functions → Upload Data → upload latest save
 ```

@@ -72,9 +72,9 @@ clasp push
 
 **4. Deploy as a library**
 
-In the Apps Script editor: Deploy → New deployment → type: Library → description "v1" → Deploy.
+In the Apps Script editor: Deploy → New deployment → type: Library → add a description → Deploy.
 
-Note the deployment version number (starts at 1). You'll need this in the bound script's `appsscript.json`.
+Note the deployment version number. You'll need this in the bound script's `appsscript.json`.
 
 **5. Fill in the manifest placeholder**
 
@@ -96,19 +96,19 @@ Fill both into `bound/appsscript.json`:
 
 ```json
 {
-  "timeZone": "America/New_York",
+  "timeZone": "America/Los_Angeles",
   "dependencies": {
     "libraries": [
       {
         "userSymbol": "OfflineDexLib",
         "libraryId": "YOUR_LIBRARY_SCRIPT_ID",
-        "version": "1",
-        "developmentMode": false
+        "version": "YOUR_LIBRARY_VERSION",
+        "developmentMode": true
       },
       {
         "userSymbol": "cCryptoGS",
         "libraryId": "ACTUAL_CCRYPTOGS_SCRIPT_ID",
-        "version": "3",
+        "version": "CCRYPTOGS_VERSION",
         "developmentMode": false
       }
     ]
@@ -118,15 +118,18 @@ Fill both into `bound/appsscript.json`:
 }
 ```
 
-Commit this filled-in `appsscript.json` to git. You only need to do this once — subsequent version setups restore it via `git restore`.
+Commit this filled-in `appsscript.json` to git. You only need to do this once — on each
+subsequent version setup, `update.py` 3-way merges the creator's manifest into yours, so
+your library dependencies are preserved automatically.
 
 ---
 
-## Per-version setup (e.g., 5.07 → 6.01)
+## Per-version setup (e.g., `<old> → <new>`)
 
 See **[UPDATING.md](UPDATING.md)** for the full per-version runbook (copy the new
-spreadsheet, point clasp at it, `python3 update.py`, `clasp push -f`, then run
-**RogueDex Functions → Migrate from Previous Version** in the sheet).
+spreadsheet, point clasp at it, `python3 update.py <version>` to 3-way merge the
+creator's code with yours, `clasp push -f`, then run **RogueDex Functions → Migrate
+from Previous Version** in the sheet).
 
 ---
 

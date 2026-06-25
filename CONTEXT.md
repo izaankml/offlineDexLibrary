@@ -4,7 +4,7 @@ This doc summarizes the design and decisions behind this repo so that any future
 
 ## What this is
 
-I track my Pokemon collection in a Google Sheets spreadsheet called "Offline RogueDex" maintained by a third-party creator. The creator publishes new versions every so often (5.06, 5.07, 5.08, ...) as a public read-only spreadsheet. To use a new version I make a copy into my Drive, which gives me a fresh spreadsheet with the creator's bound Apps Script attached.
+I track my Pokemon collection in a Google Sheets spreadsheet called "Offline RogueDex" maintained by a third-party creator. The creator publishes new versions every so often as a public read-only spreadsheet. To use a new version I make a copy into my Drive, which gives me a fresh spreadsheet with the creator's bound Apps Script attached.
 
 This repo contains two pieces of automation I've added on top of the creator's spreadsheet:
 
@@ -110,7 +110,7 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 - `highlightColor` — the default fill for changed cells in this tracker; falls back to `DEX_HIGHLIGHT_COLOR` when omitted.
 - `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the caught/hatch columns get purple instead of the default).
 - `excludeDisplayColumns` — display columns that are auto-calculated (e.g. totals derived from other cells) and must never be highlighted even when their value changes. Note the egg-move total column was removed from these sets so it now *does* highlight.
-- `useFilter` — enables the marker-column + "View Changes" filter-view workflow (see below).
+- `useFilter` — enables the hidden marker-column workflow used for fast highlight-clearing (see below). (The name is historical: it once also drove "View Changes" filter views, which the Migrator no longer creates.)
 
 **The flow on each save upload:**
 
@@ -120,7 +120,7 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 **Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
 
-**Marker column + filter views:** for trackers with `useFilter: true`, the highlighter writes a `●` into the first column past the tracked range (`max(columnMap values) + 1`) on every changed row, and hides that column. This drives two things: (a) fast clearing — only marked rows get their backgrounds reset; (b) a "View Changes" filter view (created by the Migrator) that filters each display sheet to rows whose marker is `NOT_BLANK`, so you can collapse to just the Pokemon that changed.
+**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the first column past the tracked range (`max(columnMap values) + 1`) on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
 
 **Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
 
@@ -132,15 +132,15 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 Ports customizations from an old version of the spreadsheet to a new one. Called as `OfflineDexLib.portAll(sourceVersion, destVersion)` from the bound script's "Migrate from previous version" menu.
 
-**Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex 5.07"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
+**Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex <version>"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
 
-**Seven migration steps:**
+**Six migration steps:**
 
-1. **Quick Checklist header rows 1-10:** copies cell formatting + column widths + row hidden states for rows 1-10 (column hidden states are no longer ported, so columns are never hidden). Ports formulas/values for row 1 columns E-O and row 10 in full.
+1. **Quick Checklist header rows 1-10:** first deletes the destination's extra column E (gated by `DELETE_COLUMN_E_IN_QUICK_CHECKLIST` plus a column-count check) so the new version's added column doesn't shift the layout out of alignment. Then copies cell formatting + column widths + row hidden states for rows 1-10 (column hidden states are no longer ported, so columns are never hidden), and ports formulas/values for row 1 columns E-O and row 10 in full.
 
 2. **Form Checklist sort:** sorts rows 2+ by column C ascending so unchecked rows appear before checked rows.
 
-3. **Daily Mode formatting:** copies cell formatting, conditional formatting, and column widths for columns L+M only. Optionally inserts a blank column L into the destination (controlled by `INSERT_COLUMN_L_IN_DAILY_MODE`) because I had added a custom column there in 5.06 that creator versions don't have.
+3. **Daily Mode formatting:** copies cell formatting only for the cells I customized (`DAILY_MODE_FORMAT_RANGES` — `B16:M131` and `L12:M14`) plus the column L and M widths. Optionally inserts a blank column L into the destination (controlled by `INSERT_COLUMN_L_IN_DAILY_MODE`) because I had added a custom column there that creator versions don't have. It deliberately does **not** touch conditional formatting: inserting column L auto-shifts the destination's own CF ranges to match, so the new version's rules already line up — copying the old version's CF over them would overwrite the new version's.
 
 4. **Daily Mode cells:** unmerges any existing merge at B16, re-merges to `B16:M131`, copies B16 formula. Also copies L12:M14 formulas/values from source.
 
@@ -148,11 +148,11 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 6. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
 
-7. **Changes filter views:** for each tracker with `useFilter` — except the sheets in `FILTER_VIEW_EXCLUDED_SHEETS` (the Starter Dex and Full Dex checklists, which keep their marker column for fast clearing but no longer get a filter view) — creates (replacing any existing one) a "View Changes" filter view on the display sheet, scoped to the header row down through the marker column and filtered to `NOT_BLANK` marker cells. Built via the Sheets advanced service `batchUpdate` and driven off the shared `TRACKERS` config in SaveTracker.js — the only place the Migrator reads tracker metadata, so highlight-color / excluded-column tweaks in SaveTracker don't require Migrator changes.
+(The Migrator no longer creates "View Changes" filter views — that step was removed. The marker column described below still exists for fast highlight-clearing.)
 
 **Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
 
-**Conditional formatting remap:** when copying CF rules from temp sheet to dest sheet, the rules' ranges still reference the temp's parent. So we extract each rule's range coords and rebuild new ranges on the destination sheet.
+**Conditional formatting is intentionally left alone:** the Migrator no longer copies CF rules across sheets. For Daily Mode, inserting column L auto-shifts the destination's existing CF ranges, so the new version's rules stay correct without any remap. For the dex checklists, the IV step (step 6) edits the *existing* destination rules in place rather than importing the old sheet's.
 
 ## The bound script (per-version)
 
@@ -218,7 +218,7 @@ setTimeout(() => google.script.host.close(), 500)
 ## Per-version setup workflow
 
 The full runbook lives in [UPDATING.md](UPDATING.md). The short version when the creator
-releases a new version (e.g., 6.01):
+releases a new version:
 
 1. Make a fresh copy of the new public spreadsheet to my Drive, renamed exactly
    `Offline RogueDex <version>` (this gives me a fresh bound script with the creator's code).
@@ -226,7 +226,7 @@ releases a new version (e.g., 6.01):
    ```bash
    cd bound
    # Update .clasp.json with the new spreadsheet's Script ID (point at the fresh copy)
-   python3 update.py 6.01   # 3-way merge creator's fresh code with my edits
+   python3 update.py <new>   # 3-way merge creator's fresh code with my edits
    # resolve any conflicts (keep both sides), then git add + git commit
    clasp push -f
    ```
@@ -256,7 +256,7 @@ releases a new version (e.g., 6.01):
 
 - **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. Workaround: copy source SHEET into destination spreadsheet as a temp, do local copyTo, delete temp.
 - **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
-- **Marker column for cheap clearing:** because re-reading every display cell's background to find what to clear is slow, the highlighter stamps a `●` into a hidden marker column on changed rows. Clearing then resets only the marked rows, and the same marker drives the "View Changes" filter views.
+- **Marker column for cheap clearing:** because re-reading every display cell's background to find what to clear is slow, the highlighter stamps a `●` into a hidden marker column on changed rows. Clearing then resets only the marked rows.
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
 - **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.

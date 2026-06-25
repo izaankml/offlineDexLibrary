@@ -267,7 +267,7 @@ function captureSnapshotForTracker(ss, t) {
 /**
  * Public entry: diff each tracker's data sheet against its snapshot and paint
  * the highlight color onto the matching display cells. Also writes a marker
- * column ('●') on changed rows for filter-view use.
+ * column ('●') on changed rows, used for fast highlight-clearing.
  */
 function highlightChanges() {
   const ss = SpreadsheetApp.getActiveSpreadsheet()

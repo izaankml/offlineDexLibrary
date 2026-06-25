@@ -27,7 +27,7 @@ because no pristine baseline existed in history before now.
 Usage
 -----
     cd bound
-    python3 update.py [VERSION]      # e.g. python3 update.py 6.01
+    python3 update.py [VERSION]      # e.g. python3 update.py X.YY
 
 VERSION is just a label for the creator commit message; prompted for if omitted.
 """
@@ -165,7 +165,7 @@ def update(version):
 
 
 def main():
-    version = sys.argv[1] if len(sys.argv) > 1 else input("New version label (e.g. 6.01): ").strip()
+    version = sys.argv[1] if len(sys.argv) > 1 else input("New version label (e.g. X.YY): ").strip()
     if not version:
         fail("A version label is required (used in the creator commit message).")
 
