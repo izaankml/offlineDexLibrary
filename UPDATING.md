@@ -16,8 +16,9 @@ in place).
   bump a library version when adopting a new spreadsheet version.
 - **The bound script** (`bound/` — `onOpen.js`, `LoadPlayerData.js`,
   `UploadPlayerData.html`, `appsscript.json`) lives **inside each spreadsheet copy**.
-  Each new version is a fresh copy with the creator's code, so you re-apply your four
-  edited files on top — that's what `update.py` automates.
+  Each new version is a fresh copy with the creator's code. `update.py` **3-way merges**
+  the creator's fresh code with your edits, so the creator's updated functions *and*
+  your customizations both survive (see [How `update.py` merges](#how-updatepy-merges)).
 - **Your data/customizations** (formatting, hidden sheets, Daily Mode column, cell
   formulas, filter views) get carried over by the in-sheet **migration**, which reads
   them out of your previous version's spreadsheet.
@@ -32,8 +33,8 @@ So a version update has two distinct halves:
 
 - Your previous version's spreadsheet (e.g. `Offline RogueDex 5.07`) still exists in
   Drive, untrashed. The migrator reads your customizations out of it.
-- Your `bound/` tracked files are **committed** (clean git state). `update.py` runs a
-  hard `git restore bound/`, which discards uncommitted changes to those files.
+- You are on the `main` branch with a **clean working tree** (everything committed).
+  `update.py` switches branches and merges, both of which require a clean tree.
 
 ---
 
@@ -46,6 +47,11 @@ So a version update has two distinct halves:
   The migrator finds both the source and destination files by this exact name.
 
 ### 2. Point clasp at the new copy
+
+> **Important:** `update.py` reads the creator's *pristine* code from whatever
+> `.clasp.json` points at. Point it at the **fresh, just-made copy** *before* you push
+> any of your own edits to it — otherwise the `creator` branch records your customized
+> code as the "creator baseline" and future merges will be wrong.
 
 - In the 6.01 sheet: **Extensions → Apps Script → Project Settings** → copy the **Script ID**.
 - Edit [bound/.clasp.json](bound/.clasp.json) (gitignored; create if missing):
@@ -61,20 +67,29 @@ So a version update has two distinct halves:
 
 ```bash
 cd bound
-python3 update.py
+python3 update.py 6.01      # the version label is used in the creator commit message
 ```
 
-This pulls the creator's fresh files, restores your four edited files via
-`git restore`, and merges the creator's `sheets` (macro) manifest block into your
-`appsscript.json`. It prints what it merged and **warns** if `oauthScopes` or
-`runtimeVersion` changed (those need a manual look). If it reports a manifest change,
-review `bound/appsscript.json` before pushing.
+This pulls the creator's fresh code onto the `creator` branch, commits it, then
+**3-way merges** it into `main`. Creator changes to functions you never touched merge
+in silently; your custom functions the creator never touched are preserved. If you and
+the creator edited the **same lines**, the merge stops with a conflict — resolve it
+keeping *both* sides, then `git add` + `git commit` to finish (the script prints the
+exact commands). See [How `update.py` merges](#how-updatepy-merges) for the model.
+
+**First time only:** there is no `creator` branch yet, so `update.py` bootstraps one
+(orphan branch + a single reconciling merge). That first merge conflicts on the whole
+of each file you customize — combine the creator's current code with your edits once,
+commit, and every future update is a clean line-level merge. See
+[First-run bootstrap](#first-run-bootstrap).
 
 ### 4. Push the reconciled bound code
 
 ```bash
 clasp push -f
 ```
+
+(Run this only after the merge is complete — i.e. no unresolved conflicts.)
 
 ### 5. Run the migration (in the sheet)
 
@@ -89,10 +104,55 @@ clasp push -f
 - **RogueDex Functions → Upload Data** → upload your latest save file.
 - The save tracker highlights cells that changed versus the migrated state.
 
-### 7. (Optional) Commit manifest changes
+### 7. Commit the merge
 
-If `update.py` merged creator manifest changes you want to keep, commit
-`bound/appsscript.json`. `bound/.clasp.json` is gitignored and is **not** committed.
+The merge commit on `main` *is* your record of this version's reconciled bound code —
+nothing extra to commit. (`bound/.clasp.json` is gitignored and never committed.) If
+the merge had conflicts, the commit you make to finish the merge covers it.
+
+---
+
+## How `update.py` merges
+
+The repo keeps a **`creator` branch** that holds the creator's *pristine* bound code —
+one commit per version, exactly as `clasp pull` delivers it, with none of your edits.
+`main` holds your customized code. Each update is a 3-way merge:
+
+```
+creator:  v5.07-pristine ──► v6.01-pristine        (clasp pull, committed by update.py)
+                │                  │
+main:    ...your 5.07 edits ─────► merge ─────►     (git merge creator)
+```
+
+Git's 3-way merge compares the **previous** creator commit (the merge base), the **new**
+creator commit (theirs), and **your** code (ours):
+
+- Creator changed a function, you didn't → creator's version is taken automatically.
+- You customized a function, creator didn't → your version is kept automatically.
+- You **both** changed the same lines → conflict; you resolve it keeping both intents.
+
+This is why the stale-`checkVersion` problem can't recur: a creator change to
+`checkVersion` is now a real diff against the baseline and merges in, instead of being
+silently discarded.
+
+Only the files git tracks in `bound/` participate — `onOpen.js`, `LoadPlayerData.js`,
+`UploadPlayerData.html`, `appsscript.json`. The creator files you never touch
+(`ImportDB.js`, `Sheet Status Generator.js`) are gitignored, so `clasp pull` just
+refreshes them in place on each new copy; they need no merge.
+
+### First-run bootstrap
+
+No commit in this repo's history was ever pristine creator code, so the first run has
+nothing to use as a merge base. `update.py` handles this by creating the `creator`
+branch as an **orphan** (unrelated history) and doing one
+`git merge --allow-unrelated-histories`. With no common ancestor, git conflicts on the
+*entire* contents of each customized file — you reconcile once by hand (combine the
+creator's current functions with your customizations). After that commit, the `creator`
+branch is a shared ancestor and all later merges are clean line-level 3-way merges.
+
+The bootstrap run **must** have `.clasp.json` pointing at a fresh, unmodified copy of
+the creator's current version — `update.py` asks you to confirm this before it records
+the baseline.
 
 ---
 
@@ -117,8 +177,17 @@ If `update.py` merged creator manifest changes you want to keep, commit
   `Offline RogueDex {v}` exactly, or the file is trashed. Rename to match.
 - **Multiple matches** — if several files share the name, the migrator uses the most
   recently updated and logs the rest. Trash stale duplicates to avoid surprises.
-- **`update.py` wiped my edits** — it does `git restore bound/`. Commit your bound
-  changes *before* running it.
+- **Merge conflict on a file I customized** — expected when you and the creator edited
+  the same lines. Open the file, keep *both* the creator's change and your edit, remove
+  the `<<<<<<< ======= >>>>>>>` markers, then `git add <file>` and `git commit`.
+  To start the merge over: `git merge --abort`.
+- **`update.py` left me on the `creator` branch** — only if it errored mid-run. Get
+  back with `git checkout main`; the pristine pull is safely committed on `creator`.
+- **The whole file conflicted, not just a few lines** — that's the one-time first-run
+  bootstrap (orphan branch, no merge base). Normal after the `creator` branch exists.
+- **`creator` branch recorded my edits as the baseline** — you pointed `.clasp.json` at
+  a copy you'd already pushed to. Delete the bad baseline commit and re-run pointed at a
+  truly fresh copy: `git checkout main && git branch -D creator` (first-run only).
 - **Library changes not taking effect** — because the bound manifest uses
   `developmentMode: true`, pushing `library/` (via `clasp push` from `library/`, or
   automatically on `git push` thanks to the pre-push hook) is enough; no redeploy needed.
@@ -129,11 +198,13 @@ If `update.py` merged creator manifest changes you want to keep, commit
 
 ```bash
 # 0. Old version's sheet still in Drive; new copy renamed "Offline RogueDex <new>"
-# 0. New copy's Script ID set in bound/.clasp.json; bound/ committed clean
+# 0. New copy's Script ID set in bound/.clasp.json (point at the FRESH copy)
+# 0. On main, working tree clean
 
 cd bound
-python3 update.py     # pull creator code, restore your edits, merge manifest
-clasp push -f         # upload reconciled bound code
+python3 update.py 6.01   # pull creator code onto `creator`, 3-way merge into main
+# resolve any conflicts (keep both sides), then git add + git commit
+clasp push -f            # upload reconciled bound code
 
 # Then in the sheet:
 #   RogueDex Functions → Migrate from Previous Version → enter old version (e.g. 5.07)

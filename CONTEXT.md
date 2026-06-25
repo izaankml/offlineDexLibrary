@@ -134,9 +134,9 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 **Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex 5.07"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
 
-**Six migration steps:**
+**Seven migration steps:**
 
-1. **Quick Checklist header rows 1-10:** copies cell formatting + column widths + hidden states for rows 1-10. Ports formulas/values for row 1 columns H-O only (skip the merged title at A1:D1) and row 10 in full.
+1. **Quick Checklist header rows 1-10:** copies cell formatting + column widths + row hidden states for rows 1-10 (column hidden states are no longer ported, so columns are never hidden). Ports formulas/values for row 1 columns E-O and row 10 in full.
 
 2. **Form Checklist sort:** sorts rows 2+ by column C ascending so unchecked rows appear before checked rows.
 
@@ -146,7 +146,9 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 5. **Hidden sheets:** any sheet hidden in source is also hidden in destination if it exists by name.
 
-6. **Changes filter views:** for each tracker with `useFilter`, creates (replacing any existing one) a "View Changes" filter view on the display sheet, scoped to the header row down through the marker column and filtered to `NOT_BLANK` marker cells. Built via the Sheets advanced service `batchUpdate` and driven off the shared `TRACKERS` config in SaveTracker.js — the only place the Migrator reads tracker metadata, so highlight-color / excluded-column tweaks in SaveTracker don't require Migrator changes.
+6. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
+
+7. **Changes filter views:** for each tracker with `useFilter` — except the sheets in `FILTER_VIEW_EXCLUDED_SHEETS` (the Starter Dex and Full Dex checklists, which keep their marker column for fast clearing but no longer get a filter view) — creates (replacing any existing one) a "View Changes" filter view on the display sheet, scoped to the header row down through the marker column and filtered to `NOT_BLANK` marker cells. Built via the Sheets advanced service `batchUpdate` and driven off the shared `TRACKERS` config in SaveTracker.js — the only place the Migrator reads tracker metadata, so highlight-color / excluded-column tweaks in SaveTracker don't require Migrator changes.
 
 **Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
 
@@ -220,13 +222,22 @@ releases a new version (e.g., 6.01):
 
 1. Make a fresh copy of the new public spreadsheet to my Drive, renamed exactly
    `Offline RogueDex <version>` (this gives me a fresh bound script with the creator's code).
-2. From the local repo, point clasp at the new copy and reconcile the bound code:
+2. From the local repo, point clasp at the **fresh** copy and reconcile the bound code:
    ```bash
    cd bound
-   # Update .clasp.json with the new spreadsheet's Script ID
-   python3 update.py   # pull creator code, restore my edits, merge manifest
+   # Update .clasp.json with the new spreadsheet's Script ID (point at the fresh copy)
+   python3 update.py 6.01   # 3-way merge creator's fresh code with my edits
+   # resolve any conflicts (keep both sides), then git add + git commit
    clasp push -f
    ```
+
+   **How the reconcile works (changed in 2026):** a `creator` branch holds the creator's
+   *pristine* bound code, one commit per version. `update.py` pulls the fresh code onto
+   that branch and `git merge`s it into `main`, so the creator's updated functions *and*
+   my customizations both survive — only same-line edits conflict. This replaced the old
+   `git restore bound/` approach, which silently discarded every creator code change (it
+   was a stale `checkVersion` from that loss that exposed the problem). Full model and the
+   one-time first-run bootstrap are in [UPDATING.md](UPDATING.md).
 3. Open the new spreadsheet, reload, click **RogueDex Functions → Migrate from Previous Version**,
    and enter the version I'm migrating FROM when prompted (the destination version is read from
    the filename). The source version is no longer a hardcoded constant.
