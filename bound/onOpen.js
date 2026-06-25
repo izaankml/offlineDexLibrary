@@ -72,7 +72,7 @@ function checkVersion() {
   const quickSheet = ss.getSheetByName('Quick Checklist')
   const quickValue = quickSheet.getRange('A1').getValue()
 
-  const versionSheet = ss.getSheetByName('STATIC:VERSION.data')
+  const versionSheet = ss.getSheetByName('STATIC:VERSION')
   const versionValue = versionSheet.getRange('A1').getValue()
   const loadedValue = versionSheet.getRange('A6').getValue()
 
