@@ -99,7 +99,7 @@ const TRACKERS = [
     displaySheet: 'Quick Checklist',
     dataFirstRow: 12,
     displayFirstRow: 12,
-    columnMap: buildShiftMap(4, 11, 4),
+    columnMap: buildShiftMap(4, 11, 3),
     includeHeaders: true,
     headerRows: 1,
     highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
@@ -111,7 +111,7 @@ const TRACKERS = [
     displaySheet: 'Starter Dex Checklist',
     dataFirstRow: 3,
     displayFirstRow: 4,
-    columnMap: buildShiftMap(10, 141, -6),
+    columnMap: buildShiftMap(12, 143, -8),
     includeHeaders: true,
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight
@@ -126,13 +126,13 @@ const TRACKERS = [
     displaySheet: 'Full Dex Checklist',
     dataFirstRow: 3,
     displayFirstRow: 4,
-    columnMap: buildShiftMap(7, 138, 0),
+    columnMap: buildShiftMap(8, 139, -4),
     includeHeaders: true,
     headerRows: 2,
-    // H, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
-    excludeDisplayColumns: new Set([8, 37, 38]),
-    // Q, AE — caught-hatch columns get the purple highlight
-    columnHighlightColors: { 17: CAUGHT_HATCH_HIGHLIGHT_COLOR, 31: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    // E, AH, AI — auto-calculated columns, never highlight (display now matches Starter Dex)
+    excludeDisplayColumns: new Set([5, 34, 35]),
+    // N, AB — caught-hatch columns get the purple highlight
+    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
     useFilter: true,
   },
 ]
