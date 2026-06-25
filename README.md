@@ -122,55 +122,11 @@ Commit this filled-in `appsscript.json` to git. You only need to do this once �
 
 ---
 
-## Per-version setup (e.g., 5.07 → 5.08)
+## Per-version setup (e.g., 5.07 → 6.01)
 
-**1. Copy the new spreadsheet**
-
-Make a fresh copy of the creator's new public spreadsheet into your Drive.
-
-**2. Get the new Script ID**
-
-Open the copy → Extensions → Apps Script → Project Settings → Script ID.
-
-**3. Update `.clasp.json`**
-
-```bash
-cd bound
-```
-
-Edit (or create) `bound/.clasp.json`:
-
-```json
-{
-  "scriptId": "NEW_SPREADSHEETS_SCRIPT_ID",
-  "rootDir": "."
-}
-```
-
-**4. Pull, restore, and merge**
-
-```bash
-python3 update.py
-```
-
-This pulls the creator's full file set, restores your edits, and auto-merges any changes the creator made to `appsscript.json` (new macros, etc.). It warns you if anything needs manual review. If the manifest changed, review and commit it before pushing.
-
-**5. Push**
-
-```bash
-clasp push -f
-```
-
-**6. Run the migration**
-
-- Reload the spreadsheet tab
-- Menu: Upload PokeRogue Data → **Migrate from previous version**
-- Enter the version you're migrating FROM when prompted (e.g. `5.07`)
-- Wait for the completion alert (~2 minutes)
-
-**8. Upload your save**
-
-- Menu: Upload PokeRogue Data → Upload Data
+See **[UPDATING.md](UPDATING.md)** for the full per-version runbook (copy the new
+spreadsheet, point clasp at it, `python3 update.py`, `clasp push -f`, then run
+**RogueDex Functions → Migrate from Previous Version** in the sheet).
 
 ---
 
@@ -179,12 +135,12 @@ clasp push -f
 ```bash
 cd library
 # edit files
-clasp push
+clasp push          # or just `git push` — the pre-push hook runs clasp push for you
 ```
 
-Then in the Apps Script editor: Deploy → Manage deployments → pencil on the existing deployment → Version: New version → Deploy.
-
-Finally, bump the version number in `bound/appsscript.json` and run through the next version's setup (or update in-place via the Apps Script UI on each active spreadsheet).
+That's it. The bound manifest references the library with `developmentMode: true`, so
+every spreadsheet copy automatically runs the latest pushed code — **no redeployment or
+version bump required**.
 
 ---
 

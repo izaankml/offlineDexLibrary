@@ -61,7 +61,8 @@ const TRACKERS = [
     columnMap: buildShiftMap(4, 11, 4), // D-K -> H-O (+4 shift)
     includeHeaders: true,
     headerRows: 1,
-    borderColumns: [],
+    highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR, // yellow
+    useFilter: true,
   },
   {
     key: 'StarterDex',
@@ -72,8 +73,11 @@ const TRACKERS = [
     columnMap: buildShiftMap(10, 141, -6), // J-EK -> D-EE (-6 shift)
     includeHeaders: true,
     headerRows: 2,
-    // L, U, AA, AB, AG, AI, AL, AO, BO, CQ, EE
-    borderColumns: [12, 21, 27, 28, 33, 35, 38, 41, 67, 95, 135],
+    // E, AH, AI — auto-calculated columns, never highlight
+    excludeDisplayColumns: new Set([5, 34, 35]),
+    // N, AB — caught-hatch columns get the purple highlight
+    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    useFilter: true,
   },
   {
     key: 'FullDex',
@@ -84,23 +88,39 @@ const TRACKERS = [
     columnMap: buildShiftMap(7, 138, 0), // G-EH -> G-EH (no shift)
     includeHeaders: true,
     headerRows: 2,
-    // O, X, AD, AE, AJ, AL, AO, AR, BR, CT, EH (+3 from Starter Dex)
-    borderColumns: [15, 24, 30, 31, 36, 38, 41, 44, 70, 98, 138],
+    // H, AK, AL — auto-calculated columns, never highlight (+3 from Starter Dex)
+    excludeDisplayColumns: new Set([8, 37, 38]),
+    // Q, AE — caught-hatch columns get the purple highlight
+    columnHighlightColors: { 17: CAUGHT_HATCH_HIGHLIGHT_COLOR, 31: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    useFilter: true,
   },
 ]
 ```
 
 Why these column shifts: the display sheets have extra leading columns (dex#, name, etc.) that the data sheets don't have. The shift between data column and display column is consistent within a sheet but varies per tracker because each display sheet has a different number of leading columns.
 
+**Highlight colors** (module constants at the top of SaveTracker.js):
+
+- `QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00'` (yellow) — Quick Checklist
+- `DEX_HIGHLIGHT_COLOR = '#93c47d'` (light green 1) — default for the dex sheets
+- `CAUGHT_HATCH_HIGHLIGHT_COLOR = '#b4a7d6'` (light purple 2) — the caught/hatch columns, applied per-column via `columnHighlightColors`
+
+**Per-tracker highlight controls:**
+
+- `highlightColor` — the default fill for changed cells in this tracker; falls back to `DEX_HIGHLIGHT_COLOR` when omitted.
+- `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the caught/hatch columns get purple instead of the default).
+- `excludeDisplayColumns` — display columns that are auto-calculated (e.g. totals derived from other cells) and must never be highlighted even when their value changes. Note the egg-move total column was removed from these sets so it now *does* highlight.
+- `useFilter` — enables the marker-column + "View Changes" filter-view workflow (see below).
+
 **The flow on each save upload:**
 
-1. `clearHighlights()` - wipe orange borders from previous run, redraw structural black borders
-2. `highlightChanges()` - compare current data values to snapshot, paint thick green borders on changed cells
+1. `clearHighlights()` - wipe background fills from the previous run (using the marker column to clear only rows that were actually highlighted, when `useFilter`)
+2. `highlightChanges()` - compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
 3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
 
-**Why borders not background colors:** the display cells often have conditional formatting that overrides background colors. Borders are not affected by conditional formatting and therefore are reliably visible. Color is `#38761d` (Google's "Dark green 1"), `SOLID_THICK` weight.
+**Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
 
-**Why structural black borders are re-applied during clearing:** when we clear the green highlight borders, we accidentally wipe the spreadsheet's design borders too. So the clear step also redraws them. Each tracker has a `borderColumns` list of right-borders to draw. They use `SOLID_MEDIUM` black.
+**Marker column + filter views:** for trackers with `useFilter: true`, the highlighter writes a `●` into the first column past the tracked range (`max(columnMap values) + 1`) on every changed row, and hides that column. This drives two things: (a) fast clearing — only marked rows get their backgrounds reset; (b) a "View Changes" filter view (created by the Migrator) that filters each display sheet to rows whose marker is `NOT_BLANK`, so you can collapse to just the Pokemon that changed.
 
 **Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
 
@@ -114,7 +134,7 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 **Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex 5.07"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
 
-**Five migration steps:**
+**Six migration steps:**
 
 1. **Quick Checklist header rows 1-10:** copies cell formatting + column widths + hidden states for rows 1-10. Ports formulas/values for row 1 columns H-O only (skip the merged title at A1:D1) and row 10 in full.
 
@@ -125,6 +145,8 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 4. **Daily Mode cells:** unmerges any existing merge at B16, re-merges to `B16:M131`, copies B16 formula. Also copies L12:M14 formulas/values from source.
 
 5. **Hidden sheets:** any sheet hidden in source is also hidden in destination if it exists by name.
+
+6. **Changes filter views:** for each tracker with `useFilter`, creates (replacing any existing one) a "View Changes" filter view on the display sheet, scoped to the header row down through the marker column and filtered to `NOT_BLANK` marker cells. Built via the Sheets advanced service `batchUpdate` and driven off the shared `TRACKERS` config in SaveTracker.js — the only place the Migrator reads tracker metadata, so highlight-color / excluded-column tweaks in SaveTracker don't require Migrator changes.
 
 **Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
 
@@ -193,20 +215,24 @@ setTimeout(() => google.script.host.close(), 500)
 
 ## Per-version setup workflow
 
-When the creator releases a new version (e.g., 5.08):
+The full runbook lives in [UPDATING.md](UPDATING.md). The short version when the creator
+releases a new version (e.g., 6.01):
 
-1. Make a fresh copy of the new public spreadsheet to my Drive (this gives me a fresh bound script with the creator's original code)
-2. From the local repo:
+1. Make a fresh copy of the new public spreadsheet to my Drive, renamed exactly
+   `Offline RogueDex <version>` (this gives me a fresh bound script with the creator's code).
+2. From the local repo, point clasp at the new copy and reconcile the bound code:
    ```bash
    cd bound
    # Update .clasp.json with the new spreadsheet's Script ID
-   # Update PREVIOUS_VERSION constant in onOpen.js to match what I'm migrating from
+   python3 update.py   # pull creator code, restore my edits, merge manifest
    clasp push -f
    ```
-3. Open the new spreadsheet, reload the page, click "Upload PokeRogue Data > Migrate from previous version"
-4. Wait for migration to finish (~2 minutes for the formatting/hidden sheets work)
-5. Upload my latest save file via "Upload PokeRogue Data > Upload Data"
-6. The save tracker should highlight cells that changed compared to the migrated state
+3. Open the new spreadsheet, reload, click **RogueDex Functions → Migrate from Previous Version**,
+   and enter the version I'm migrating FROM when prompted (the destination version is read from
+   the filename). The source version is no longer a hardcoded constant.
+4. Wait for migration to finish (~2 minutes for the formatting/hidden sheets work).
+5. Upload my latest save file via **RogueDex Functions → Upload Data**.
+6. The save tracker should highlight cells that changed compared to the migrated state.
 
 ## Things to know about the spreadsheet
 
@@ -218,8 +244,8 @@ When the creator releases a new version (e.g., 5.08):
 ## Things that took some figuring out
 
 - **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. Workaround: copy source SHEET into destination spreadsheet as a temp, do local copyTo, delete temp.
-- **Conditional formatting overrides backgrounds:** changed-cell highlights couldn't use background colors because conditional formatting wins. Borders work because CF can't change borders.
-- **Apps Script can't read borders:** there's no `getBorder()` method. So we can't restore original borders after clearing. Solution: re-apply known structural borders explicitly.
+- **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
+- **Marker column for cheap clearing:** because re-reading every display cell's background to find what to clear is slow, the highlighter stamps a `●` into a hidden marker column on changed rows. Clearing then resets only the marked rows, and the same marker drives the "View Changes" filter views.
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
 - **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.
