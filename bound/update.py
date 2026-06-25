@@ -67,6 +67,41 @@ def clasp_pull():
         fail(f"clasp pull failed:\n{result.stderr.rstrip()}")
 
 
+# The merged bound files, normalized through Prettier so the creator's pristine
+# code shares your formatting. This collapses whitespace/quote/semicolon differences
+# to identical bytes, leaving only genuine content changes for git to merge — without
+# it, every line you reformatted would conflict the moment the creator touched it.
+PRETTIER_FILES = [
+    "onOpen.js",
+    "LoadPlayerData.js",
+    "UploadPlayerData.html",
+    "appsscript.json",
+]
+
+# Style passed as explicit flags (mirrors the repo-root .prettierrc) rather than
+# relying on config discovery: format_bound runs while the `creator` branch is checked
+# out, where the repo-root .prettierrc isn't present, so config lookup would silently
+# fall back to Prettier defaults and produce the wrong style.
+PRETTIER_FLAGS = ["--no-semi", "--single-quote", "--trailing-comma", "all"]
+
+
+def format_bound():
+    """Run Prettier over the merged bound files (in bound/, the cwd)."""
+    result = subprocess.run(
+        ["prettier", "--write", *PRETTIER_FLAGS, "--log-level", "warn", *PRETTIER_FILES],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # Don't hard-fail — but warn loudly, because skipping the format means
+        # the merge will conflict on formatting differences.
+        print(
+            "\n  WARNING: prettier failed or is not installed — skipping format.\n"
+            "  Install it (npm i -g prettier) for clean merges. Details:\n"
+            f"  {(result.stderr or result.stdout).strip()}",
+            file=sys.stderr,
+        )
+
+
 def fail(msg):
     print(f"\n  ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -129,6 +164,8 @@ def bootstrap(version):
     git("checkout", "--orphan", CREATOR_BRANCH)
     print("\n── Pulling creator's pristine code ────────────")
     clasp_pull()
+    print("── Normalizing formatting with Prettier ───────")
+    format_bound()
     git("add", "-A")
     git("commit", "-m", f"creator baseline ({version})")
 
@@ -147,6 +184,8 @@ def update(version):
     try:
         print("\n── Pulling creator's pristine code ────────────")
         clasp_pull()
+        print("── Normalizing formatting with Prettier ───────")
+        format_bound()
         if not tree_dirty():
             print("\n  Creator code unchanged from last version — nothing to merge.")
             return

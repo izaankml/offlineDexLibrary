@@ -16,10 +16,10 @@ function EvpKDF(password, salt) {
     hasher: CryptoJS.algo.MD5,
   }).compute(key, salt)
   const iv = CryptoJS.lib.WordArray.create(
-    keyMaterial.words.slice(keySize, keySize + ivSize)
+    keyMaterial.words.slice(keySize, keySize + ivSize),
   )
   const derivedKey = CryptoJS.lib.WordArray.create(
-    keyMaterial.words.slice(0, keySize)
+    keyMaterial.words.slice(0, keySize),
   )
   return {
     key: derivedKey,
@@ -113,7 +113,7 @@ function parseJsonContent(plaintext) {
         .padStart()
       jsonContent.dexData[key]['ribbons'] = parseInt(
         jsonContent.dexData[key]['ribbons'],
-        16
+        16,
       ).toString(2)
     }
   }

@@ -232,12 +232,15 @@ releases a new version:
    ```
 
    **How the reconcile works (changed in 2026):** a `creator` branch holds the creator's
-   *pristine* bound code, one commit per version. `update.py` pulls the fresh code onto
-   that branch and `git merge`s it into `main`, so the creator's updated functions *and*
-   my customizations both survive — only same-line edits conflict. This replaced the old
-   `git restore bound/` approach, which silently discarded every creator code change (it
-   was a stale `checkVersion` from that loss that exposed the problem). Full model and the
-   one-time first-run bootstrap are in [UPDATING.md](UPDATING.md).
+   *pristine* bound code, one commit per version. `update.py` pulls the fresh code,
+   normalizes it through Prettier (`.prettierrc` at the repo root — matching my own
+   formatting), commits it on that branch, and `git merge`s it into `main`, so the
+   creator's updated functions *and* my customizations both survive — only genuine
+   same-line *content* edits conflict (formatting differences are normalized away, so my
+   reformatting doesn't manufacture conflicts). This replaced the old `git restore bound/`
+   approach, which silently discarded every creator code change (it was a stale
+   `checkVersion` from that loss that exposed the problem). Full model and the one-time
+   first-run bootstrap are in [UPDATING.md](UPDATING.md).
 3. Open the new spreadsheet, reload, click **RogueDex Functions → Migrate from Previous Version**,
    and enter the version I'm migrating FROM when prompted (the destination version is read from
    the filename). The source version is no longer a hardcoded constant.

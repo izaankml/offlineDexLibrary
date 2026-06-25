@@ -135,6 +135,16 @@ This is why the stale-`checkVersion` problem can't recur: a creator change to
 `checkVersion` is now a real diff against the baseline and merges in, instead of being
 silently discarded.
 
+**Prettier normalization.** Right after `clasp pull`, `update.py` runs Prettier over the
+pulled bound files (`.prettierrc` at the repo root: `semi: false`, `singleQuote: true`,
+`trailingComma: all`) *before* committing the creator baseline. Your `main` files use the
+same Prettier config, so both sides share identical formatting — collapsing whitespace,
+quote, and semicolon differences to identical bytes. The result: a creator edit only
+conflicts when it touches the same code you customized *in substance*, not merely because
+you reformatted the line. Without this, every line you restyled would conflict the moment
+the creator touched it. (Requires Prettier on your PATH; `update.py` warns and continues
+if it's missing, but merges will be noisier.)
+
 Only the files git tracks in `bound/` participate — `onOpen.js`, `LoadPlayerData.js`,
 `UploadPlayerData.html`, `appsscript.json`. The creator files you never touch
 (`ImportDB.js`, `Sheet Status Generator.js`) are gitignored, so `clasp pull` just
@@ -153,6 +163,54 @@ branch is a shared ancestor and all later merges are clean line-level 3-way merg
 The bootstrap run **must** have `.clasp.json` pointing at a fresh, unmodified copy of
 the creator's current version — `update.py` asks you to confirm this before it records
 the baseline.
+
+### Subsequent updates (every version after the first)
+
+Once the `creator` branch exists, the same command does a real line-level merge — no
+more whole-file reconcile. Example: the creator releases **6.02** and changes some of
+their functions.
+
+```bash
+# point bound/.clasp.json at a fresh copy of the creator's 6.02 sheet
+python3 update.py 6.02
+```
+
+`update.py` skips the bootstrap and:
+
+1. `git checkout creator` → `clasp pull` → commits the pristine 6.02 code as a new
+   commit on `creator` (parent = the 6.01 baseline).
+2. `git checkout main` → `git merge creator`.
+
+Now there *is* a common ancestor (the previous version's pristine commit), so git
+extracts exactly what the creator changed between 6.01 and 6.02 and replays that delta
+onto your code:
+
+- Creator changed a function you never touched → **applied automatically**.
+- Creator added a new helper → **added automatically**.
+- Creator changed lines you *also* changed → **conflict** (resolve, keeping both).
+- Your custom functions the creator never touched (`runMigration`, the menu, the
+  `uploadFile` wrapper) → **preserved automatically**.
+
+Resolve any conflicts, `git commit` to finish the merge, `clasp push -f`. That 6.02
+commit on `creator` then becomes the baseline for 6.03, and so on indefinitely.
+
+### Why formatting differences don't cause conflicts
+
+You reformat the bound files heavily (single quotes, no semicolons, comments stripped,
+trailing commas), while the creator ships their own style. Left alone, that divergence
+would make *every* line you restyled conflict the moment the creator touched it — a
+creator edit and your reformat both "change" the same line relative to the baseline.
+
+The **Prettier normalization** step (above) removes this: because `update.py` formats the
+creator's pulled code with the same `.prettierrc` your `main` uses, the baseline and your
+code share identical formatting. Git then only sees conflicts where you and the creator
+changed the *same code in substance* — formatting-only differences resolve to identical
+bytes and merge silently. So restyled files like `onOpen.js` and `LoadPlayerData.js` merge
+just as cleanly as any other.
+
+If Prettier ever isn't on your PATH, `update.py` warns and continues without formatting —
+merges still work but go back to being noisy with formatting-only conflicts. Reinstall
+Prettier (`npm i -g prettier`) to get clean merges back.
 
 ---
 
@@ -185,6 +243,9 @@ the baseline.
   back with `git checkout main`; the pristine pull is safely committed on `creator`.
 - **The whole file conflicted, not just a few lines** — that's the one-time first-run
   bootstrap (orphan branch, no merge base). Normal after the `creator` branch exists.
+- **Suddenly lots of formatting-only conflicts** — Prettier didn't run (not on PATH), so
+  the creator baseline wasn't normalized to your style. Install it (`npm i -g prettier`)
+  and re-run; see [Why formatting differences don't cause conflicts](#why-formatting-differences-dont-cause-conflicts).
 - **`creator` branch recorded my edits as the baseline** — you pointed `.clasp.json` at
   a copy you'd already pushed to. Delete the bad baseline commit and re-run pointed at a
   truly fresh copy: `git checkout main && git branch -D creator` (first-run only).

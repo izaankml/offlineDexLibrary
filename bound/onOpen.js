@@ -38,7 +38,7 @@ function runMigration() {
     ui.alert(
       'Could not determine current version from spreadsheet name "' +
         ss.getName() +
-        '". Expected format: "Offline RogueDex X.YY".'
+        '". Expected format: "Offline RogueDex X.YY".',
     )
     return
   }
@@ -47,7 +47,7 @@ function runMigration() {
   const response = ui.prompt(
     'Migrate from Previous Version',
     'Version you are migrating from:',
-    ui.ButtonSet.OK_CANCEL
+    ui.ButtonSet.OK_CANCEL,
   )
   if (response.getSelectedButton() !== ui.Button.OK) return
 
@@ -56,7 +56,7 @@ function runMigration() {
     ui.alert(
       '"' +
         sourceVersion +
-        '" doesn\'t look like a version number. Expected format: X.YY'
+        '" doesn\'t look like a version number. Expected format: X.YY',
     )
     return
   }
