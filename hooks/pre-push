@@ -1,0 +1,35 @@
+#!/bin/bash
+# Runs clasp push for library/ and/or bound/ if their tracked files changed
+# in the commits being pushed. Bypass with: git push --no-verify
+
+PROJECTS=("library" "bound")
+FAILED=0
+
+# SHA of the empty git tree — used as base when pushing a new branch
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+while read local_ref local_sha remote_ref remote_sha; do
+    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+        base="$EMPTY_TREE"
+    else
+        base="$remote_sha"
+    fi
+
+    for dir in "${PROJECTS[@]}"; do
+        changed=$(git diff --name-only "$base" "$local_sha" -- "$dir/")
+        [[ -z "$changed" ]] && continue
+
+        if [[ ! -f "$dir/.clasp.json" ]]; then
+            echo "warning: $dir/ changed but $dir/.clasp.json missing — skipping clasp push"
+            continue
+        fi
+
+        echo "pre-push: $dir/ changed, pushing to Apps Script..."
+        if ! (cd "$dir" && clasp push -f); then
+            echo "error: clasp push failed in $dir/"
+            FAILED=1
+        fi
+    done
+done
+
+exit $FAILED
