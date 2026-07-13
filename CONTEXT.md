@@ -75,8 +75,13 @@ const TRACKERS = [
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight
     excludeDisplayColumns: new Set([5, 34, 35]),
-    // N, AB — caught-hatch columns get the purple highlight
-    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    // N (caught), AB (hatched), AO (wins) — counts that increment on an
+    // already-unlocked entry, so they get the purple increment highlight
+    columnHighlightColors: {
+      14: INCREMENT_HIGHLIGHT_COLOR,
+      28: INCREMENT_HIGHLIGHT_COLOR,
+      41: INCREMENT_HIGHLIGHT_COLOR,
+    },
     useFilter: true,
   },
   {
@@ -90,8 +95,13 @@ const TRACKERS = [
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight (display now matches Starter Dex)
     excludeDisplayColumns: new Set([5, 34, 35]),
-    // N, AB — caught-hatch columns get the purple highlight
-    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    // N (caught), AB (hatched), AO (wins) — counts that increment on an
+    // already-unlocked entry, so they get the purple increment highlight
+    columnHighlightColors: {
+      14: INCREMENT_HIGHLIGHT_COLOR,
+      28: INCREMENT_HIGHLIGHT_COLOR,
+      41: INCREMENT_HIGHLIGHT_COLOR,
+    },
     useFilter: true,
   },
 ]
@@ -103,12 +113,12 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 - `QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00'` (yellow) — Quick Checklist
 - `DEX_HIGHLIGHT_COLOR = '#93c47d'` (light green 1) — default for the dex sheets
-- `CAUGHT_HATCH_HIGHLIGHT_COLOR = '#b4a7d6'` (light purple 2) — the caught/hatch columns, applied per-column via `columnHighlightColors`
+- `INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6'` (light purple 2) — counter columns that increment on an already-unlocked entry (caught, hatched, wins) rather than marking a new unlock; applied per-column via `columnHighlightColors`
 
 **Per-tracker highlight controls:**
 
 - `highlightColor` — the default fill for changed cells in this tracker; falls back to `DEX_HIGHLIGHT_COLOR` when omitted.
-- `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the caught/hatch columns get purple instead of the default).
+- `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the counter columns get the purple increment color instead of the default).
 - `excludeDisplayColumns` — display columns that are auto-calculated (e.g. totals derived from other cells) and must never be highlighted even when their value changes. Note the egg-move total column was removed from these sets so it now *does* highlight.
 - `useFilter` — enables the hidden marker-column workflow used for fast highlight-clearing (see below). (The name is historical: it once also drove "View Changes" filter views, which the Migrator no longer creates.)
 

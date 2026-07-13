@@ -18,7 +18,7 @@
 
 const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00' // yellow
 const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
-const CAUGHT_HATCH_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
+const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
 const CHUNK_ROWS = 200
 
 // Module-level state for toast progress tracking.
@@ -116,8 +116,13 @@ const TRACKERS = [
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight
     excludeDisplayColumns: new Set([5, 34, 35]),
-    // N, AB — caught-hatch columns get the purple highlight
-    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    // N (caught), AB (hatched), AO (wins) — counts that increment on an
+    // already-unlocked entry, so they get the purple increment highlight
+    columnHighlightColors: {
+      14: INCREMENT_HIGHLIGHT_COLOR,
+      28: INCREMENT_HIGHLIGHT_COLOR,
+      41: INCREMENT_HIGHLIGHT_COLOR,
+    },
     useFilter: true,
   },
   {
@@ -131,8 +136,13 @@ const TRACKERS = [
     headerRows: 2,
     // E, AH, AI — auto-calculated columns, never highlight (display now matches Starter Dex)
     excludeDisplayColumns: new Set([5, 34, 35]),
-    // N, AB — caught-hatch columns get the purple highlight
-    columnHighlightColors: { 14: CAUGHT_HATCH_HIGHLIGHT_COLOR, 28: CAUGHT_HATCH_HIGHLIGHT_COLOR },
+    // N (caught), AB (hatched), AO (wins) — counts that increment on an
+    // already-unlocked entry, so they get the purple increment highlight
+    columnHighlightColors: {
+      14: INCREMENT_HIGHLIGHT_COLOR,
+      28: INCREMENT_HIGHLIGHT_COLOR,
+      41: INCREMENT_HIGHLIGHT_COLOR,
+    },
     useFilter: true,
   },
 ]
