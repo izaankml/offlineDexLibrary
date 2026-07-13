@@ -128,6 +128,8 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 2. `highlightChanges()` - compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
 3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
 
+**Uploading without re-snapshotting:** `processChangesWithoutSnapshot()` runs steps 1-2 and skips step 3, so the existing snapshot stays the baseline. Highlights then keep accumulating against that baseline across uploads instead of each upload resetting what "changed since last time" means — useful for a mid-run save, or a re-upload after a run you don't want to bank yet. It's exposed through the **Upload Data (Keep Baseline)** menu item; the regular **Upload Data** item still snapshots.
+
 **Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
 
 **Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the first column past the tracked range (`max(columnMap values) + 1`) on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
@@ -172,9 +174,12 @@ Lives inside each spreadsheet copy. Has the creator's original code plus my modi
 
 The creator provides `onOpen()`, `checkVersion()`, and `htmlmodalDialog()`. I:
 
-- Add menu items: Snapshot Data, Highlight Changes, Clear Highlights, Migrate from previous version
+- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Migrate from previous version
 - Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `runMigration()`
+- Point the two Upload Data items at my own `openUploadDialog()` / `openUploadDialogKeepBaseline()` wrappers instead of the creator's `openAttachmentDialog()` directly
 - The `PREVIOUS_VERSION` constant gets updated each time I migrate to a new version
+
+**How the "keep baseline" choice reaches `uploadFile`:** the creator's dialog (`UploadPlayerData.html`) always dispatches `google.script.run.uploadFile(obj)`, and it's a separate server execution, so module state can't carry the choice across. Instead each menu wrapper writes (or deletes) the `OFFLINEDEX_SKIP_SNAPSHOT` document property before opening the dialog, and `uploadFile` reads and clears it. Both entry points always set it, so it can't go stale. This keeps `openAttachmentDialog()` and the dialog HTML unmodified — one less thing to reconcile on each version merge.
 
 The wrapper functions are needed because Apps Script menu items can't directly call library functions. They have to call top-level functions in the bound script that then forward to the library.
 
@@ -189,6 +194,10 @@ I only modify `uploadFile()` to wrap the import in toast tracking and trigger `p
 ```javascript
 function uploadFile(obj) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const props = PropertiesService.getDocumentProperties()
+  const skipSnapshot = props.getProperty(SKIP_SNAPSHOT_PROPERTY) === 'true'
+  props.deleteProperty(SKIP_SNAPSHOT_PROPERTY)
+
   OfflineDexLib.resetToastProgress()
   OfflineDexLib.startStep(ss, 'Importing save data')
 
@@ -202,7 +211,11 @@ function uploadFile(obj) {
   OfflineDexLib.finishStep()
 
   try {
-    OfflineDexLib.processChanges()
+    if (skipSnapshot) {
+      OfflineDexLib.processChangesWithoutSnapshot()
+    } else {
+      OfflineDexLib.processChanges()
+    }
   } catch (e) {
     Logger.log('processChanges failed: ' + e.message)
   }

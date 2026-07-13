@@ -3,7 +3,8 @@ function onOpen() {
 
   SpreadsheetApp.getUi()
     .createMenu('RogueDex Functions')
-    .addItem('Upload Data', 'openAttachmentDialog')
+    .addItem('Upload Data', 'openUploadDialog')
+    .addItem('Upload Data (Keep Baseline)', 'openUploadDialogKeepBaseline')
     .addSeparator()
     .addItem('Snapshot Data', 'snapshot')
     .addItem('Highlight Changes', 'highlightChanges')
@@ -13,6 +14,36 @@ function onOpen() {
     .addToUi()
 
   forceUpdate(true)
+}
+
+// ============================================================
+// UPLOAD ENTRY POINTS
+//
+// The upload dialog (UploadPlayerData.html) always calls uploadFile(), so the
+// choice of post-upload flow is stashed in a document property here and read
+// back in uploadFile. Both menu items set it, so it can't go stale.
+// ============================================================
+const SKIP_SNAPSHOT_PROPERTY = 'OFFLINEDEX_SKIP_SNAPSHOT'
+
+/** Normal upload: highlight changes, then snapshot as the new baseline. */
+function openUploadDialog() {
+  PropertiesService.getDocumentProperties().deleteProperty(
+    SKIP_SNAPSHOT_PROPERTY,
+  )
+  openAttachmentDialog()
+}
+
+/**
+ * Upload without the trailing snapshot: changes are highlighted against the
+ * current baseline, which stays in place so the next upload still diffs
+ * against it.
+ */
+function openUploadDialogKeepBaseline() {
+  PropertiesService.getDocumentProperties().setProperty(
+    SKIP_SNAPSHOT_PROPERTY,
+    'true',
+  )
+  openAttachmentDialog()
 }
 
 // ============================================================

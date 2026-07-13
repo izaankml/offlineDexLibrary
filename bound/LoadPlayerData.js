@@ -134,9 +134,17 @@ function writeJsonToSheet(jsonContent) {
 // ============================================================
 // MODIFIED uploadFile: integrates with OfflineDexLib for
 // snapshot tracking and change highlighting.
+//
+// Which menu item opened the dialog decides whether the upload ends with a
+// fresh snapshot; see openUploadDialog / openUploadDialogKeepBaseline in
+// onOpen.js. The flag is consumed here so it never carries into a later upload.
 // ============================================================
 function uploadFile(obj) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const props = PropertiesService.getDocumentProperties()
+  const skipSnapshot = props.getProperty(SKIP_SNAPSHOT_PROPERTY) === 'true'
+  props.deleteProperty(SKIP_SNAPSHOT_PROPERTY)
+
   OfflineDexLib.resetToastProgress()
   OfflineDexLib.startStep(ss, 'Importing Save Data')
 
@@ -150,7 +158,11 @@ function uploadFile(obj) {
   OfflineDexLib.finishStep()
 
   try {
-    OfflineDexLib.processChanges()
+    if (skipSnapshot) {
+      OfflineDexLib.processChangesWithoutSnapshot()
+    } else {
+      OfflineDexLib.processChanges()
+    }
   } catch (e) {
     Logger.log('processChanges failed: ' + e.message)
   }

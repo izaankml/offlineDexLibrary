@@ -6,6 +6,8 @@
 //
 // PUBLIC FUNCTIONS (called via OfflineDexLib.<name>):
 //   processChanges()    - full flow used by uploadFile
+//   processChangesWithoutSnapshot()
+//                       - same, but keeps the existing snapshot as the baseline
 //   runProcessChanges() - standalone full flow with reset
 //   snapshot()          - capture current values to snapshots
 //   highlightChanges()  - paint cells that differ from snapshot
@@ -169,17 +171,43 @@ function runProcessChanges() {
   processChanges()
 }
 
+/** Standalone entry point: full flow, but keeps the current snapshot baseline. */
+function runProcessChangesWithoutSnapshot() {
+  resetToastProgress()
+  processChangesWithoutSnapshot()
+}
+
 /**
  * Full save-upload flow: clear stale highlights, paint cells that changed
  * since the last snapshot, then capture a new snapshot for next time.
  * Assumes the caller (uploadFile or runProcessChanges) already reset toast state.
+ * @param {{skipSnapshot: boolean}} [options] - when skipSnapshot is set, the
+ *   existing snapshot is left in place, so it stays the baseline for the next
+ *   upload and highlights accumulate against it.
  */
-function processChanges() {
+function processChanges(options) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const skipSnapshot = !!(options && options.skipSnapshot)
   clearHighlights()
   highlightChanges()
-  snapshot()
-  finishFlow(ss, 'All sheets processed')
+  if (!skipSnapshot) snapshot()
+  finishFlow(
+    ss,
+    skipSnapshot
+      ? 'All sheets processed (baseline kept)'
+      : 'All sheets processed',
+  )
+}
+
+/**
+ * Same as processChanges, but does not re-snapshot afterwards: the current
+ * snapshot stays the diff baseline. Use when an upload shouldn't reset what
+ * "changed since last time" means — e.g. uploading a mid-run save, or
+ * re-uploading after a failed run — so the next upload still highlights
+ * everything that happened since the last baseline.
+ */
+function processChangesWithoutSnapshot() {
+  processChanges({ skipSnapshot: true })
 }
 
 /**
@@ -270,7 +298,7 @@ function captureSnapshotForTracker(ss, t) {
       ' rows, cols ' +
       minDataCol +
       '-' +
-      maxDataCol
+      maxDataCol,
   )
 }
 
@@ -399,7 +427,7 @@ function applyHighlightsForTracker(ss, t) {
       totalChanged +
       ' changed cells in ' +
       LAST_STEP_ELAPSED +
-      's'
+      's',
   )
 }
 
