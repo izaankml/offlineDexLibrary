@@ -121,11 +121,12 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 - `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the counter columns get the purple increment color instead of the default).
 - `excludeDisplayColumns` — display columns that are auto-calculated (e.g. totals derived from other cells) and must never be highlighted even when their value changes. Note the egg-move total column was removed from these sets so it now *does* highlight.
 - `useFilter` — enables the hidden marker-column workflow used for fast highlight-clearing (see below). (The name is historical: it once also drove "View Changes" filter views, which the Migrator no longer creates.)
+- `sortDisplayColumn` — a 1-based display column to re-sort the display sheet by (ascending) at the start of highlighting, before any cell is painted. Set to `1` (column A) on all three trackers. Highlights are painted onto the display **by row offset**, so the display must be in the same order as the data sheet; if you've re-sorted the display (e.g. via the column-A slicers), the paint would otherwise land on the wrong rows. Sorting back to column A undoes that and also leaves the sheet in the order the slicers expect. Omit the option to skip the sort. **Assumes column-A-ascending reproduces the data sheet's canonical row order** — true because column A is the dex#/name key the data sheets are ordered by.
 
 **The flow on each save upload:**
 
 1. `clearHighlights()` - wipe background fills from the previous run (using the marker column to clear only rows that were actually highlighted, when `useFilter`)
-2. `highlightChanges()` - compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
+2. `highlightChanges()` - for each tracker: first re-sort the display by `sortDisplayColumn` (column A) so its rows line up with the data sheet, then compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
 3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
 
 **Uploading without re-snapshotting:** `processChangesWithoutSnapshot()` runs steps 1-2 and skips step 3, so the existing snapshot stays the baseline. Highlights then keep accumulating against that baseline across uploads instead of each upload resetting what "changed since last time" means — useful for a mid-run save, or a re-upload after a run you don't want to bank yet. It's exposed through the **Upload Data (Keep Baseline)** menu item; the regular **Upload Data** item still snapshots.

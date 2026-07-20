@@ -106,6 +106,10 @@ const TRACKERS = [
     headerRows: 1,
     highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
     useFilter: true,
+    // Re-sort the display by column A before painting so its row order matches
+    // the data sheet (highlights paint by row offset) and the column-A slicers
+    // line up. See sortDisplayByColumn.
+    sortDisplayColumn: 1,
   },
   {
     key: 'StarterDex',
@@ -126,6 +130,10 @@ const TRACKERS = [
       41: INCREMENT_HIGHLIGHT_COLOR,
     },
     useFilter: true,
+    // Re-sort the display by column A before painting so its row order matches
+    // the data sheet (highlights paint by row offset) and the column-A slicers
+    // line up. See sortDisplayByColumn.
+    sortDisplayColumn: 1,
   },
   {
     key: 'FullDex',
@@ -146,6 +154,10 @@ const TRACKERS = [
       41: INCREMENT_HIGHLIGHT_COLOR,
     },
     useFilter: true,
+    // Re-sort the display by column A before painting so its row order matches
+    // the data sheet (highlights paint by row offset) and the column-A slicers
+    // line up. See sortDisplayByColumn.
+    sortDisplayColumn: 1,
   },
 ]
 
@@ -322,6 +334,26 @@ function highlightChanges() {
 }
 
 /**
+ * Sort a display sheet's data rows in place, ascending, by one column so its
+ * row order matches the data sheet's canonical order. Only rows at/after
+ * `displayFirstRow` are sorted; the header rows above stay put. The whole used
+ * width is sorted so every column (icons and any trailing columns) travels with
+ * its row. The hidden marker column need not be in range — it's cleared before
+ * highlighting and fully rewritten by the paint loop afterwards.
+ * @param {Sheet} display
+ * @param {Object} t - a TRACKERS entry; uses t.sortDisplayColumn, t.displayFirstRow
+ */
+function sortDisplayByColumn(display, t) {
+  const lastRow = display.getLastRow()
+  if (lastRow <= t.displayFirstRow) return // 0 or 1 data rows: nothing to sort
+  const lastCol = display.getLastColumn()
+  const numRows = lastRow - t.displayFirstRow + 1
+  display
+    .getRange(t.displayFirstRow, 1, numRows, lastCol)
+    .sort({ column: t.sortDisplayColumn, ascending: true })
+}
+
+/**
  * Diff a single tracker's snapshot against current data and paint changed
  * cells on the display sheet. Skips columns in `excludeDisplayColumns` and
  * writes a per-row marker in the column after `displayMaxCol` when `useFilter`.
@@ -339,6 +371,14 @@ function applyHighlightsForTracker(ss, t) {
   if (!snap) {
     Logger.log(t.key + ': no snapshot exists, skipping')
     return
+  }
+
+  // Highlights are painted onto the display by row offset, so the display must
+  // be in the same order as the data sheet. Re-sort it to canonical (column A)
+  // order first, undoing any slicer/manual sort, so the paint lands on the
+  // right rows and the column-A slicers stay usable.
+  if (t.sortDisplayColumn) {
+    sortDisplayByColumn(display, t)
   }
 
   const dataCols = Object.keys(t.columnMap).map((n) => parseInt(n, 10))
