@@ -30,7 +30,7 @@ const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
  * spreadsheets, swallowing per-step errors so one failure doesn't block the
  * rest. Logs an OK/ERR summary at the end and shows a completion toast.
  * @param {string} sourceVersion - e.g. 'X.YY'
- * @param {string} destVersion - e.g. 'X.YY'
+ * @param {string} destVersion - e.g. 'X.YY' (label only; the destination is the active spreadsheet)
  */
 function portAll(sourceVersion, destVersion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
@@ -38,11 +38,12 @@ function portAll(sourceVersion, destVersion) {
 
   startStep(ss, 'Looking up spreadsheets')
   const srcId = findFileIdByVersion(sourceVersion)
-  const dstId = findFileIdByVersion(destVersion)
   Logger.log('Source: ' + sourceVersion + ' -> ' + srcId)
-  Logger.log('Dest:   ' + destVersion + ' -> ' + dstId)
+  // The destination is always the sheet this runs in — never looked up by
+  // name, so a stray duplicate copy with the same name can't be picked.
+  Logger.log('Dest:   ' + destVersion + ' -> ' + ss.getId() + ' (active)')
   const src = SpreadsheetApp.openById(srcId)
-  const dst = SpreadsheetApp.openById(dstId)
+  const dst = ss
   finishStep()
 
   const log = []
