@@ -81,9 +81,16 @@ toast will point you at Finish Setup — then **RogueDex Functions → Finish Se
 - It auto-detects your previous version (newest `Offline RogueDex X.YY` in Drive
   below this one) and asks one confirm: *Migrate from 6.01 → 6.03?* (NO lets you
   type a different source.)
-- Runs the migration (~2 min, toast tracks each step), records that this copy has
-  been migrated, then opens the **Upload Data** dialog so you can load your save
-  straight away.
+- It then **plans** the migration (reads only) and shows you the exact list of
+  changes — e.g. "Quick Checklist header: source block at column 5, destination at 6:
+  formulas shifted right by 1", "Daily Mode: insert custom column L" — before anything
+  is written. If the creator's layout doesn't fit a landmark, it stops here with the
+  reason and nothing is changed.
+- On YES it applies everything in one atomic update (seconds), records that this copy
+  has been migrated, then opens the **Upload Data** dialog so you can load your save
+  straight away. If the update is rejected, the sheet is unchanged and you're told why.
+- First run after 2026-08: Google will ask you to re-authorize once (the library now uses
+  the Sheets API); accept and run Finish Setup again.
 
 That's it. The merge commit on `main` is your record of this version's reconciled
 bound code; `bound/.clasp.json` is gitignored.
@@ -172,9 +179,9 @@ brings it along.)
   columns the same way (plus header labels — see `TRACKER_SPECS` in
   `src/lib/saveTracker.ts`), so a moved block is absorbed; a *renamed* header stops the
   upload with a message naming the label it couldn't find — update the spec then.
-- **Migration ran on the wrong layout** (e.g. Daily Mode column L never inserted):
-  the steps aren't undoable in place — trash the copy and start again from Prepare
-  Next Version rather than re-running Finish Setup.
+- **Migration ran on the wrong layout** — should no longer happen: the plan is shown
+  before applying and landmark mismatches abort it. The steps are idempotent, so
+  re-running Finish Setup on the same copy is safe.
 - **"No file found named ..."** — the source/destination filenames don't match
   `Offline RogueDex {v}` exactly, or the file is trashed. Rename to match.
 - **Finish Setup picked the wrong previous version** — it takes the newest copy older

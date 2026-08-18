@@ -20,7 +20,8 @@ import {
   copyName,
   versionFromName,
 } from '../shared/naming.ts'
-import { findSpreadsheetsNamed, formatResults, portAll } from './migrator.ts'
+import { applyPlanWithProgress, describePlan, findSpreadsheetsNamed, formatResults, planForVersions } from './migrator.ts'
+import { finishFlow, resetToastProgress, startStep } from './progress.ts'
 import { TRACKER_SPECS, snapshotSheetName } from './saveTracker.ts'
 
 /** Set once Finish Setup has run cleanly in a copy; holds the source version. */
@@ -198,7 +199,7 @@ export function finishSetup(): boolean {
     const choice = ui.alert(
       'Finish Setup',
       `Migrate your customizations from ${copyName(sourceVersion)} into this ${destVersion} sheet?\n\n` +
-        "Takes a couple of minutes; the upload dialog opens when it's done.\n(NO to type a different source version.)",
+        "You'll see the exact list of changes before anything is applied.\n(NO to type a different source version.)",
       ui.ButtonSet.YES_NO_CANCEL,
     )
     if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return false
@@ -215,20 +216,52 @@ export function finishSetup(): boolean {
     }
   }
 
-  const results = portAll(sourceVersion, destVersion)
+  // Plan first (reads only). A layout that doesn't fit stops here, before anything is written.
+  resetToastProgress('migration')
+  startStep(ss, 'Planning migration')
+  let plan
+  try {
+    plan = planForVersions(sourceVersion, destVersion)
+  } catch (e) {
+    finishFlow(ss, 'Migration not started', 10)
+    ui.alert(
+      'Finish Setup: cannot migrate',
+      `The layout check failed, so nothing was changed:\n\n${e instanceof Error ? e.message : e}\n\nSee UPDATING.md → Caveats.`,
+      ui.ButtonSet.OK,
+    )
+    return false
+  }
+  const go = ui.alert(
+    `Finish Setup: ${copyName(sourceVersion)} → ${destVersion}`,
+    `These changes will be applied in one atomic update:\n\n${describePlan(plan)}\n\nProceed?`,
+    ui.ButtonSet.YES_NO,
+  )
+  if (go !== ui.Button.YES) {
+    finishFlow(ss, 'Migration cancelled', 5)
+    return false
+  }
+
+  const results = applyPlanWithProgress(plan)
   const failed = results.filter((r) => !r.ok)
   if (failed.length) {
     ui.alert(
-      'Finish Setup: migration had errors',
-      `${failed.length} of ${results.length} steps failed. This copy has NOT been marked as migrated.\n\n` +
-        formatResults(results) +
-        '\n\nFix the cause (see UPDATING.md → Caveats) and run Finish Setup again on a fresh copy if a step changed the layout.',
+      'Finish Setup: migration failed',
+      `The update was rejected as a whole, so the sheet is unchanged. This copy has NOT been marked as migrated.\n\n${failed[0]!.error}\n\n${formatResults(results)}`,
       ui.ButtonSet.OK,
     )
     return false
   }
   props.setProperty(MIGRATED_FROM_PROPERTY, sourceVersion)
   return true
+}
+
+/** Dry run for the menu: the plan as text, or the reason it can't be built. */
+export function previewMigration(sourceVersion: string, destVersion: string): string {
+  try {
+    return describePlan(planForVersions(sourceVersion, destVersion))
+  } catch (e) {
+    return 'Cannot migrate: ' + (e instanceof Error ? e.message : String(e))
+  }
 }
 
 /**

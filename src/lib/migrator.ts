@@ -2,90 +2,144 @@
  * MIGRATOR
  *
  * Ports your customizations from an old OfflineDex spreadsheet to a new one.
- * Called from the destination spreadsheet's bound script via
- * OfflineDexLib.portAll(sourceVersion, destVersion).
+ *
+ * Since 2026-08 this is a plan → preview → apply pipeline on the Sheets API:
+ *   1. read the source (2 GETs: sheet list; formats/values of the customized
+ *      ranges) and the destination (2 GETs: sheet list + banding/CF/merges;
+ *      the locator cells) — no `openById`, no temp sheets;
+ *   2. build a list of Ops (human label + batchUpdate requests) — pure,
+ *      tested; planning THROWS if a landmark doesn't fit, so nothing is
+ *      touched when the creator's layout changed;
+ *   3. apply everything in ONE batchUpdate — atomic: all steps land or none.
+ *
+ * `finishSetup` shows the plan (describePlan) before applying it.
  */
 
 import { copyName } from '../shared/naming.ts'
+import { shiftFormulaColumns } from './formulaShift.ts'
 import { finishFlow, finishStep, resetToastProgress, startStep } from './progress.ts'
+import {
+  type BandedRange,
+  type CellData,
+  type ConditionalFormatRule,
+  type GridData,
+  type GridRange,
+  type Request,
+  type SheetInfo,
+  type SheetsClient,
+  type SpreadsheetInfo,
+  a1,
+  cellAt,
+  displayText,
+  gridAt,
+  hexToColor,
+  liveSheets,
+  sheetByTitle,
+} from './sheetsApi.ts'
 
-type Spreadsheet = GoogleAppsScript.Spreadsheet.Spreadsheet
-type Sheet = GoogleAppsScript.Spreadsheet.Sheet
-type Range = GoogleAppsScript.Spreadsheet.Range
-type ConditionalFormatRule = GoogleAppsScript.Spreadsheet.ConditionalFormatRule
-
-// Quick Checklist column layout. Columns A-D (#, image, Dex#, name) are
-// fixed; the data block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS
-// wide) starts at E in creator 6.01 and at F from 6.03 on (the creator added
-// a hidden junk column E). The migrator adopts the creator's layout as-is and
-// locates each sheet's data block by the first non-blank cell in row 10 right
-// of D. The Ribbons column (last of the block) is hidden after the port.
+// Quick Checklist: columns A-D (#, image, Dex#, name) are fixed; the data
+// block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS wide) starts at E
+// in creator 6.01 and F from 6.03 (hidden junk column E). Each sheet's block
+// is located by the first non-blank cell in row 10 right of D — the creator's
+// stats row on a fresh copy, your "Stats:" row on a migrated one.
+export const QUICK_CHECKLIST_SHEET = 'Quick Checklist'
 export const QUICK_CHECKLIST_FIXED_COLUMNS = 4
 export const QUICK_CHECKLIST_DATA_COLUMNS = 11
 export const QUICK_CHECKLIST_LOCATOR_ROW = 10
-export const QUICK_CHECKLIST_TITLE_CELL = 'A1'
+export const QUICK_CHECKLIST_HEADER_ROWS = 10
 export const QUICK_CHECKLIST_TITLE_PREFIX = 'POKEROGUE DEX '
 export const QUICK_CHECKLIST_IMAGE_COLUMN = 2
 
-// Daily Mode has a custom column L (map-size inputs in L12:M14 feed the
-// IMAGE formula in B16). Whether it's present is detected by a landmark: the
-// creator's "Missing Gym Leader Voucher…" header, at N2 when the custom
-// column exists (source) and at M2 when it doesn't (fresh copy).
-export const DAILY_MODE_LANDMARK_WITH_L = 'N2'
-export const DAILY_MODE_LANDMARK_WITHOUT_L = 'M2'
-export const B16_MERGE_RANGE = 'B16:M131'
-export const DAILY_MODE_FORMAT_RANGES = [B16_MERGE_RANGE, 'L12:M14']
+// Daily Mode: custom column L (map-size inputs L12:M14 feed the IMAGE formula
+// in B16). Presence is detected by the creator's "Missing Gym Leader
+// Voucher…" landmark: N2 when L exists (source), M2 when it doesn't (fresh copy).
+export const DAILY_MODE_SHEET = 'Daily Mode'
+export const DAILY_MODE_CUSTOM_COLUMN = 12 // L
+export const DAILY_MODE_LANDMARK_ROW = 2
+export const DAILY_MODE_LANDMARK_COL_WITH_L = 14 // N
+export const DAILY_MODE_LANDMARK_COL_WITHOUT_L = 13 // M
+export const B16_MERGE = { row1: 16, col1: 2, row2: 131, col2: 13 } // B16:M131
+export const DAILY_INPUTS = { row1: 12, col1: 12, row2: 14, col2: 13 } // L12:M14
 
-// IV conditional formatting on the dex checklists: swap "yellow when = 31"
-// for "red when NOT 31" over the same range.
+// IV conditional formatting on the dex checklists.
 export const DEX_IV_HIGHLIGHT_SHEETS = ['Starter Dex Checklist', 'Full Dex Checklist']
 export const DEX_IV_PERFECT_VALUE = '31'
 export const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
 
+export type Op = { label: string; requests: Request[]; note?: string }
+export type MigrationPlan = {
+  srcId: string
+  dstId: string
+  sourceVersion: string
+  destVersion: string
+  ops: Op[]
+  /** Things that were checked and found already done / not applicable. */
+  notes: string[]
+}
 export type StepResult = { label: string; ok: boolean; error?: string }
 
+// ---------------------------------------------------------------------------
+// Entry points
+// ---------------------------------------------------------------------------
+
 /**
- * Top-level migration entry. Runs each step against the source and destination
- * spreadsheets, catching per-step errors so one failure doesn't block the rest.
- * Returns the per-step results (the caller decides how to surface them) and
- * logs an OK/ERR summary.
+ * Read both spreadsheets and build the plan for migrating `sourceVersion` →
+ * the active spreadsheet (`destVersion`). Nothing is written. Throws when a
+ * landmark doesn't fit (the message says which).
  */
-export function portAll(sourceVersion: string, destVersion: string): StepResult[] {
+export function planForVersions(sourceVersion: string, destVersion: string, client: SheetsClient = liveSheets): MigrationPlan {
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const srcId = findFileIdByVersion(sourceVersion)
+  const dstId = ss.getId()
+  Logger.log(`Source: ${sourceVersion} -> ${srcId}; dest: ${destVersion} -> ${dstId} (active)`)
+  const src = readSource(client, srcId)
+  const dst = readDestination(client, dstId)
+  const { ops, notes } = buildPlan(src, dst, destVersion)
+  return { srcId, dstId, sourceVersion, destVersion, ops, notes }
+}
+
+/** Apply a plan in one atomic batchUpdate. */
+export function applyPlan(plan: MigrationPlan, client: SheetsClient = liveSheets): void {
+  const requests = plan.ops.flatMap((op) => op.requests)
+  if (requests.length === 0) return
+  client.batchUpdate(plan.dstId, requests)
+}
+
+/**
+ * Plan + apply with toast progress and timings; returns per-step results for
+ * the caller to surface. Kept for callers that don't preview first.
+ */
+export function portAll(sourceVersion: string, destVersion: string, client: SheetsClient = liveSheets): StepResult[] {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   resetToastProgress('migration')
-
-  startStep(ss, 'Looking up spreadsheets')
-  const srcId = findFileIdByVersion(sourceVersion)
-  Logger.log('Source: ' + sourceVersion + ' -> ' + srcId)
-  Logger.log('Dest:   ' + destVersion + ' -> ' + ss.getId() + ' (active)')
-  const src = SpreadsheetApp.openById(srcId)
-  const dst = ss
-  finishStep()
-
-  const results: StepResult[] = []
-  const safeRun = (label: string, fn: () => void): void => {
-    startStep(ss, label)
-    try {
-      fn()
-      results.push({ label, ok: true })
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e)
-      results.push({ label, ok: false, error })
-    }
-    finishStep()
+  let plan: MigrationPlan
+  startStep(ss, 'Planning migration')
+  try {
+    plan = planForVersions(sourceVersion, destVersion, client)
+  } catch (e) {
+    finishFlow(ss, 'Migration not started', 10)
+    return [{ label: 'Planning migration', ok: false, error: e instanceof Error ? e.message : String(e) }]
   }
-
-  safeRun('Formatting Quick Checklist', () => portQuickChecklistHeader(src, dst, destVersion))
-  safeRun('Banding Quick Checklist images', () => portQuickChecklistImageBanding(dst))
-  safeRun('Formatting Daily Mode', () => portDailyModeFormatting(src, dst))
-  safeRun('Updating Daily Mode Cells', () => portDailyModeCells(src, dst))
-  safeRun('Hiding sheets', () => portHiddenSheets(src, dst))
-  safeRun('Updating dex IV highlights', () => portDexIvHighlight(dst))
-
-  const failed = results.filter((r) => !r.ok).length
-  finishFlow(ss, failed ? `Migration finished with ${failed} error(s)` : 'Migration complete', 10)
+  finishStep()
+  const results = applyPlanWithProgress(plan, client)
   Logger.log(formatResults(results))
   return results
+}
+
+/** Apply with a toast step; one result per op (all OK, or all ERR with the same message — the batch is atomic). */
+export function applyPlanWithProgress(plan: MigrationPlan, client: SheetsClient = liveSheets): StepResult[] {
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const requests = plan.ops.reduce((n, op) => n + op.requests.length, 0)
+  startStep(ss, `Applying ${plan.ops.length} steps (${requests} changes)`)
+  try {
+    applyPlan(plan, client)
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e)
+    finishFlow(ss, 'Migration failed', 10)
+    return plan.ops.map((op) => ({ label: op.label, ok: false, error }))
+  }
+  finishFlow(ss, 'Migration complete', 10)
+  return plan.ops.map((op) => ({ label: op.label, ok: true }))
 }
 
 /** "OK  label" / "ERR label: message" lines. */
@@ -93,303 +147,538 @@ export function formatResults(results: StepResult[]): string {
   return results.map((r) => (r.ok ? 'OK  ' + r.label : 'ERR ' + r.label + ': ' + r.error)).join('\n')
 }
 
-/**
- * Port rows 1-10 of the Quick Checklist sheet: cell formatting, row heights,
- * column widths, and row hidden states; formulas (falling back to values) for
- * row 1's data columns and all of row 10; hide the Ribbons column; stamp the
- * destination version into A1. Uses a temp copy of the source sheet inside
- * the destination because copyTo() can't cross spreadsheets.
- */
-export function portQuickChecklistHeader(src: Spreadsheet, dst: Spreadsheet, destVersion: string): void {
-  const sName = 'Quick Checklist'
-  const sSheet = src.getSheetByName(sName)
-  const dSheet = dst.getSheetByName(sName)
-  if (!sSheet || !dSheet) throw new Error('Quick Checklist not found')
+/** Human-readable plan, for the confirm dialog and the log. */
+export function describePlan(plan: MigrationPlan): string {
+  const lines = plan.ops.map((op) => `• ${op.label}${op.note ? ` — ${op.note}` : ''}`)
+  const notes = plan.notes.map((n) => `· ${n}`)
+  return [...lines, ...notes].join('\n')
+}
 
-  const tempSheet = sSheet.copyTo(dst)
-  try {
-    const first = alignQuickChecklistTemp(tempSheet, dSheet)
-    const lastData = first + QUICK_CHECKLIST_DATA_COLUMNS - 1
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
 
-    const cols = tempSheet.getMaxColumns()
-    const dCols = dSheet.getMaxColumns()
-    if (dCols < cols) dSheet.insertColumnsAfter(dCols, cols - dCols)
+export type SourceInfo = { meta: SpreadsheetInfo; grid: SpreadsheetInfo }
+export type DestInfo = { meta: SpreadsheetInfo; grid: SpreadsheetInfo }
 
-    tempSheet
-      .getRange(1, 1, 10, cols)
-      .copyTo(dSheet.getRange(1, 1, 10, cols), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false)
+const GRID_FIELDS =
+  'sheets(properties(sheetId,title,gridProperties),data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,formattedValue)),rowMetadata,columnMetadata))'
 
-    for (let r = 1; r <= 10; r++) {
-      dSheet.setRowHeight(r, tempSheet.getRowHeight(r))
-      if (tempSheet.isRowHiddenByUser(r)) dSheet.hideRows(r)
-      else dSheet.showRows(r)
-    }
-    for (let c = 1; c <= cols; c++) {
-      dSheet.setColumnWidth(c, tempSheet.getColumnWidth(c))
-    }
+export function readSource(client: SheetsClient, srcId: string): SourceInfo {
+  const meta = client.get(srcId, { fields: 'sheets(properties(sheetId,title,hidden,gridProperties))' })
+  const grid = client.get(srcId, {
+    ranges: [
+      `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
+      `'${DAILY_MODE_SHEET}'!${a1(B16_MERGE.row1, B16_MERGE.col1)}:${a1(B16_MERGE.row2, B16_MERGE.col2)}`,
+      `'${DAILY_MODE_SHEET}'!${a1(DAILY_INPUTS.row1, DAILY_INPUTS.col1)}:${a1(DAILY_INPUTS.row2, DAILY_INPUTS.col2)}`,
+      `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
+    ],
+    includeGridData: true,
+    fields: GRID_FIELDS,
+  })
+  return { meta, grid }
+}
 
-    const portRowSlice = (rowNum: number, startCol: number, endCol: number): void => {
-      const numCols = endCol - startCol + 1
-      copyFormulasOrValues(tempSheet.getRange(rowNum, startCol, 1, numCols), dSheet.getRange(rowNum, startCol, 1, numCols))
-    }
-    portRowSlice(1, first, lastData)
-    portRowSlice(10, 1, cols)
+export function readDestination(client: SheetsClient, dstId: string): DestInfo {
+  const meta = client.get(dstId, {
+    fields: 'sheets(properties(sheetId,title,hidden,gridProperties),merges,bandedRanges,conditionalFormats)',
+  })
+  const grid = client.get(dstId, {
+    ranges: [
+      `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
+      `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)}:${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
+    ],
+    includeGridData: true,
+    fields: GRID_FIELDS,
+  })
+  return { meta, grid }
+}
 
-    dSheet.hideColumns(lastData) // Ribbons
-  } finally {
-    dst.deleteSheet(tempSheet)
+// ---------------------------------------------------------------------------
+// Plan (pure)
+// ---------------------------------------------------------------------------
+
+export function buildPlan(src: SourceInfo, dst: DestInfo, destVersion: string): { ops: Op[]; notes: string[] } {
+  const ops: Op[] = []
+  const notes: string[] = []
+  ops.push(...planQuickChecklist(src, dst, destVersion))
+  ops.push(...planQuickChecklistBanding(dst, notes))
+  ops.push(...planDailyMode(src, dst, notes))
+  ops.push(...planHiddenSheets(src, dst, notes))
+  ops.push(...planDexIvHighlight(dst, notes))
+  return { ops, notes }
+}
+
+function need<T>(v: T | null | undefined, what: string): T {
+  if (v === null || v === undefined) throw new Error(what)
+  return v
+}
+
+/** First non-blank cell of the locator row right of the fixed columns (1-based col). */
+export function quickChecklistFirstDataColumn(grid: GridData | null, which: string): number {
+  const rowIdx = QUICK_CHECKLIST_LOCATOR_ROW - 1 - (grid?.startRow ?? 0)
+  const cells = grid?.rowData?.[rowIdx]?.values ?? []
+  for (let c = QUICK_CHECKLIST_FIXED_COLUMNS; c < cells.length; c++) {
+    if (displayText(cells[c]!).trim() !== '') return c + 1
   }
-
-  setQuickChecklistTitle(dSheet, destVersion)
+  throw new Error(
+    `Quick Checklist (${which}): row ${QUICK_CHECKLIST_LOCATOR_ROW} is blank right of column ${QUICK_CHECKLIST_FIXED_COLUMNS}; cannot locate the data block`,
+  )
 }
 
 /**
- * Make the temp copy of the source Quick Checklist match the destination's
- * column layout, and return the (shared) column where the data block starts.
+ * Rows 1-10 of the Quick Checklist: formats for every source column, row
+ * heights + hidden rows, column widths, row 1 formulas/values over the data
+ * block and all of row 10 (same-sheet references shifted if the destination
+ * block starts further right), hide Ribbons, stamp the title.
  */
-export function alignQuickChecklistTemp(tempSheet: Sheet, dSheet: Sheet): number {
-  const srcFirst = quickChecklistFirstDataColumn(tempSheet, 'source')
-  const dstFirst = quickChecklistFirstDataColumn(dSheet, 'destination')
+export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: string): Op[] {
+  const sSheet = need(sheetByTitle(src.grid, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the source')
+  const dSheet = need(sheetByTitle(dst.grid, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
+  const dMeta = need(sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
+  const sheetId = dSheet.properties.sheetId
+  const sGrid = gridAt(sSheet)
+  const dGrid = gridAt(dSheet)
+
+  const srcFirst = quickChecklistFirstDataColumn(sGrid, 'source')
+  const dstFirst = quickChecklistFirstDataColumn(dGrid, 'destination')
   const offset = dstFirst - srcFirst
   if (offset < 0) {
     throw new Error(
       `Quick Checklist: destination data block starts at column ${dstFirst}, left of the source's ${srcFirst}; layout unknown, nothing ported`,
     )
   }
-  if (offset > 0) {
-    tempSheet.insertColumnsBefore(srcFirst, offset)
-    Logger.log(`Quick Checklist: source data block shifted right by ${offset} to match the destination (column ${dstFirst})`)
-  }
-  return dstFirst
-}
+  const srcCols = Math.max(
+    sSheet.properties.gridProperties?.columnCount ?? 0,
+    sGrid?.columnMetadata?.length ?? 0,
+    ...(sGrid?.rowData ?? []).map((r) => r.values?.length ?? 0),
+  )
+  const neededCols = srcCols + offset
+  const dstCols = dMeta.properties.gridProperties?.columnCount ?? 0
+  const lastData = dstFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1
+  const mapCol = (c1: number): number => (c1 >= srcFirst ? c1 + offset : c1) // 1-based
 
-/** Column where a Quick Checklist's data block starts (first non-blank in row 10 right of D). */
-export function quickChecklistFirstDataColumn(sheet: Sheet, which: string): number {
-  const start = QUICK_CHECKLIST_FIXED_COLUMNS + 1
-  const width = sheet.getMaxColumns() - start + 1
-  const row10 = sheet.getRange(QUICK_CHECKLIST_LOCATOR_ROW, start, 1, width).getDisplayValues()[0] ?? []
-  const idx = row10.findIndex((v) => String(v).trim() !== '')
-  if (idx === -1) {
-    throw new Error(
-      `Quick Checklist (${which}): row ${QUICK_CHECKLIST_LOCATOR_ROW} is blank right of column ${QUICK_CHECKLIST_FIXED_COLUMNS}; cannot locate the data block`,
-    )
-  }
-  return start + idx
-}
+  const ops: Op[] = []
+  const requests: Request[] = []
 
-/** Stamp the destination's own version into A1 unless A1 holds a formula. */
-export function setQuickChecklistTitle(dSheet: Sheet, destVersion: string): void {
-  const cell = dSheet.getRange(QUICK_CHECKLIST_TITLE_CELL)
-  if (cell.getFormula()) {
-    Logger.log(`Quick Checklist: ${QUICK_CHECKLIST_TITLE_CELL} is a formula (${cell.getFormula()}); title left alone`)
-    return
+  if (dstCols < neededCols) {
+    requests.push({ appendDimension: { sheetId, dimension: 'COLUMNS', length: neededCols - dstCols } })
   }
-  cell.setValue(QUICK_CHECKLIST_TITLE_PREFIX + destVersion)
+
+  // Formats, rows 1-10, in up to two column segments (left of the block, and the shifted block+rest).
+  const formatRows = (c1From: number, c1To: number): Request => ({
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: 0,
+        endRowIndex: QUICK_CHECKLIST_HEADER_ROWS,
+        startColumnIndex: mapCol(c1From) - 1,
+        endColumnIndex: mapCol(c1To),
+      },
+      rows: Array.from({ length: QUICK_CHECKLIST_HEADER_ROWS }, (_, r) => ({
+        values: Array.from({ length: c1To - c1From + 1 }, (_, i) => ({
+          userEnteredFormat: cellAt(sGrid, r, c1From - 1 + i).userEnteredFormat ?? {},
+        })),
+      })),
+      fields: 'userEnteredFormat',
+    },
+  })
+  if (srcFirst > 1) requests.push(formatRows(1, srcFirst - 1))
+  requests.push(formatRows(srcFirst, srcCols))
+
+  // Row heights + hidden rows.
+  for (let r = 0; r < QUICK_CHECKLIST_HEADER_ROWS; r++) {
+    const m = sGrid?.rowMetadata?.[r] ?? {}
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'ROWS', startIndex: r, endIndex: r + 1 },
+        properties: { pixelSize: m.pixelSize ?? 21, hiddenByUser: !!m.hiddenByUser },
+        fields: 'pixelSize,hiddenByUser',
+      },
+    })
+  }
+  // Column widths (hidden states stay the creator's).
+  for (let c1 = 1; c1 <= srcCols; c1++) {
+    const m = sGrid?.columnMetadata?.[c1 - 1]
+    if (!m?.pixelSize) continue
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'COLUMNS', startIndex: mapCol(c1) - 1, endIndex: mapCol(c1) },
+        properties: { pixelSize: m.pixelSize },
+        fields: 'pixelSize',
+      },
+    })
+  }
+
+  // Row 1 over the data block; row 10 in full — formulas (shifted) or values.
+  const valueCells = (row1: number, c1From: number, c1To: number): Request => ({
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: row1 - 1,
+        endRowIndex: row1,
+        startColumnIndex: mapCol(c1From) - 1,
+        endColumnIndex: mapCol(c1To),
+      },
+      rows: [
+        {
+          values: Array.from({ length: c1To - c1From + 1 }, (_, i) => {
+            const v = cellAt(sGrid, row1 - 1, c1From - 1 + i).userEnteredValue
+            if (!v) return {}
+            if (v.formulaValue !== undefined) {
+              return { userEnteredValue: { formulaValue: shiftFormulaColumns(v.formulaValue, srcFirst, offset) } }
+            }
+            return { userEnteredValue: v }
+          }),
+        },
+      ],
+      fields: 'userEnteredValue',
+    },
+  })
+  requests.push(valueCells(1, srcFirst, srcFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1))
+  if (srcFirst > 1) requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, 1, srcFirst - 1))
+  requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, srcFirst, srcCols))
+
+  // Hide Ribbons (last column of the block).
+  requests.push({
+    updateDimensionProperties: {
+      range: { sheetId, dimension: 'COLUMNS', startIndex: lastData - 1, endIndex: lastData },
+      properties: { hiddenByUser: true },
+      fields: 'hiddenByUser',
+    },
+  })
+
+  ops.push({
+    label: 'Quick Checklist header (rows 1–10)',
+    note:
+      offset > 0
+        ? `source block at column ${srcFirst}, destination at ${dstFirst}: formulas shifted right by ${offset}; Ribbons (col ${lastData}) hidden`
+        : `block at column ${dstFirst} in both; Ribbons (col ${lastData}) hidden`,
+    requests,
+  })
+
+  // Title stamp unless A1 is a formula.
+  const a1cell = cellAt(dGrid, 0, 0)
+  if (a1cell.userEnteredValue?.formulaValue !== undefined) {
+    ops.push({ label: 'Quick Checklist title', note: 'A1 is a formula; left alone', requests: [] })
+  } else {
+    ops.push({
+      label: 'Quick Checklist title',
+      note: `A1 ← "${QUICK_CHECKLIST_TITLE_PREFIX}${destVersion}"`,
+      requests: [
+        {
+          updateCells: {
+            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 1 },
+            rows: [{ values: [{ userEnteredValue: { stringValue: QUICK_CHECKLIST_TITLE_PREFIX + destVersion } }] }],
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+    })
+  }
+  return ops
 }
 
 /**
- * Extend the Quick Checklist's alternating-colour banding to cover the
- * Pokemon image column B. Falls back to widening row-parity CF rules.
+ * Extend the alternating-colour banding to cover the Pokémon image column B:
+ * a banding starting at C is stretched left (merging with an A-only banding
+ * if present) and B's cell fills are cleared over the banded rows. If a
+ * banding already spans B, only the fills are cleared. Otherwise row-parity
+ * CF rules adjacent to B are widened.
  */
-export function portQuickChecklistImageBanding(dst: Spreadsheet): void {
-  const sheet = dst.getSheetByName('Quick Checklist')
-  if (!sheet) throw new Error('Quick Checklist not found in destination')
-  const IMG = QUICK_CHECKLIST_IMAGE_COLUMN
+export function planQuickChecklistBanding(dst: DestInfo, notes: string[]): Op[] {
+  const dMeta = need(sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
+  const sheetId = dMeta.properties.sheetId
+  const IMG0 = QUICK_CHECKLIST_IMAGE_COLUMN - 1 // 0-based
+  const bandings = dMeta.bandedRanges ?? []
+  const clearFills = (r: GridRange): Request => ({
+    repeatCell: {
+      range: { sheetId, startRowIndex: r.startRowIndex, endRowIndex: r.endRowIndex, startColumnIndex: IMG0, endColumnIndex: IMG0 + 1 },
+      cell: { userEnteredFormat: {} },
+      fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle',
+    },
+  })
 
-  const bandings = sheet.getBandings()
-  const right = bandings.find((b) => b.getRange().getColumn() === IMG + 1)
+  const right = bandings.find((b) => (b.range.startColumnIndex ?? 0) === IMG0 + 1)
   if (right) {
-    const r = right.getRange()
-    const left = bandings.find((b) => b !== right && b.getRange().getLastColumn() === IMG - 1)
-    const startCol = left ? left.getRange().getColumn() : IMG
-    if (left) left.remove()
-    right.setRange(sheet.getRange(r.getRow(), startCol, r.getNumRows(), r.getLastColumn() - startCol + 1))
-    sheet.getRange(r.getRow(), IMG, r.getNumRows(), 1).setBackground(null)
-    Logger.log(`Quick Checklist: banding extended to column ${IMG}${left ? ' (merged with the A-only banding)' : ''}`)
-    return
+    const left = bandings.find((b) => b !== right && (b.range.endColumnIndex ?? 0) === IMG0)
+    const startColumnIndex = left ? (left.range.startColumnIndex ?? 0) : IMG0
+    const requests: Request[] = []
+    if (left) requests.push({ deleteBanding: { bandedRangeId: left.bandedRangeId } })
+    requests.push({
+      updateBanding: {
+        bandedRange: { bandedRangeId: right.bandedRangeId, range: { ...right.range, startColumnIndex } },
+        fields: 'range',
+      },
+    })
+    requests.push(clearFills(right.range))
+    return [
+      {
+        label: 'Quick Checklist banding over the image column',
+        note: left ? 'merged with the A-only banding' : 'extended left to B',
+        requests,
+      },
+    ]
   }
-  const spanning = bandings.find((b) => b.getRange().getColumn() <= IMG && b.getRange().getLastColumn() >= IMG)
+  const spanning = bandings.find((b) => (b.range.startColumnIndex ?? 0) <= IMG0 && (b.range.endColumnIndex ?? 0) > IMG0)
   if (spanning) {
-    const b = spanning.getRange()
-    sheet.getRange(b.getRow(), IMG, b.getNumRows(), 1).setBackground(null)
-    Logger.log(`Quick Checklist: banding already covers column ${IMG}; cleared its cell fills`)
-    return
+    return [{ label: 'Quick Checklist banding over the image column', note: 'already covers B; clearing B fills', requests: [clearFills(spanning.range)] }]
   }
-
   const parity = /ISEVEN\s*\(\s*ROW|ISODD\s*\(\s*ROW|MOD\s*\(\s*ROW/i
-  let widened = 0
-  const rules = sheet.getConditionalFormatRules().map((rule) => {
-    const cond = rule.getBooleanCondition()
-    const vals = cond ? cond.getCriteriaValues() : []
-    if (!vals.length || !parity.test(String(vals[0]))) return rule
+  const requests: Request[] = []
+  ;(dMeta.conditionalFormats ?? []).forEach((rule, index) => {
+    const formula = rule.booleanRule?.condition.values?.[0]?.userEnteredValue ?? ''
+    if (rule.booleanRule?.condition.type !== 'CUSTOM_FORMULA' || !parity.test(formula)) return
     let touched = false
-    const ranges = rule.getRanges().map((rg) => {
-      const c1 = rg.getColumn()
-      const c2 = rg.getLastColumn()
-      if (c1 <= IMG && c2 >= IMG) return rg
-      if (c2 === IMG - 1 || c1 === IMG + 1) {
+    const ranges = rule.ranges.map((rg) => {
+      const c1 = rg.startColumnIndex ?? 0
+      const c2 = (rg.endColumnIndex ?? 0) - 1
+      if (c1 <= IMG0 && c2 >= IMG0) return rg
+      if (c2 === IMG0 - 1 || c1 === IMG0 + 1) {
         touched = true
-        const s = Math.min(c1, IMG)
-        const e = Math.max(c2, IMG)
-        return sheet.getRange(rg.getRow(), s, rg.getNumRows(), e - s + 1)
+        return { ...rg, startColumnIndex: Math.min(c1, IMG0), endColumnIndex: Math.max(c2, IMG0) + 1 }
       }
       return rg
     })
-    if (!touched) return rule
-    widened++
-    return rule.copy().setRanges(ranges).build()
+    if (touched) requests.push({ updateConditionalFormatRule: { sheetId, index, rule: { ...rule, ranges } } })
   })
-  if (widened) {
-    sheet.setConditionalFormatRules(rules)
-    Logger.log(`Quick Checklist: widened ${widened} row-parity CF rule(s) to include column ${IMG}`)
-  } else {
-    Logger.log(`Quick Checklist: no banding or row-parity CF adjacent to column ${IMG}; nothing changed`)
+  if (requests.length) {
+    return [{ label: 'Quick Checklist banding over the image column', note: `widened ${requests.length} row-parity CF rule(s)`, requests }]
   }
+  notes.push('Quick Checklist: no banding or row-parity CF adjacent to column B; nothing to extend')
+  return []
 }
 
-/**
- * Port Daily Mode formatting for only the customized cells plus the column
- * L and M widths. Inserts the custom blank column L first when missing.
- * Conditional formatting is deliberately left alone.
- */
-export function portDailyModeFormatting(src: Spreadsheet, dst: Spreadsheet): void {
-  const name = 'Daily Mode'
-  const sSheet = src.getSheetByName(name)
-  const dSheet = dst.getSheetByName(name)
-  if (!sSheet || !dSheet) throw new Error('Daily Mode not found')
-
-  if (!dailyModeHasCustomColumn(sSheet, dSheet)) {
-    dSheet.insertColumnBefore(12)
-    Logger.log('Daily Mode: inserted custom column L')
-  }
-
-  const tempSheet = sSheet.copyTo(dst)
-  try {
-    DAILY_MODE_FORMAT_RANGES.forEach((a1) => {
-      tempSheet.getRange(a1).copyTo(dSheet.getRange(a1), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false)
-    })
-    dSheet.setColumnWidth(12, tempSheet.getColumnWidth(12))
-    dSheet.setColumnWidth(13, tempSheet.getColumnWidth(13))
-  } finally {
-    dst.deleteSheet(tempSheet)
-  }
-}
-
-/**
- * Whether the destination Daily Mode already has the custom column L, judged
- * by where the creator's landmark label sits. Throws when the layout is
- * unrecognised so a changed creator layout fails loudly.
- */
-export function dailyModeHasCustomColumn(sSheet: Sheet, dSheet: Sheet): boolean {
-  const label = sSheet.getRange(DAILY_MODE_LANDMARK_WITH_L).getDisplayValue()
+/** Landmark check: true = column L present; false = insert it; throws when neither cell holds the label. */
+export function dailyModeHasCustomColumn(src: SourceInfo, dst: DestInfo): boolean {
+  const sSheet = need(sheetByTitle(src.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the source')
+  const dSheet = need(sheetByTitle(dst.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the destination')
+  const sLandmark = gridAt(sSheet, DAILY_MODE_LANDMARK_ROW - 1, DAILY_MODE_LANDMARK_COL_WITH_L - 1)
+  const label = displayText(cellAt(sLandmark, 0, 0)).trim()
   if (!label) {
     throw new Error(
-      `Daily Mode: landmark cell ${DAILY_MODE_LANDMARK_WITH_L} is blank in the source; cannot tell whether column L is present`,
+      `Daily Mode: landmark cell ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)} is blank in the source; cannot tell whether column L is present`,
     )
   }
-  const withL = dSheet.getRange(DAILY_MODE_LANDMARK_WITH_L).getDisplayValue()
-  const withoutL = dSheet.getRange(DAILY_MODE_LANDMARK_WITHOUT_L).getDisplayValue()
+  const dLandmarks = gridAt(dSheet, DAILY_MODE_LANDMARK_ROW - 1, DAILY_MODE_LANDMARK_COL_WITHOUT_L - 1)
+  const withoutL = displayText(cellAt(dLandmarks, 0, 0)).trim()
+  const withL = displayText(cellAt(dLandmarks, 0, 1)).trim()
   if (withL === label) return true
   if (withoutL === label) return false
   throw new Error(
-    `Daily Mode: landmark "${label}" is at neither ${DAILY_MODE_LANDMARK_WITH_L} nor ${DAILY_MODE_LANDMARK_WITHOUT_L} in the destination; layout changed, column L not touched`,
+    `Daily Mode: landmark "${label}" is at neither ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)} nor ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)} in the destination; layout changed, Daily Mode not touched`,
   )
 }
 
 /**
- * Port Daily Mode cell content that formatting alone doesn't carry: merge
- * B16:M131, copy the B16 formula/value (top-aligned) and L12:M14.
+ * Daily Mode: insert custom column L when missing; formats for B16:M131 and
+ * L12:M14; widths of L and M; merge B16:M131 (unmerging whatever overlaps);
+ * B16 formula/value top-aligned; L12:M14 formulas/values.
  */
-export function portDailyModeCells(src: Spreadsheet, dst: Spreadsheet): void {
-  const name = 'Daily Mode'
-  const sSheet = src.getSheetByName(name)
-  const dSheet = dst.getSheetByName(name)
-  if (!sSheet || !dSheet) throw new Error('Daily Mode not found')
-  if (!dailyModeHasCustomColumn(sSheet, dSheet)) {
-    throw new Error('Daily Mode: custom column L is missing (did "Formatting Daily Mode" fail?); cells not ported')
+export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): Op[] {
+  const sSheet = need(sheetByTitle(src.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the source')
+  const dMeta = need(sheetByTitle(dst.meta, DAILY_MODE_SHEET), 'Daily Mode not found in the destination')
+  const sheetId = dMeta.properties.sheetId
+  const hasL = dailyModeHasCustomColumn(src, dst)
+  const ops: Op[] = []
+  const L0 = DAILY_MODE_CUSTOM_COLUMN - 1
+
+  if (!hasL) {
+    ops.push({
+      label: 'Daily Mode: insert custom column L',
+      note: 'landmark found at M2 (fresh copy)',
+      requests: [
+        { insertDimension: { range: { sheetId, dimension: 'COLUMNS', startIndex: L0, endIndex: L0 + 1 }, inheritFromBefore: false } },
+      ],
+    })
+  } else {
+    notes.push('Daily Mode: custom column L already present (landmark at N2)')
   }
 
-  const mergeRange = dSheet.getRange(B16_MERGE_RANGE)
-  mergeRange.breakApart()
-  mergeRange.merge()
-
-  const b16Cell = dSheet.getRange('B16')
-  copyFormulasOrValues(sSheet.getRange('B16'), b16Cell)
-  b16Cell.setVerticalAlignment('top')
-
-  copyFormulasOrValues(sSheet.getRange('L12:M14'), dSheet.getRange('L12:M14'))
-}
-
-/** Copy formulas (falling back to values) into a same-sized range; works across spreadsheets. */
-export function copyFormulasOrValues(srcRange: Range, dstRange: Range): void {
-  const formulas = srcRange.getFormulas()
-  const values = srcRange.getValues()
-  const merged = formulas.map((row, i) => row.map((f, j) => (f ? f : values[i]![j])))
-  dstRange.setValues(merged)
-}
-
-/** For every sheet hidden in the source, hide the same-named destination sheet. */
-export function portHiddenSheets(src: Spreadsheet, dst: Spreadsheet): void {
-  const dstByName: Record<string, Sheet> = {}
-  dst.getSheets().forEach((s) => {
-    dstByName[s.getName()] = s
-  })
-  const hiddenList: string[] = []
-  src.getSheets().forEach((s) => {
-    const d = dstByName[s.getName()]
-    if (s.isSheetHidden() && d) {
-      d.hideSheet()
-      hiddenList.push(s.getName())
+  const formatBlock = (row1: number, col1: number, row2: number, col2: number, label: string): Op => {
+    const grid = gridAt(sSheet, row1 - 1, col1 - 1)
+    const nRows = row2 - row1 + 1
+    const nCols = col2 - col1 + 1
+    return {
+      label,
+      requests: [
+        {
+          updateCells: {
+            range: { sheetId, startRowIndex: row1 - 1, endRowIndex: row2, startColumnIndex: col1 - 1, endColumnIndex: col2 },
+            rows: Array.from({ length: nRows }, (_, r) => ({
+              values: Array.from({ length: nCols }, (_, c) => ({ userEnteredFormat: cellAt(grid, r, c).userEnteredFormat ?? {} })),
+            })),
+            fields: 'userEnteredFormat',
+          },
+        },
+      ],
     }
-  })
-  Logger.log('Hidden in dst: ' + (hiddenList.join(', ') || '(none)'))
-}
+  }
+  ops.push(formatBlock(B16_MERGE.row1, B16_MERGE.col1, B16_MERGE.row2, B16_MERGE.col2, 'Daily Mode: formats of B16:M131'))
+  ops.push(formatBlock(DAILY_INPUTS.row1, DAILY_INPUTS.col1, DAILY_INPUTS.row2, DAILY_INPUTS.col2, 'Daily Mode: formats of L12:M14'))
 
-/** Replace the "perfect IV" CF rule on each dex checklist with a "not 31 → red" rule. */
-export function portDexIvHighlight(dst: Spreadsheet): void {
-  DEX_IV_HIGHLIGHT_SHEETS.forEach((name) => {
-    const sheet = dst.getSheetByName(name)
-    if (!sheet) {
-      Logger.log(`IV highlight: "${name}" not found, skipping`)
-      return
-    }
-    const updated: ConditionalFormatRule[] = []
-    let replaced = 0
-    sheet.getConditionalFormatRules().forEach((rule) => {
-      if (!isPerfectIvRule(rule)) {
-        updated.push(rule)
-        return
-      }
-      rule.getRanges().forEach((range) => {
-        const topLeft = range.getCell(1, 1).getA1Notation()
-        updated.push(
-          SpreadsheetApp.newConditionalFormatRule()
-            .whenFormulaSatisfied(`=TO_TEXT(${topLeft})<>"${DEX_IV_PERFECT_VALUE}"`)
-            .setBackground(DEX_IV_IMPERFECT_COLOR)
-            .setRanges([range])
-            .build(),
-        )
-        replaced++
-      })
+  // Column widths L, M from the source (its B16:M131 block carries columnMetadata for B..M).
+  const bGrid = gridAt(sSheet, B16_MERGE.row1 - 1, B16_MERGE.col1 - 1)
+  const widthReqs: Request[] = []
+  for (const col1 of [DAILY_MODE_CUSTOM_COLUMN, DAILY_MODE_CUSTOM_COLUMN + 1]) {
+    const m = bGrid?.columnMetadata?.[col1 - B16_MERGE.col1]
+    if (!m?.pixelSize) continue
+    widthReqs.push({
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'COLUMNS', startIndex: col1 - 1, endIndex: col1 },
+        properties: { pixelSize: m.pixelSize },
+        fields: 'pixelSize',
+      },
     })
-    if (replaced === 0) {
-      Logger.log(`IV highlight: no "=${DEX_IV_PERFECT_VALUE}" rule found on "${name}", left unchanged`)
-      return
-    }
-    sheet.setConditionalFormatRules(updated)
-    Logger.log(`IV highlight: replaced ${replaced} rule(s) on "${name}"`)
+  }
+  if (widthReqs.length) ops.push({ label: 'Daily Mode: widths of columns L and M', requests: widthReqs })
+
+  // Merge B16:M131 — first unmerge anything overlapping it (in post-insert coordinates).
+  const target: GridRange = {
+    sheetId,
+    startRowIndex: B16_MERGE.row1 - 1,
+    endRowIndex: B16_MERGE.row2,
+    startColumnIndex: B16_MERGE.col1 - 1,
+    endColumnIndex: B16_MERGE.col2,
+  }
+  const merges = (dMeta.merges ?? []).map((m) => (hasL ? m : shiftMergeForInsert(m, L0)))
+  const overlapping = merges.filter((m) => rangesOverlap(m, target))
+  const mergeReqs: Request[] = overlapping.map((m) => ({ unmergeCells: { range: { ...m, sheetId } } }))
+  mergeReqs.push({ mergeCells: { range: target, mergeType: 'MERGE_ALL' } })
+  ops.push({
+    label: 'Daily Mode: merge B16:M131',
+    ...(overlapping.length ? { note: `unmerging ${overlapping.length} existing merge(s) first` } : {}),
+    requests: mergeReqs,
   })
+
+  // B16 value/formula, top-aligned.
+  const b16 = cellAt(bGrid, 0, 0)
+  ops.push({
+    label: 'Daily Mode: B16 formula',
+    note: b16.userEnteredValue?.formulaValue ? 'formula copied from the source' : 'value copied from the source',
+    requests: [
+      {
+        updateCells: {
+          range: { sheetId, startRowIndex: B16_MERGE.row1 - 1, endRowIndex: B16_MERGE.row1, startColumnIndex: B16_MERGE.col1 - 1, endColumnIndex: B16_MERGE.col1 },
+          rows: [{ values: [{ userEnteredValue: b16.userEnteredValue ?? {}, userEnteredFormat: { verticalAlignment: 'TOP' } }] }],
+          fields: 'userEnteredValue,userEnteredFormat.verticalAlignment',
+        },
+      },
+    ],
+  })
+
+  // L12:M14 formulas/values.
+  const inputs = gridAt(sSheet, DAILY_INPUTS.row1 - 1, DAILY_INPUTS.col1 - 1)
+  const nRows = DAILY_INPUTS.row2 - DAILY_INPUTS.row1 + 1
+  const nCols = DAILY_INPUTS.col2 - DAILY_INPUTS.col1 + 1
+  ops.push({
+    label: 'Daily Mode: L12:M14 inputs',
+    requests: [
+      {
+        updateCells: {
+          range: { sheetId, startRowIndex: DAILY_INPUTS.row1 - 1, endRowIndex: DAILY_INPUTS.row2, startColumnIndex: DAILY_INPUTS.col1 - 1, endColumnIndex: DAILY_INPUTS.col2 },
+          rows: Array.from({ length: nRows }, (_, r) => ({
+            values: Array.from({ length: nCols }, (_, c) => {
+              const v = cellAt(inputs, r, c).userEnteredValue
+              return v ? { userEnteredValue: v } : {}
+            }),
+          })),
+          fields: 'userEnteredValue',
+        },
+      },
+    ],
+  })
+  return ops
 }
 
-/** True if a CF rule is the "perfect IV" highlight (cell equals 31, text or number). */
-export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
-  const cond = rule.getBooleanCondition()
-  if (!cond) return false
-  const type = cond.getCriteriaType()
-  const value = String(cond.getCriteriaValues()[0])
-  const Crit = SpreadsheetApp.BooleanCriteria
-  return (type === Crit.TEXT_EQUAL_TO || type === Crit.NUMBER_EQUAL_TO) && value === DEX_IV_PERFECT_VALUE
+/** How a merge (pre-insert coordinates) looks after a column is inserted at `col0`. */
+export function shiftMergeForInsert(m: GridRange, col0: number): GridRange {
+  const s = m.startColumnIndex ?? 0
+  const e = m.endColumnIndex ?? 0
+  if (s >= col0) return { ...m, startColumnIndex: s + 1, endColumnIndex: e + 1 }
+  if (e > col0) return { ...m, endColumnIndex: e + 1 } // insertion inside the merge widens it
+  return m
 }
+
+export function rangesOverlap(a: GridRange, b: GridRange): boolean {
+  return (
+    (a.startRowIndex ?? 0) < (b.endRowIndex ?? Infinity) &&
+    (b.startRowIndex ?? 0) < (a.endRowIndex ?? Infinity) &&
+    (a.startColumnIndex ?? 0) < (b.endColumnIndex ?? Infinity) &&
+    (b.startColumnIndex ?? 0) < (a.endColumnIndex ?? Infinity)
+  )
+}
+
+/** Hide every destination sheet whose same-named source sheet is hidden. */
+export function planHiddenSheets(src: SourceInfo, dst: DestInfo, notes: string[]): Op[] {
+  const dstByTitle = new Map((dst.meta.sheets ?? []).map((s) => [s.properties.title, s]))
+  const requests: Request[] = []
+  const names: string[] = []
+  for (const s of src.meta.sheets ?? []) {
+    if (!s.properties.hidden) continue
+    const d = dstByTitle.get(s.properties.title)
+    if (!d || d.properties.hidden) continue
+    requests.push({ updateSheetProperties: { properties: { sheetId: d.properties.sheetId, hidden: true }, fields: 'hidden' } })
+    names.push(s.properties.title)
+  }
+  if (!requests.length) {
+    notes.push('Hidden sheets: nothing to hide (already matching)')
+    return []
+  }
+  return [{ label: `Hide ${names.length} sheet(s)`, note: names.join(', '), requests }]
+}
+
+/** Replace the "perfect IV" (= 31 → yellow) rules on the dex checklists with "≠ 31 → red" over the same ranges. */
+export function planDexIvHighlight(dst: DestInfo, notes: string[]): Op[] {
+  const ops: Op[] = []
+  for (const name of DEX_IV_HIGHLIGHT_SHEETS) {
+    const sheet = sheetByTitle(dst.meta, name)
+    if (!sheet) {
+      notes.push(`IV highlight: "${name}" not found, skipping`)
+      continue
+    }
+    const sheetId = sheet.properties.sheetId
+    const rules = sheet.conditionalFormats ?? []
+    const matches = rules.map((rule, index) => ({ rule, index })).filter(({ rule }) => isPerfectIvRule(rule))
+    if (!matches.length) {
+      notes.push(`IV highlight: no "= ${DEX_IV_PERFECT_VALUE}" rule on "${name}" (already replaced?)`)
+      continue
+    }
+    const requests: Request[] = []
+    // Highest index first so earlier indices stay valid while we replace.
+    for (const { rule, index } of [...matches].sort((x, y) => y.index - x.index)) {
+      requests.push({ deleteConditionalFormatRule: { sheetId, index } })
+      rule.ranges.forEach((range, k) => {
+        const topLeft = a1((range.startRowIndex ?? 0) + 1, (range.startColumnIndex ?? 0) + 1)
+        requests.push({
+          addConditionalFormatRule: {
+            index: index + k,
+            rule: {
+              ranges: [{ ...range, sheetId }],
+              booleanRule: {
+                condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: `=TO_TEXT(${topLeft})<>"${DEX_IV_PERFECT_VALUE}"` }] },
+                format: { backgroundColor: hexToColor(DEX_IV_IMPERFECT_COLOR) },
+              },
+            },
+          },
+        })
+      })
+    }
+    ops.push({ label: `${name}: IV highlight → red when not 31`, note: `${matches.length} rule(s) replaced`, requests })
+  }
+  return ops
+}
+
+export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
+  const cond = rule.booleanRule?.condition
+  if (!cond) return false
+  const value = String(cond.values?.[0]?.userEnteredValue ?? '')
+  return (cond.type === 'TEXT_EQ' || cond.type === 'NUMBER_EQ') && value === DEX_IV_PERFECT_VALUE
+}
+
+// ---------------------------------------------------------------------------
+// Drive lookup
+// ---------------------------------------------------------------------------
 
 /** Every non-trashed spreadsheet in Drive with exactly this name. */
 export function findSpreadsheetsNamed(name: string): GoogleAppsScript.Drive.File[] {
@@ -421,3 +710,6 @@ export function findFileIdByVersion(version: string): string {
   }
   return matches[0]!.getId()
 }
+
+// Re-exported for tests / callers that only need the pure pieces.
+export type { BandedRange, CellData, SheetInfo }

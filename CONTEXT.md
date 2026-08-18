@@ -125,33 +125,42 @@ duration is appended to the hidden `_timings` sheet in one write.
 `STARTER_CHECKLIST.sorted` etc.; the data sheets hold the raw values in the canonical row
 order the display is painted against.
 
-### Migrator.js
+### migrator.ts (+ sheetsApi.ts, formulaShift.ts)
 
-Ports customizations from an old version of the spreadsheet to a new one. Called as `OfflineDexLib.portAll(sourceVersion, destVersion)` from the bound script's "Migrate from previous version" menu.
+Ports customizations from an old version of the spreadsheet to a new one. Since 2026-08 it
+is a **plan → preview → apply** pipeline on the Sheets advanced service (Sheets API v4):
 
-**Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex <version>"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
+1. **Read** — 2 GETs on the source (sheet list; formats/formulas of the customized ranges:
+   `Quick Checklist!1:10`, `Daily Mode!B16:M131`, `L12:M14`, the `N2` landmark) and 2 on
+   the destination (sheet list + banding + CF rules + merges; the Quick Checklist header
+   and the `M2:N2` landmark cells). No `openById`, no temp sheets, no `copyTo`.
+2. **Plan** (`buildPlan`, pure, tested with hand-built API responses) — a list of `Op`s
+   (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
+   (Daily Mode landmark at neither M2 nor N2; Quick Checklist row 10 blank; destination
+   block left of the source's), so nothing is touched on an unknown layout.
+3. **Preview** — Finish Setup shows `describePlan()` in the confirm dialog.
+4. **Apply** — ONE `batchUpdate`; the API applies it atomically (all steps or none).
 
-**Five migration steps:**
+**The ops:**
 
-1. **Quick Checklist header rows 1-10:** adopts the creator's column layout as-is (so consecutive versions port 1:1). Each sheet's data block ("Caught?" … "Ribbons", 11 columns) is located by the first non-blank cell in row 10 right of the fixed A-D block — the creator's stats row on a fresh copy, my "Stats:" row on a migrated one. If the destination's block starts further right (6.03 added a hidden junk column E: block at F instead of E), the same number of blank columns is inserted into the *temp copy of the source* in front of its block, which shifts its own same-sheet formula references but not cross-sheet ones — exactly the adjustment needed — and from there everything is a same-position copy: cell formatting + column widths + row hidden states for rows 1-10, formulas/values for row 1's data block and row 10 in full, hide the Ribbons column (last of the block), and stamp `POKEROGUE DEX <destVersion>` into A1 (skipped if A1 is a formula). Reads use the source's width and the destination is padded to match. Column hidden states are otherwise the creator's (junk E stays hidden), not the source's (whose hidden columns include the SaveTracker marker column). An earlier design deleted E instead; dropped so that 6.03→6.04 needs no shifting.
+- *Quick Checklist header (rows 1–10)*: `updateCells` with the source's `userEnteredFormat`
+  for every column (two segments when the destination block starts further right — 6.03's
+  hidden junk column E), `updateDimensionProperties` for row heights/hidden rows and column
+  widths, row 1 (data block) and row 10 formulas/values with same-sheet references shifted
+  by `shiftFormulaColumns` (cross-sheet refs, `$A$10`-style refs left of the block, strings
+  and function names untouched), hide Ribbons, stamp `POKEROGUE DEX <dest>` into A1 unless
+  A1 is a formula.
+- *Banding over the image column*: `updateBanding` stretches the C-start banding to B (merging
+  an A-only banding), `repeatCell` clears B's fills; falls back to widening row-parity CF.
+- *Daily Mode*: `insertDimension` for column L when the landmark says it's missing;
+  `updateCells` formats for B16:M131 and L12:M14; widths of L/M; `unmergeCells` for every
+  existing merge overlapping B16:M131 (in post-insert coordinates) then `mergeCells`;
+  B16 formula/value top-aligned; L12:M14 inputs.
+- *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
+  checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
 
-1b. **Quick Checklist image banding:** extends the sheet's alternating-colour banding to cover the Pokemon image column B (the creator's banding starts at C); clears B's cell fills over the banded rows so it shows. Falls back to widening row-parity CF rules if the stripes turn out to be conditional formatting; logs which path ran.
-
-2. **Daily Mode formatting:** copies cell formatting only for the cells I customized (`DAILY_MODE_FORMAT_RANGES` — `B16:M131` and `L12:M14`) plus the column L and M widths. Inserts the custom blank column L into the destination when it's missing — detected by a landmark, not a column count: the creator's "Missing Gym Leader Voucher…" label is at N2 in the source (`DAILY_MODE_LANDMARK_WITH_L`) and at M2 in a fresh copy (`DAILY_MODE_LANDMARK_WITHOUT_L`); anywhere else throws so a reshuffled layout fails loudly. It deliberately does **not** touch conditional formatting: inserting column L auto-shifts the destination's own CF ranges to match, so the new version's rules already line up — copying the old version's CF over them would overwrite the new version's.
-
-3. **Daily Mode cells:** unmerges any existing merge at B16, re-merges to `B16:M131`, copies B16 formula. Also copies L12:M14 formulas/values from source. Refuses to run if the landmark says column L is still missing (otherwise the merge would swallow the creator's column M).
-
-(The Form Checklist "unchecked first" sort used to be a migration step; it now runs in the SaveTracker after every upload — see the upload flow above — because on a fresh copy every row is unchecked and sorting before the save load did nothing.)
-
-4. **Hidden sheets:** any sheet hidden in source is also hidden in destination if it exists by name.
-
-5. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
-
-(The Migrator no longer creates "View Changes" filter views — that step was removed, as was the SaveTracker marker column it once fed.)
-
-**Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
-
-**Conditional formatting is intentionally left alone:** the Migrator no longer copies CF rules across sheets. For Daily Mode, inserting column L auto-shifts the destination's existing CF ranges, so the new version's rules stay correct without any remap. For the dex checklists, the IV step (step 5) edits the *existing* destination rules in place rather than importing the old sheet's.
+Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
+notes what was already done), and `previewMigration()` returns the plan as text.
 
 ### Setup.js
 
@@ -301,7 +310,7 @@ checks out `creator` in the working tree.
 
 ## Things that took some figuring out
 
-- **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. Workaround: copy source SHEET into destination spreadsheet as a temp, do local copyTo, delete temp.
+- **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. The old workaround (copy the source SHEET into the destination as a temp, copyTo, delete) was replaced in 2026-08 by reading formats through the Sheets API and writing them with `updateCells` — one read, one atomic write, no temp sheets.
 - **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
 - **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; it turned out the paint step already writes `null` into every unchanged tracked cell, so the clear pass and the marker column were redundant — and the marker column collided with creator columns (6.03 Ribbons). `clearLegacyMarkers` blanks the old markers once.
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
