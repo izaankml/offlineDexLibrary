@@ -391,6 +391,14 @@ function applyHighlightsForTracker(ss, t) {
   const snap = ss.getSheetByName('_snapshot_' + t.key)
   if (!data || !display)
     throw new Error('Required sheet not found for ' + t.key)
+
+  // Hide the marker column before the snapshot check, so it's tucked away
+  // from the very first upload (which has no snapshot to diff against yet).
+  const markerCol = markerColumnFor(t)
+  if (markerCol) {
+    display.hideColumns(markerCol)
+  }
+
   if (!snap) {
     Logger.log(t.key + ': no snapshot exists, skipping')
     return
@@ -419,11 +427,6 @@ function applyHighlightsForTracker(ss, t) {
 
   const displayCols = Object.values(t.columnMap)
   const displayMaxCol = Math.max(...displayCols)
-  const markerCol = markerColumnFor(t)
-
-  if (markerCol) {
-    display.hideColumns(markerCol)
-  }
 
   const cellMappings = []
   for (const dataCol of dataCols) {
