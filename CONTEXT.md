@@ -63,7 +63,7 @@ const TRACKERS = [
     displaySheet: 'Quick Checklist',
     dataFirstRow: 12,
     displayFirstRow: 12,
-    columnMap: buildShiftMap(4, 11, 3), // D-K -> G-N (+3 shift)
+    columnMap: buildShiftMap(4, 11, 4), // D-K -> H-O (+4 shift; creator 6.03 layout with hidden junk E)
     includeHeaders: true,
     headerRows: 1,
     highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR, // yellow
@@ -139,7 +139,7 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 **Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
 
-**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the marker column — by default the first column past the tracked range (`max(columnMap values) + 1`), or `markerColumn` when set (QuickChecklist uses P/16, because O is the creator's Ribbons column; from 6.01 onward the default would have blanked it) — on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
+**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the marker column — by default the first column past the tracked range (`max(columnMap values) + 1`), or `markerColumn` when set (QuickChecklist uses Q/17, because P is the creator's Ribbons column in the 6.03 layout; the default would blank it on every upload) — on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
 
 **Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
 
@@ -155,7 +155,7 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 **Five migration steps:**
 
-1. **Quick Checklist header rows 1-10:** first deletes any extra column(s) the new version inserted at E (6.03 added a junk column there), located by where the creator's `Caught?` header label sits in row 1 (`QUICK_CHECKLIST_FIRST_LABEL`; expected at E, found at F → delete one). Column-count comparisons were tried first and misfired, since counts include trailing blank columns. Then copies cell formatting + column widths + row hidden states for rows 1-10, ports formulas/values for row 1 columns E-O and row 10 in full, hides `QUICK_CHECKLIST_HIDDEN_COLUMNS` (O = the creator's Ribbons column), and stamps `POKEROGUE DEX <destVersion>` into A1 (the creator's copy can lag a version; skipped if A1 is a formula). All reads use the source's width and the destination is padded to match — the destination can be a column narrower once E is deleted, and reading past a sheet's last column throws. Column hidden states are not copied from the source (its hidden columns include the SaveTracker marker column).
+1. **Quick Checklist header rows 1-10:** adopts the creator's column layout as-is (so consecutive versions port 1:1). Each sheet's data block ("Caught?" … "Ribbons", 11 columns) is located by the first non-blank cell in row 10 right of the fixed A-D block — the creator's stats row on a fresh copy, my "Stats:" row on a migrated one. If the destination's block starts further right (6.03 added a hidden junk column E: block at F instead of E), the same number of blank columns is inserted into the *temp copy of the source* in front of its block, which shifts its own same-sheet formula references but not cross-sheet ones — exactly the adjustment needed — and from there everything is a same-position copy: cell formatting + column widths + row hidden states for rows 1-10, formulas/values for row 1's data block and row 10 in full, hide the Ribbons column (last of the block), and stamp `POKEROGUE DEX <destVersion>` into A1 (skipped if A1 is a formula). Reads use the source's width and the destination is padded to match. Column hidden states are otherwise the creator's (junk E stays hidden), not the source's (whose hidden columns include the SaveTracker marker column). An earlier design deleted E instead; dropped so that 6.03→6.04 needs no shifting.
 
 1b. **Quick Checklist image banding:** extends the sheet's alternating-colour banding to cover the Pokemon image column B (the creator's banding starts at C); clears B's cell fills over the banded rows so it shows. Falls back to widening row-parity CF rules if the stripes turn out to be conditional formatting; logs which path ran.
 

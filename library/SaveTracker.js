@@ -108,7 +108,11 @@ const TRACKERS = [
     displaySheet: 'Quick Checklist',
     dataFirstRow: 12,
     displayFirstRow: 12,
-    columnMap: buildShiftMap(4, 11, 3),
+    // Data D-K (SHINY … Max IVs) -> display H-O. Creator 6.03 layout: A-D
+    // fixed, hidden junk E, then Caught? F, Classic G, Shiny H … Max IVs O,
+    // Ribbons P. (6.01 had no column E: shift was 3, D-K -> G-N.) If the
+    // creator moves the block again, this shift and markerColumn move with it.
+    columnMap: buildShiftMap(4, 11, 4),
     includeHeaders: true,
     headerRows: 1,
     highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
@@ -117,10 +121,10 @@ const TRACKERS = [
     // the data sheet (highlights paint by row offset) and the column-A slicers
     // line up. See sortDisplayByColumn.
     sortDisplayColumn: 1,
-    // The column after the tracked range (O) is the creator's Ribbons column,
-    // which the Migrator keeps (hidden) — so the marker goes one further, to P.
+    // The column after the tracked range (P) is the creator's Ribbons column,
+    // which the Migrator keeps (hidden) — so the marker goes one further, to Q.
     // Without this the marker writes would blank Ribbons on every upload.
-    markerColumn: 16,
+    markerColumn: 17,
   },
   dexTracker(
     'StarterDex',

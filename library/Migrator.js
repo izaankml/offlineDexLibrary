@@ -6,19 +6,17 @@
 // script via OfflineDexLib.portAll(sourceVersion, destVersion).
 // ============================================================
 
-// Quick Checklist column layout. The creator's header labels sit in row 1;
-// in the layout the SaveTracker column map expects, "Caught?" is at E1 and
-// "Ribbons" at O1. Newer creator versions insert a junk column at E (blank
-// header, #REF! rows), which shifts every later column right by one — we
-// detect that by where the "Caught?" label lands and delete the extra
-// column(s). (Column-count comparisons proved unreliable: counts include
-// trailing blank columns and both sheets can end up the same width.)
-const QUICK_CHECKLIST_FIRST_LABEL = 'Caught?'
-const QUICK_CHECKLIST_FIRST_LABEL_COL = 5 // E, once any extra columns are gone
-// Columns hidden on the Quick Checklist after the port, in the aligned
-// layout: O = the creator's Ribbons column. (The SaveTracker marker column
-// sits at P, one past it, and is hidden by the highlighter itself.)
-const QUICK_CHECKLIST_HIDDEN_COLUMNS = [15]
+// Quick Checklist column layout. Columns A-D (#, image, Dex#, name) are
+// fixed; the data block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS
+// wide) starts at E in creator 6.01 and at F from 6.03 on (the creator added
+// a hidden junk column E). The migrator adopts the creator's layout as-is —
+// so consecutive versions port 1:1 — and locates each sheet's data block by
+// the first non-blank cell in row 10 right of D (see
+// quickChecklistFirstDataColumn). The Ribbons column (last of the block) is
+// hidden after the port; the SaveTracker's marker column sits one past it.
+const QUICK_CHECKLIST_FIXED_COLUMNS = 4
+const QUICK_CHECKLIST_DATA_COLUMNS = 11
+const QUICK_CHECKLIST_LOCATOR_ROW = 10
 // Title cell + prefix ("POKEROGUE DEX 6.03"); the creator's copy can lag a
 // version behind, so the migrator stamps the destination's own version.
 const QUICK_CHECKLIST_TITLE_CELL = 'A1'
@@ -105,18 +103,17 @@ function portAll(sourceVersion, destVersion) {
 /**
  * Port rows 1-10 of the Quick Checklist sheet: cell formatting, row heights,
  * column widths, and row hidden states. Also ports formulas (falling back to
- * values) for row 1 columns E-O and all of row 10, then hides
- * `QUICK_CHECKLIST_HIDDEN_COLUMNS` (the creator's Ribbons column O). Uses a
- * temp copy of the source sheet inside the destination because copyTo()
- * can't cross spreadsheets.
+ * values) for row 1's data columns (Caught? … Ribbons) and all of row 10,
+ * hides the Ribbons column, and stamps `destVersion` into the A1 title.
+ * Uses a temp copy of the source sheet inside the destination because
+ * copyTo() can't cross spreadsheets.
  *
- * First deletes any extra column(s) the new version inserted at E, located
- * by where the "Caught?" header label sits (see
- * `QUICK_CHECKLIST_FIRST_LABEL`), so the layout matches the source — and the
- * SaveTracker column map — before the formatting/formula port. Idempotent:
- * once row 1 has been overwritten with the ported formulas the label is gone
- * and nothing is deleted on a re-run. Finally stamps `destVersion` into the
- * A1 title (see setQuickChecklistTitle).
+ * The creator's column layout is adopted as-is (so consecutive versions
+ * migrate 1:1); if the destination's data block starts further right than
+ * the source's — 6.03 added a hidden junk column E — the temp copy gets the
+ * same blank column(s) inserted first, so it lines up with the destination
+ * and its own same-sheet references shift with it (see
+ * alignQuickChecklistTemp). Everything after that is a same-position copy.
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
  * @param {string} destVersion - e.g. '6.03'
@@ -127,21 +124,24 @@ function portQuickChecklistHeader(src, dst, destVersion) {
   const dSheet = dst.getSheetByName(sName)
   if (!sSheet || !dSheet) throw new Error('Quick Checklist not found')
 
-  deleteExtraQuickChecklistColumns(dSheet)
-
   const tempSheet = sSheet.copyTo(dst)
   try {
-    // Work in the source's width. Every read below is on the temp copy and
-    // every write on the destination, so the destination must be at least as
-    // wide (deleting column E can leave it one short); pad it if needed and
-    // never read past the temp sheet's own last column.
+    const first = alignQuickChecklistTemp(tempSheet, dSheet)
+    const lastData = first + QUICK_CHECKLIST_DATA_COLUMNS - 1
+
+    // Work in the (now aligned) source's width; pad the destination if it's
+    // narrower, and never read past the temp sheet's own last column.
     const cols = tempSheet.getMaxColumns()
     const dCols = dSheet.getMaxColumns()
     if (dCols < cols) dSheet.insertColumnsAfter(dCols, cols - dCols)
 
-    const srcRange = tempSheet.getRange(1, 1, 10, cols)
-    const dstRange = dSheet.getRange(1, 1, 10, cols)
-    srcRange.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false)
+    tempSheet
+      .getRange(1, 1, 10, cols)
+      .copyTo(
+        dSheet.getRange(1, 1, 10, cols),
+        SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+        false,
+      )
 
     for (let r = 1; r <= 10; r++) {
       dSheet.setRowHeight(r, tempSheet.getRowHeight(r))
@@ -151,9 +151,9 @@ function portQuickChecklistHeader(src, dst, destVersion) {
         dSheet.showRows(r)
       }
     }
-    // Column widths only. Hidden states come from QUICK_CHECKLIST_HIDDEN_COLUMNS
-    // below rather than from the source, whose hidden columns also include the
-    // SaveTracker's marker column.
+    // Column widths only. Hidden states are the creator's (e.g. the junk
+    // column E) plus the Ribbons hide below — not the source's, whose hidden
+    // columns also include the SaveTracker's marker column.
     for (let c = 1; c <= cols; c++) {
       dSheet.setColumnWidth(c, tempSheet.getColumnWidth(c))
     }
@@ -165,14 +165,85 @@ function portQuickChecklistHeader(src, dst, destVersion) {
         dSheet.getRange(rowNum, startCol, 1, numCols),
       )
     }
-    portRowSlice(1, 5, 15)
+    portRowSlice(1, first, lastData)
     portRowSlice(10, 1, cols)
+
+    dSheet.hideColumns(lastData) // Ribbons
   } finally {
     dst.deleteSheet(tempSheet)
   }
 
-  QUICK_CHECKLIST_HIDDEN_COLUMNS.forEach((c) => dSheet.hideColumns(c))
   setQuickChecklistTitle(dSheet, destVersion)
+}
+
+/**
+ * Make the temp copy of the source Quick Checklist match the destination's
+ * column layout, and return the (shared) column where the data block starts.
+ * The data block ("Caught?" … "Ribbons") is located in each sheet by the
+ * first non-blank cell in row 10 to the right of column D — that's the
+ * creator's stats row on a fresh copy and my "Stats:" row on a migrated one,
+ * so it works for both. If the destination's block starts further right,
+ * blank columns are inserted into the temp copy in front of its block, which
+ * shifts the temp's own same-sheet references (row 1/row 10 formulas) along
+ * with it while leaving references to other sheets alone — exactly the
+ * adjustment the port needs. Throws if the destination's block starts to the
+ * LEFT of the source's (columns would have to be deleted; unexpected).
+ * @param {Sheet} tempSheet - copy of the source Quick Checklist, inside dst
+ * @param {Sheet} dSheet - destination Quick Checklist
+ * @return {number} 1-based column of the data block in both sheets
+ */
+function alignQuickChecklistTemp(tempSheet, dSheet) {
+  const srcFirst = quickChecklistFirstDataColumn(tempSheet, 'source')
+  const dstFirst = quickChecklistFirstDataColumn(dSheet, 'destination')
+  const offset = dstFirst - srcFirst
+  if (offset < 0) {
+    throw new Error(
+      'Quick Checklist: destination data block starts at column ' +
+        dstFirst +
+        ", left of the source's " +
+        srcFirst +
+        '; layout unknown, nothing ported',
+    )
+  }
+  if (offset > 0) {
+    tempSheet.insertColumnsBefore(srcFirst, offset)
+    Logger.log(
+      'Quick Checklist: source data block shifted right by ' +
+        offset +
+        ' to match the destination (column ' +
+        dstFirst +
+        ')',
+    )
+  }
+  return dstFirst
+}
+
+/**
+ * Column where a Quick Checklist's data block starts: the first non-blank
+ * cell in row 10 right of the fixed A-D block (see alignQuickChecklistTemp).
+ * @param {Sheet} sheet
+ * @param {string} which - 'source' | 'destination', for the error message
+ * @return {number}
+ */
+function quickChecklistFirstDataColumn(sheet, which) {
+  const start = QUICK_CHECKLIST_FIXED_COLUMNS + 1
+  const width = sheet.getMaxColumns() - start + 1
+  const row10 = sheet
+    .getRange(QUICK_CHECKLIST_LOCATOR_ROW, start, 1, width)
+    .getDisplayValues()[0]
+  const idx = row10.findIndex((v) => String(v).trim() !== '')
+  if (idx === -1) {
+    throw new Error(
+      'Quick Checklist (' +
+        which +
+        '): row ' +
+        QUICK_CHECKLIST_LOCATOR_ROW +
+        ' is blank right of column ' +
+        QUICK_CHECKLIST_FIXED_COLUMNS +
+        '; cannot locate the data block',
+    )
+  }
+  return start + idx
 }
 
 /**
@@ -301,51 +372,6 @@ function portQuickChecklistImageBanding(dst) {
         '; nothing changed',
     )
   }
-}
-
-/**
- * Delete the column(s) a newer creator version inserted before the Quick
- * Checklist's first data column, so "Caught?" ends up at
- * `QUICK_CHECKLIST_FIRST_LABEL_COL` (E). Finds the label in row 1 of the
- * destination; if it's already at E, or absent (row 1 already ported), does
- * nothing. Throws if the label sits LEFT of E, since that layout is unknown.
- * @param {Sheet} dSheet - destination Quick Checklist
- */
-function deleteExtraQuickChecklistColumns(dSheet) {
-  const row1 = dSheet
-    .getRange(1, 1, 1, dSheet.getMaxColumns())
-    .getDisplayValues()[0]
-  const idx = row1.findIndex(
-    (v) => String(v).trim() === QUICK_CHECKLIST_FIRST_LABEL,
-  )
-  if (idx === -1) {
-    Logger.log(
-      'Quick Checklist: "' +
-        QUICK_CHECKLIST_FIRST_LABEL +
-        '" not in row 1 (already ported?); no columns deleted',
-    )
-    return
-  }
-  const extra = idx + 1 - QUICK_CHECKLIST_FIRST_LABEL_COL
-  if (extra < 0) {
-    throw new Error(
-      'Quick Checklist: "' +
-        QUICK_CHECKLIST_FIRST_LABEL +
-        '" found at column ' +
-        (idx + 1) +
-        ', left of the expected column ' +
-        QUICK_CHECKLIST_FIRST_LABEL_COL +
-        '; layout unknown, nothing deleted',
-    )
-  }
-  if (extra === 0) return
-  dSheet.deleteColumns(QUICK_CHECKLIST_FIRST_LABEL_COL, extra)
-  Logger.log(
-    'Quick Checklist: deleted ' +
-      extra +
-      ' extra column(s) at column ' +
-      QUICK_CHECKLIST_FIRST_LABEL_COL,
-  )
 }
 
 /**
