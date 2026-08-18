@@ -18,7 +18,7 @@ export const TIMINGS_SHEET = '_timings'
 const TIMINGS_HEADER = ['when', 'sheet', 'flow', 'step', 'ms']
 /** Pixel widths so the ISO timestamp, sheet name and step labels are readable without resizing. */
 const TIMINGS_COLUMN_WIDTHS = [220, 200, 90, 300, 90]
-const TIMINGS_WIDTHS_PROPERTY = 'OFFLINEDEX_TIMINGS_WIDTHS''
+const TIMINGS_WIDTHS_PROPERTY = 'OFFLINEDEX_TIMINGS_WIDTHS'
 /** Keep the timings sheet from growing forever: oldest rows are dropped past this. */
 const TIMINGS_MAX_ROWS = 2000
 
