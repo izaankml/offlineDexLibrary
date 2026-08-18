@@ -6,8 +6,27 @@
 // script via OfflineDexLib.portAll(sourceVersion, destVersion).
 // ============================================================
 
-const INSERT_COLUMN_L_IN_DAILY_MODE = true
-const DELETE_COLUMN_E_IN_QUICK_CHECKLIST = true
+// Quick Checklist column layout. The creator's header labels sit in row 1;
+// in the layout the SaveTracker column map expects, "Caught?" is at E1 and
+// "Ribbons" at O1. Newer creator versions insert a junk column at E (blank
+// header, #REF! rows), which shifts every later column right by one — we
+// detect that by where the "Caught?" label lands and delete the extra
+// column(s). (Column-count comparisons proved unreliable: counts include
+// trailing blank columns and both sheets can end up the same width.)
+const QUICK_CHECKLIST_FIRST_LABEL = 'Caught?'
+const QUICK_CHECKLIST_FIRST_LABEL_COL = 5 // E, once any extra columns are gone
+// Columns hidden on the Quick Checklist after the port, in the aligned
+// layout: O = the creator's Ribbons column. (The SaveTracker marker column
+// sits at P, one past it, and is hidden by the highlighter itself.)
+const QUICK_CHECKLIST_HIDDEN_COLUMNS = [15]
+
+// Daily Mode has a custom column L (map-size inputs in L12:M14 feed the
+// IMAGE formula in B16). A fresh creator copy lacks it, so we insert one.
+// Whether it's present is detected by a landmark rather than a column count:
+// the creator's "Missing Gym Leader Voucher…" block header, at N2 when the
+// custom column exists (source) and at M2 when it doesn't (fresh copy).
+const DAILY_MODE_LANDMARK_WITH_L = 'N2'
+const DAILY_MODE_LANDMARK_WITHOUT_L = 'M2'
 const B16_MERGE_RANGE = 'B16:M131'
 
 // Daily Mode cells whose formatting I customized, copied from the old sheet:
@@ -60,7 +79,9 @@ function portAll(sourceVersion, destVersion) {
   safeRun('Formatting Quick Checklist', () =>
     portQuickChecklistHeader(src, dst),
   )
-  safeRun('Formatting Form Checklist', () => sortFormChecklistByDone(dst))
+  // The Form Checklist "unchecked first" sort is applied by the SaveTracker
+  // after each save upload (see sortFormChecklistByDone), not here: on a
+  // fresh copy every row is still unchecked, so sorting now would be a no-op.
   safeRun('Formatting Daily Mode', () => portDailyModeFormatting(src, dst))
   safeRun('Updating Daily Mode Cells', () => portDailyModeCells(src, dst))
   safeRun('Hiding sheets', () => portHiddenSheets(src, dst))
@@ -72,15 +93,18 @@ function portAll(sourceVersion, destVersion) {
 
 /**
  * Port rows 1-10 of the Quick Checklist sheet: cell formatting, row heights,
- * column widths, and row hidden states (column hidden states are NOT ported,
- * so columns are never hidden). Also ports formulas (falling back to values)
- * for row 1 columns E-O and all of row 10. Uses a temp copy of the source
- * sheet inside the destination because copyTo() can't cross spreadsheets.
+ * column widths, and row hidden states. Also ports formulas (falling back to
+ * values) for row 1 columns E-O and all of row 10, then hides
+ * `QUICK_CHECKLIST_HIDDEN_COLUMNS` (the creator's Ribbons column O). Uses a
+ * temp copy of the source sheet inside the destination because copyTo()
+ * can't cross spreadsheets.
  *
- * First deletes the destination's column E (when
- * `DELETE_COLUMN_E_IN_QUICK_CHECKLIST` is true and the destination is wider
- * than the source) so the new version's extra column doesn't shift everything
- * out of alignment before the formatting/formula port.
+ * First deletes any extra column(s) the new version inserted at E, located
+ * by where the "Caught?" header label sits (see
+ * `QUICK_CHECKLIST_FIRST_LABEL`), so the layout matches the source — and the
+ * SaveTracker column map — before the formatting/formula port. Idempotent:
+ * once row 1 has been overwritten with the ported formulas the label is gone
+ * and nothing is deleted on a re-run.
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
  */
@@ -90,16 +114,7 @@ function portQuickChecklistHeader(src, dst) {
   const dSheet = dst.getSheetByName(sName)
   if (!sSheet || !dSheet) throw new Error('Quick Checklist not found')
 
-  // The new version added a column E the old version lacks, shifting every
-  // later column. Delete it so source and destination line up before we copy
-  // across. Guarded by a column-count check so a re-run won't delete a real
-  // column (mirrors the Daily Mode column-L insert).
-  if (
-    DELETE_COLUMN_E_IN_QUICK_CHECKLIST &&
-    dSheet.getMaxColumns() > sSheet.getMaxColumns()
-  ) {
-    dSheet.deleteColumn(5)
-  }
+  deleteExtraQuickChecklistColumns(dSheet)
 
   const tempSheet = sSheet.copyTo(dst)
   try {
@@ -117,8 +132,9 @@ function portQuickChecklistHeader(src, dst) {
         dSheet.showRows(r)
       }
     }
-    // Column widths only — column hidden states are no longer ported, so the
-    // migrator never hides Quick Checklist columns.
+    // Column widths only. Hidden states come from QUICK_CHECKLIST_HIDDEN_COLUMNS
+    // below rather than from the source, whose hidden columns also include the
+    // SaveTracker's marker column.
     for (let c = 1; c <= cols; c++) {
       dSheet.setColumnWidth(c, tempSheet.getColumnWidth(c))
     }
@@ -135,30 +151,60 @@ function portQuickChecklistHeader(src, dst) {
   } finally {
     dst.deleteSheet(tempSheet)
   }
+
+  QUICK_CHECKLIST_HIDDEN_COLUMNS.forEach((c) => dSheet.hideColumns(c))
 }
 
 /**
- * Sort the Form Checklist sheet by column C ascending so unchecked rows
- * appear before checked rows. Header row is preserved.
- * @param {Spreadsheet} dst
+ * Delete the column(s) a newer creator version inserted before the Quick
+ * Checklist's first data column, so "Caught?" ends up at
+ * `QUICK_CHECKLIST_FIRST_LABEL_COL` (E). Finds the label in row 1 of the
+ * destination; if it's already at E, or absent (row 1 already ported), does
+ * nothing. Throws if the label sits LEFT of E, since that layout is unknown.
+ * @param {Sheet} dSheet - destination Quick Checklist
  */
-function sortFormChecklistByDone(dst) {
-  const sheet = dst.getSheetByName('Form Checklist')
-  if (!sheet) throw new Error('Form Checklist not found in destination')
-
-  const lastRow = sheet.getLastRow()
-  const lastCol = sheet.getLastColumn()
-  if (lastRow < 2) return
-
-  const range = sheet.getRange(2, 1, lastRow - 1, lastCol)
-  range.sort({ column: 3, ascending: true })
+function deleteExtraQuickChecklistColumns(dSheet) {
+  const row1 = dSheet
+    .getRange(1, 1, 1, dSheet.getMaxColumns())
+    .getDisplayValues()[0]
+  const idx = row1.findIndex(
+    (v) => String(v).trim() === QUICK_CHECKLIST_FIRST_LABEL,
+  )
+  if (idx === -1) {
+    Logger.log(
+      'Quick Checklist: "' +
+        QUICK_CHECKLIST_FIRST_LABEL +
+        '" not in row 1 (already ported?); no columns deleted',
+    )
+    return
+  }
+  const extra = idx + 1 - QUICK_CHECKLIST_FIRST_LABEL_COL
+  if (extra < 0) {
+    throw new Error(
+      'Quick Checklist: "' +
+        QUICK_CHECKLIST_FIRST_LABEL +
+        '" found at column ' +
+        (idx + 1) +
+        ', left of the expected column ' +
+        QUICK_CHECKLIST_FIRST_LABEL_COL +
+        '; layout unknown, nothing deleted',
+    )
+  }
+  if (extra === 0) return
+  dSheet.deleteColumns(QUICK_CHECKLIST_FIRST_LABEL_COL, extra)
+  Logger.log(
+    'Quick Checklist: deleted ' +
+      extra +
+      ' extra column(s) at column ' +
+      QUICK_CHECKLIST_FIRST_LABEL_COL,
+  )
 }
 
 /**
  * Port Daily Mode formatting for only the cells I customized
- * (`DAILY_MODE_FORMAT_RANGES`) plus the column L and M widths. When
- * `INSERT_COLUMN_L_IN_DAILY_MODE` is true and the destination is narrower than
- * the source, inserts a blank column L first.
+ * (`DAILY_MODE_FORMAT_RANGES`) plus the column L and M widths. Inserts the
+ * custom blank column L first when the destination lacks it (see
+ * `dailyModeHasCustomColumn`).
  *
  * Deliberately does NOT touch conditional formatting: inserting column L
  * auto-shifts the destination's own CF ranges to match, so the new version's
@@ -173,11 +219,9 @@ function portDailyModeFormatting(src, dst) {
   const dSheet = dst.getSheetByName(name)
   if (!sSheet || !dSheet) throw new Error('Daily Mode not found')
 
-  if (
-    INSERT_COLUMN_L_IN_DAILY_MODE &&
-    dSheet.getMaxColumns() < sSheet.getMaxColumns()
-  ) {
+  if (!dailyModeHasCustomColumn(sSheet, dSheet)) {
     dSheet.insertColumnBefore(12)
+    Logger.log('Daily Mode: inserted custom column L')
   }
 
   const tempSheet = sSheet.copyTo(dst)
@@ -201,9 +245,49 @@ function portDailyModeFormatting(src, dst) {
 }
 
 /**
+ * Whether the destination Daily Mode already has the custom column L, judged
+ * by where the creator's landmark label (read from the source at
+ * `DAILY_MODE_LANDMARK_WITH_L`) sits in the destination: same cell → present;
+ * one column left (`DAILY_MODE_LANDMARK_WITHOUT_L`) → absent. Throws when the
+ * landmark is blank in the source or in neither destination cell, so a
+ * changed creator layout fails loudly instead of being ported one column off.
+ * @param {Sheet} sSheet - source Daily Mode
+ * @param {Sheet} dSheet - destination Daily Mode
+ * @return {boolean}
+ */
+function dailyModeHasCustomColumn(sSheet, dSheet) {
+  const label = sSheet.getRange(DAILY_MODE_LANDMARK_WITH_L).getDisplayValue()
+  if (!label) {
+    throw new Error(
+      'Daily Mode: landmark cell ' +
+        DAILY_MODE_LANDMARK_WITH_L +
+        ' is blank in the source; cannot tell whether column L is present',
+    )
+  }
+  const withL = dSheet.getRange(DAILY_MODE_LANDMARK_WITH_L).getDisplayValue()
+  const withoutL = dSheet
+    .getRange(DAILY_MODE_LANDMARK_WITHOUT_L)
+    .getDisplayValue()
+  if (withL === label) return true
+  if (withoutL === label) return false
+  throw new Error(
+    'Daily Mode: landmark "' +
+      label +
+      '" is at neither ' +
+      DAILY_MODE_LANDMARK_WITH_L +
+      ' nor ' +
+      DAILY_MODE_LANDMARK_WITHOUT_L +
+      ' in the destination; layout changed, column L not touched',
+  )
+}
+
+/**
  * Port Daily Mode cell content that formatting alone doesn't carry:
  * unmerges + re-merges B16:M131, copies the B16 formula/value with top
  * vertical alignment, and copies L12:M14 formulas (falling back to values).
+ * Refuses to run until the custom column L is in place (see
+ * `portDailyModeFormatting`): without it the merge and the L12:M14 write
+ * would land on the creator's own columns.
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
  */
@@ -212,6 +296,11 @@ function portDailyModeCells(src, dst) {
   const sSheet = src.getSheetByName(name)
   const dSheet = dst.getSheetByName(name)
   if (!sSheet || !dSheet) throw new Error('Daily Mode not found')
+  if (!dailyModeHasCustomColumn(sSheet, dSheet)) {
+    throw new Error(
+      'Daily Mode: custom column L is missing (did "Formatting Daily Mode" fail?); cells not ported',
+    )
+  }
 
   const mergeRange = dSheet.getRange(B16_MERGE_RANGE)
   mergeRange.breakApart()

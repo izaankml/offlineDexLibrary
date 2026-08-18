@@ -132,13 +132,14 @@ Why these column shifts: the display sheets have extra leading columns (dex#, na
 
 1. `clearHighlights()` - wipe background fills from the previous run (using the marker column to clear only rows that were actually highlighted, when `useFilter`)
 2. `highlightChanges()` - for each tracker: first re-sort the display by `sortDisplayColumn` (column A) so its rows line up with the data sheet, then compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
+2b. `sortFormChecklistByDone()` - re-sort the Form Checklist's data rows by column C ("Done") ascending so unchecked forms stay above checked ones (a ported customization; it lives here rather than in the Migrator because the checkmarks only exist once a save has been loaded)
 3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
 
 **Uploading without re-snapshotting:** `processChangesWithoutSnapshot()` runs steps 1-2 and skips step 3, so the existing snapshot stays the baseline. Highlights then keep accumulating against that baseline across uploads instead of each upload resetting what "changed since last time" means — useful for a mid-run save, or a re-upload after a run you don't want to bank yet. It's exposed through the **Upload Data (Keep Baseline)** menu item; the regular **Upload Data** item still snapshots.
 
 **Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
 
-**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the first column past the tracked range (`max(columnMap values) + 1`) on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
+**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the marker column — by default the first column past the tracked range (`max(columnMap values) + 1`), or `markerColumn` when set (QuickChecklist uses P/16, because O is the creator's Ribbons column; from 6.01 onward the default would have blanked it) — on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
 
 **Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
 
@@ -152,25 +153,25 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 **Looks up files by name pattern:** `Offline RogueDex {v}` (e.g., "Offline RogueDex <version>"). Excludes any file starting with `PUBLIC_` to avoid grabbing the creator's master.
 
-**Six migration steps:**
+**Five migration steps:**
 
-1. **Quick Checklist header rows 1-10:** first deletes the destination's extra column E (gated by `DELETE_COLUMN_E_IN_QUICK_CHECKLIST` plus a column-count check) so the new version's added column doesn't shift the layout out of alignment. Then copies cell formatting + column widths + row hidden states for rows 1-10 (column hidden states are no longer ported, so columns are never hidden), and ports formulas/values for row 1 columns E-O and row 10 in full.
+1. **Quick Checklist header rows 1-10:** first deletes any extra column(s) the new version inserted at E (6.03 added a junk column there), located by where the creator's `Caught?` header label sits in row 1 (`QUICK_CHECKLIST_FIRST_LABEL`; expected at E, found at F → delete one). Column-count comparisons were tried first and misfired, since counts include trailing blank columns. Then copies cell formatting + column widths + row hidden states for rows 1-10, ports formulas/values for row 1 columns E-O and row 10 in full, and hides `QUICK_CHECKLIST_HIDDEN_COLUMNS` (O = the creator's Ribbons column). Column hidden states are not copied from the source (its hidden columns include the SaveTracker marker column).
 
-2. **Form Checklist sort:** sorts rows 2+ by column C ascending so unchecked rows appear before checked rows.
+2. **Daily Mode formatting:** copies cell formatting only for the cells I customized (`DAILY_MODE_FORMAT_RANGES` — `B16:M131` and `L12:M14`) plus the column L and M widths. Inserts the custom blank column L into the destination when it's missing — detected by a landmark, not a column count: the creator's "Missing Gym Leader Voucher…" label is at N2 in the source (`DAILY_MODE_LANDMARK_WITH_L`) and at M2 in a fresh copy (`DAILY_MODE_LANDMARK_WITHOUT_L`); anywhere else throws so a reshuffled layout fails loudly. It deliberately does **not** touch conditional formatting: inserting column L auto-shifts the destination's own CF ranges to match, so the new version's rules already line up — copying the old version's CF over them would overwrite the new version's.
 
-3. **Daily Mode formatting:** copies cell formatting only for the cells I customized (`DAILY_MODE_FORMAT_RANGES` — `B16:M131` and `L12:M14`) plus the column L and M widths. Optionally inserts a blank column L into the destination (controlled by `INSERT_COLUMN_L_IN_DAILY_MODE`) because I had added a custom column there that creator versions don't have. It deliberately does **not** touch conditional formatting: inserting column L auto-shifts the destination's own CF ranges to match, so the new version's rules already line up — copying the old version's CF over them would overwrite the new version's.
+3. **Daily Mode cells:** unmerges any existing merge at B16, re-merges to `B16:M131`, copies B16 formula. Also copies L12:M14 formulas/values from source. Refuses to run if the landmark says column L is still missing (otherwise the merge would swallow the creator's column M).
 
-4. **Daily Mode cells:** unmerges any existing merge at B16, re-merges to `B16:M131`, copies B16 formula. Also copies L12:M14 formulas/values from source.
+(The Form Checklist "unchecked first" sort used to be a migration step; it now runs in the SaveTracker after every upload — see the upload flow above — because on a fresh copy every row is unchecked and sorting before the save load did nothing.)
 
-5. **Hidden sheets:** any sheet hidden in source is also hidden in destination if it exists by name.
+4. **Hidden sheets:** any sheet hidden in source is also hidden in destination if it exists by name.
 
-6. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
+5. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
 
 (The Migrator no longer creates "View Changes" filter views — that step was removed. The marker column described below still exists for fast highlight-clearing.)
 
 **Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
 
-**Conditional formatting is intentionally left alone:** the Migrator no longer copies CF rules across sheets. For Daily Mode, inserting column L auto-shifts the destination's existing CF ranges, so the new version's rules stay correct without any remap. For the dex checklists, the IV step (step 6) edits the *existing* destination rules in place rather than importing the old sheet's.
+**Conditional formatting is intentionally left alone:** the Migrator no longer copies CF rules across sheets. For Daily Mode, inserting column L auto-shifts the destination's existing CF ranges, so the new version's rules stay correct without any remap. For the dex checklists, the IV step (step 5) edits the *existing* destination rules in place rather than importing the old sheet's.
 
 ### Setup.js
 
@@ -339,6 +340,5 @@ checks out `creator` in the working tree.
 
 ## Future enhancements that have come up
 
-- Make `INSERT_COLUMN_L_IN_DAILY_MODE` a parameter to `portAll()` instead of a top-level constant, so different version transitions can opt in/out without redeploying the library
 - Track timing per migration in the version history at the top of Migrator.js
 - If Google ever exposes bound scripts via Drive, Prepare Next Version could look up the copy's Script ID itself (a `Drive.Files.list` `'<sheetId>' in parents` query) and prefill the command

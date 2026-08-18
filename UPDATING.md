@@ -163,9 +163,15 @@ brings it along.)
 - **"A creator baseline for X is already recorded"** — you already ran the update for
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
-- **Daily Mode column L** — porting the custom column is gated on the library constant
-  `INSERT_COLUMN_L_IN_DAILY_MODE` (`true`) plus a width check. A major version jump
-  that reshuffles Daily Mode can make this misfire — eyeball that sheet after migrating.
+- **Daily Mode column L / Quick Checklist column E** — whether to insert L (Daily
+  Mode) or delete an extra E (Quick Checklist) is decided by landmark labels in the
+  creator's layout (`DAILY_MODE_LANDMARK_*`, `QUICK_CHECKLIST_FIRST_LABEL` in
+  `Migrator.js`). If the creator moves or renames those labels, the Daily Mode steps
+  fail with an `ERR` in the log (fix the constants, redo from a fresh copy) and the
+  Quick Checklist step logs and skips the delete — eyeball both sheets after migrating.
+- **Migration ran on the wrong layout** (e.g. Daily Mode column L never inserted, or
+  Quick Checklist column E still there): the steps aren't undoable in place — trash the
+  copy and start again from Prepare Next Version rather than re-running Finish Setup.
 - **"No file found named ..."** — the source/destination filenames don't match
   `Offline RogueDex {v}` exactly, or the file is trashed. Rename to match.
 - **Finish Setup picked the wrong previous version** — it takes the newest copy older

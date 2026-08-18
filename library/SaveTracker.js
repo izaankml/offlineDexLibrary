@@ -5,7 +5,8 @@
 // the corresponding cells in display sheets after each save upload.
 //
 // PUBLIC FUNCTIONS (called via OfflineDexLib.<name>):
-//   processChanges()    - full flow used by uploadFile
+//   processChanges()    - full flow used by uploadFile (also re-sorts the
+//                         Form Checklist so unchecked forms stay on top)
 //   processChangesWithoutSnapshot()
 //                       - same, but keeps the existing snapshot as the baseline
 //   snapshot()          - capture current values to snapshots
@@ -21,6 +22,12 @@ const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00' // yellow
 const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
 const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
 const CHUNK_ROWS = 200
+
+// Form Checklist: kept sorted so unchecked forms (column C "Done" = ☐) sit
+// above checked ones (☑). Re-applied after every upload; see
+// sortFormChecklistByDone.
+const FORM_CHECKLIST_SHEET = 'Form Checklist'
+const FORM_CHECKLIST_DONE_COLUMN = 3
 
 // Module-level state for toast progress tracking.
 let LAST_STEP_LABEL = ''
@@ -110,6 +117,10 @@ const TRACKERS = [
     // the data sheet (highlights paint by row offset) and the column-A slicers
     // line up. See sortDisplayByColumn.
     sortDisplayColumn: 1,
+    // The column after the tracked range (O) is the creator's Ribbons column,
+    // which the Migrator keeps (hidden) — so the marker goes one further, to P.
+    // Without this the marker writes would blank Ribbons on every upload.
+    markerColumn: 16,
   },
   dexTracker(
     'StarterDex',
@@ -178,6 +189,20 @@ function buildShiftMap(dataStart, dataEnd, shift) {
 }
 
 /**
+ * The display column that receives the per-row `●` marker for a tracker, or
+ * null when the tracker doesn't use markers. Defaults to the column right
+ * after the tracked range; `t.markerColumn` overrides that when the next
+ * column already holds real content (see the QuickChecklist entry).
+ * @param {Object} t - a TRACKERS entry
+ * @return {number|null}
+ */
+function markerColumnFor(t) {
+  if (!t.useFilter) return null
+  if (t.markerColumn) return t.markerColumn
+  return Math.max(...Object.values(t.columnMap)) + 1
+}
+
+/**
  * Full save-upload flow: clear stale highlights, paint cells that changed
  * since the last snapshot, then capture a new snapshot for next time.
  * Assumes the caller (uploadFile) already reset toast state.
@@ -190,6 +215,12 @@ function processChanges(options) {
   const skipSnapshot = !!(options && options.skipSnapshot)
   clearHighlights()
   highlightChanges()
+  try {
+    sortFormChecklistByDone(ss)
+  } catch (e) {
+    // Cosmetic; never let it block the snapshot.
+    Logger.log('Form Checklist sort failed: ' + e.message)
+  }
   if (!skipSnapshot) snapshot()
   finishFlow(
     ss,
@@ -384,7 +415,7 @@ function applyHighlightsForTracker(ss, t) {
 
   const displayCols = Object.values(t.columnMap)
   const displayMaxCol = Math.max(...displayCols)
-  const markerCol = t.useFilter ? displayMaxCol + 1 : null
+  const markerCol = markerColumnFor(t)
 
   if (markerCol) {
     display.hideColumns(markerCol)
@@ -459,6 +490,31 @@ function applyHighlightsForTracker(ss, t) {
   )
 }
 
+/**
+ * Sort the Form Checklist's data rows by column C ("Done") ascending so
+ * unchecked forms (☐) sit above checked ones (☑); the header row stays put.
+ * Runs after every save upload because that's when the checkmarks change —
+ * on a fresh copy every row is unchecked, so sorting at migration time would
+ * do nothing. Logs and returns if the sheet is missing.
+ * @param {Spreadsheet} ss
+ */
+function sortFormChecklistByDone(ss) {
+  const sheet = ss.getSheetByName(FORM_CHECKLIST_SHEET)
+  if (!sheet) {
+    Logger.log(FORM_CHECKLIST_SHEET + ' not found, skipping sort')
+    return
+  }
+  startStep(ss, 'Sorting ' + FORM_CHECKLIST_SHEET)
+  const lastRow = sheet.getLastRow()
+  const lastCol = sheet.getLastColumn()
+  if (lastRow > 2) {
+    sheet
+      .getRange(2, 1, lastRow - 1, lastCol)
+      .sort({ column: FORM_CHECKLIST_DONE_COLUMN, ascending: true })
+  }
+  finishStep()
+}
+
 /** Public entry: clear highlight backgrounds (and markers) on every tracker. */
 function clearHighlights() {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
@@ -508,7 +564,7 @@ function clearHighlightsForTracker(ss, t) {
 
   const displayCols = Object.values(t.columnMap)
   const maxCol = Math.max(...displayCols)
-  const markerCol = t.useFilter ? maxCol + 1 : null
+  const markerCol = markerColumnFor(t)
   const numRows = lastRow - t.displayFirstRow + 1
 
   if (markerCol) {
