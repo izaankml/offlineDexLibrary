@@ -94,28 +94,35 @@ pins the exact per-column mapping the old index-based config produced.
 **Highlight colors:** yellow (`#FFFF00`) on the Quick Checklist, light green (`#93c47d`)
 on the dex sheets, light purple (`#b4a7d6`) for the increment counters.
 
-**The flow on each save upload (`processChanges`):**
+**The flow on each save upload (`processChanges`)** — measured on 2026-08-18: every
+SpreadsheetApp call in this workbook costs ~1 s (formula-heavy) and a 145k-cell
+`getValues`/`setBackgrounds`/`setValues` 15–25 s, so all bulk I/O goes through the Sheets
+API instead:
 
-1. *Checking layout* — resolve every tracker (2 small header reads each); one-time cleanup
-   of the legacy marker columns.
-2. *Highlighting X* — for each tracker: ONE read of the data block, ONE read of the
-   snapshot block, in-memory diff, then `setBackgrounds` over the tracked display block
-   only (500-row chunks). Unchanged cells get `null`, which is what clears the previous
-   upload's highlights — there is no separate clear pass and **no marker column** any
-   more. Before painting, the display's key column (A) is read; only if it is out of
-   order (a slicer sort) is the display physically re-sorted.
-3. *Sorting Form Checklist* — unchecked forms above checked ones.
-4. *Snapshotting X* — the values already in memory are written to the hidden
-   `_snapshot_<key>` sheet at the **same row/column numbers as the data sheet** (v2
-   layout; the header band is copied above for readability). No re-read. The old v1
-   layout (data starting at row headerRows+1) is still read correctly once — the
-   `OFFLINEDEX_SNAPSHOT_FORMAT` document property records which is on disk.
+1. *Reading sheets* — one `spreadsheets.get` (sheet ids/sizes) and ONE `values.batchGet`
+   returning the whole data sheets (header band + values), the display header bands and
+   key columns, and the v3 snapshots. The layout probe runs on the bands from that read.
+2. *Highlighting changes* — in-memory diff; then ONE `batchUpdate` that clears last
+   upload's highlighted rows (their positions are stored in the snapshot metadata — on the
+   first run after an upgrade the whole tracked block is cleared once) and paints only the
+   changed rows (`updateCells` with `backgroundColor` per row of the tracked block, `{}`
+   for unchanged cells). If the display key column (A) is out of order (a slicer sort),
+   the display is physically re-sorted first — otherwise no sort.
+3. *Sorting Form Checklist* — unchecked forms above checked ones (SpreadsheetApp sort).
+4. *Snapshotting* — ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
+   few cells** of the hidden `_snapshot_<key>` sheet (v3: A1 = metadata `{v, firstRow,
+   minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). Older
+   grid snapshots (v1/v2) are read once through SpreadsheetApp and converted; the
+   `OFFLINEDEX_SNAPSHOT_FORMAT` property says which is on disk. `labels` lets a later
+   upload realign the baseline by header label if the creator inserts a column between
+   uploads (k-th occurrence ↔ k-th occurrence, since "SHINY"/"Friendship" repeat).
 
-Per upload that is ≈ 40 Sheets calls total (was ≈ 100 + one call per run of changed rows,
-plus three full-sheet sorts). **Upload Data (Keep Baseline)** runs steps 1–3 only.
+That is 4 API calls + one small sort per upload (was ≈100 SpreadsheetApp calls, 4 sorts).
+**Upload Data (Keep Baseline)** paints and stores the painted rows but leaves the baseline.
 
-**Standalone menu items:** *Snapshot Data*, *Highlight Changes*, *Clear Highlights* (null
-backgrounds over the tracked block, chunked) run the same code paths as their own flows.
+**Standalone menu items:** *Snapshot Data* (baseline ← current, highlights untouched),
+*Highlight Changes* (= keep-baseline flow), *Clear Highlights* (clears the remembered rows,
+or the whole block if unknown), *Check Layout* (dry run of the probe).
 
 **Toast progress + timing log (`progress.ts`):** a single replacing toast shows the current
 step; on finish (or failure — `failFlow` shows a non-sticky error toast) every step's

@@ -34,7 +34,7 @@ test('Quick Checklist resolves on the migrated 6.03 header (labels replaced by s
   assert.equal(r.minDisplayCol, LAYOUT_603.quick.displayShinyCol)
   assert.equal(r.maxDisplayCol, LAYOUT_603.quick.displayMaxIvsCol)
   assert.equal(r.cells.length, 8)
-  assert.ok(r.cells.every((c) => c.color === '#FFFF00'))
+  assert.ok(r.cells.every((c) => c.color === '#ffff00'))
 })
 
 test('Quick Checklist resolves identically on the fresh PUBLIC 6.03 header', () => {

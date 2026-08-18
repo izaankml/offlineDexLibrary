@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { beforeEach, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
+  apiCalls,
   calls,
   logs,
   resetFakes,
@@ -21,19 +22,24 @@ import {
   SNAPSHOT_FORMAT_PROPERTY,
   TRACKER_SPECS,
   clearHighlights,
+  decodeSnapshotChunks,
   describeLayout,
   diffBlocks,
+  encodeSnapshotChunks,
   highlightChanges,
   outOfOrder,
   processChanges,
   snapshot,
   snapshotSheetName,
+  toRuns,
 } from '../src/lib/saveTracker.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const Q = LAYOUT_603.quick
 
 beforeEach(() => resetFakes())
+
+const props = () => PropertiesService.getDocumentProperties()
 
 /**
  * The header-keyed probe must reproduce exactly the column maps the old
@@ -68,17 +74,39 @@ test('golden: header-keyed layout reproduces the old index-based mappings on 6.0
   }
 })
 
-test('describeLayout reports every tracker (or its error) without throwing', () => {
+test('describeLayout reports every tracker (or the error) without throwing', () => {
   const ss = buildWorkbook({ rows: 3 })
   setActiveSpreadsheet(ss)
   const text = describeLayout()
   assert.match(text, /QuickChecklist: data D–K/)
   assert.match(text, /StarterDex: data L–EM .* → display D–EE \(shift -8\)/)
   ss.deleteSheet(ss.getSheetByName('FULL_DEX.data')!)
-  assert.match(describeLayout(), /FullDex: ERROR FULL_DEX.data not found/)
+  assert.match(describeLayout(), /ERROR FULL_DEX.data not found/)
 })
 
-test('diffBlocks: only tracked, non-excluded columns paint; width is the display block', () => {
+test('snapshot chunks round-trip and stay under the cell limit', () => {
+  const rows = Array.from({ length: 1200 }, (_, i) =>
+    Array.from({ length: 132 }, (_, c) =>
+      c % 3 === 0 ? i : c % 3 === 1 ? '' : 'x',
+    ),
+  )
+  const chunks = encodeSnapshotChunks(rows)
+  assert.ok(chunks.length > 1)
+  assert.ok(chunks.every((c) => c.length <= 45000))
+  assert.deepEqual(decodeSnapshotChunks(chunks), rows)
+  assert.deepEqual(decodeSnapshotChunks(encodeSnapshotChunks([])), [])
+})
+
+test('toRuns collapses contiguous offsets', () => {
+  assert.deepEqual(toRuns([]), [])
+  assert.deepEqual(toRuns([0, 1, 2, 5, 7, 8]), [
+    { start: 0, count: 3 },
+    { start: 5, count: 1 },
+    { start: 7, count: 2 },
+  ])
+})
+
+test('diffBlocks: only tracked, non-excluded columns paint; only changed rows are returned', () => {
   const ss = buildWorkbook({ rows: 2 })
   const spec = TRACKER_SPECS[1]!
   const r = resolveTracker(
@@ -92,14 +120,13 @@ test('diffBlocks: only tracked, non-excluded columns paint; width is the display
   changed[0] = 1 // Fought Flag → default colour
   changed[1] = 1 // Fought Count → excluded
   changed[22 - r.minDataCol] = 5 // Caught Count → increment
-  const d = diffBlocks(r, [row], [changed])
-  assert.equal(d.backgrounds[0]!.length, r.maxDisplayCol - r.minDisplayCol + 1)
-  assert.equal(d.backgrounds[0]![0], DEX_HIGHLIGHT_COLOR)
-  assert.equal(d.backgrounds[0]![1], null)
-  assert.equal(
-    d.backgrounds[0]![14 - r.minDisplayCol],
-    INCREMENT_HIGHLIGHT_COLOR,
-  )
+  const d = diffBlocks(r, [row, row], [changed, row])
+  assert.deepEqual([...d.rowColors.keys()], [0])
+  const colors = d.rowColors.get(0)!
+  assert.equal(colors.length, r.maxDisplayCol - r.minDisplayCol + 1)
+  assert.equal(colors[0], DEX_HIGHLIGHT_COLOR)
+  assert.equal(colors[1], null)
+  assert.equal(colors[14 - r.minDisplayCol], INCREMENT_HIGHLIGHT_COLOR)
   assert.equal(d.changed, 2)
 })
 
@@ -114,11 +141,15 @@ test('snapshot → change → highlight paints the right display cells and nothi
   const ss = buildWorkbook({ rows: 20 })
   setActiveSpreadsheet(ss)
   snapshot()
-  for (const t of TRACKER_SPECS)
-    assert.ok(ss.getSheetByName(snapshotSheetName(t.key))!.hidden)
+  for (const t of TRACKER_SPECS) {
+    const s = ss.getSheetByName(snapshotSheetName(t.key))!
+    assert.ok(s.hidden)
+    assert.match(String(s.valueAt(1, 1)), /^\{"v":3/)
+  }
+  assert.equal(props().getProperty(SNAPSHOT_FORMAT_PROPERTY), '3')
 
   const qData = ss.getSheetByName('STARTER_CHECKLIST.data')!
-  qData.load(Q.dataFirstRow, Q.dataShinyCol, [[1]]) // Bulbasaur SHINY
+  qData.load(Q.dataFirstRow, Q.dataShinyCol, [[42]]) // Bulbasaur SHINY
   qData.load(Q.dataFirstRow + 3, Q.dataMaxIvsCol, [[99]]) // row 15 Max IVs
   qData.load(Q.dataFirstRow + 5, 12, [[7]]) // Ribbons: NOT tracked
   const sData = ss.getSheetByName('STARTER_DEX.data')!
@@ -155,14 +186,19 @@ test('snapshot → change → highlight paints the right display cells and nothi
     DEX_HIGHLIGHT_COLOR,
   )
 
-  // Painting never touches columns left of the block (creator's A–G / A–C).
-  assert.ok(
-    !calls.some((c) => /Quick Checklist\.setBackgrounds\(\d+,[1-7],/.test(c)),
-    'no writes into A–G',
+  // The painted rows are remembered for the next clear.
+  const meta = JSON.parse(
+    String(
+      ss.getSheetByName(snapshotSheetName('QuickChecklist'))!.valueAt(1, 1),
+    ),
   )
+  assert.deepEqual(meta.painted, [
+    { start: 0, count: 1 },
+    { start: 3, count: 1 },
+  ])
 })
 
-test('processChanges: full flow; a no-change upload clears old highlights and costs few calls', () => {
+test('processChanges: full flow; a no-change upload clears old highlights in 4 API calls', () => {
   const ss = buildWorkbook({ rows: 20 })
   setActiveSpreadsheet(ss)
   resetToastProgress('upload')
@@ -181,7 +217,7 @@ test('processChanges: full flow; a no-change upload clears old highlights and co
     'TOTAL (ok)',
   )
 
-  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[1]])
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[42]])
   resetToastProgress('upload')
   processChanges()
   assert.equal(
@@ -189,34 +225,37 @@ test('processChanges: full flow; a no-change upload clears old highlights and co
     QUICK_CHECKLIST_HIGHLIGHT_COLOR,
   )
 
+  apiCalls.length = 0
   calls.length = 0
   resetToastProgress('upload')
   processChanges()
   assert.equal(
     ss.getSheetByName('Quick Checklist')!.backgroundAt(12, 8),
     null,
-    'previous highlight cleared by the paint',
+    'previous highlight cleared',
   )
   assert.ok(
     logs.some((l) => l.includes('QuickChecklist: highlighted 0 changed cells')),
   )
-  const sheetCalls = calls.filter(
-    (c) =>
-      !c.startsWith('toast') &&
-      !c.startsWith('_timings') &&
-      !c.startsWith('getSheetByName'),
-  )
+  const methods = apiCalls.map((c) => c.method)
   console.log(
-    `      [info] Sheets calls for one no-change upload (20 rows): ${sheetCalls.length} (+${calls.length - sheetCalls.length} toasts/timings/lookups)`,
+    `      [info] API calls for a no-change upload: ${methods.join(', ')}`,
   )
-  assert.ok(
-    sheetCalls.length <= 45,
-    `expected ≤45 sheet calls, got ${sheetCalls.length}:\n${sheetCalls.join('\n')}`,
+  assert.deepEqual(methods, [
+    'spreadsheets.get',
+    'values.batchGet',
+    'spreadsheets.batchUpdate',
+    'values.batchUpdate',
+  ])
+  const heavy = calls.filter(
+    (c) =>
+      /getValues|setValues|setBackground|sort\(/.test(c) &&
+      !c.startsWith('_timings'),
   )
-  assert.equal(
-    calls.filter((c) => c.includes('.sort(')).length,
-    1,
-    'only the Form Checklist sort; displays were in order',
+  assert.deepEqual(
+    heavy,
+    ['Form Checklist.sort(2,1,4,4)'],
+    'no SpreadsheetApp bulk I/O left: ' + heavy.join(', '),
   )
 })
 
@@ -225,94 +264,100 @@ test('an out-of-order display is re-sorted before painting', () => {
   setActiveSpreadsheet(ss)
   snapshot()
   const qDisp = ss.getSheetByName('Quick Checklist')!
-  // Reverse the display rows (as a slicer sort would)
   const rows = qDisp.readValues(12, 1, 6, 17).reverse()
   qDisp.load(12, 1, rows)
-  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[1]]) // Bulbasaur (#1)
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[42]]) // Bulbasaur (#1)
   highlightChanges()
   assert.equal(qDisp.valueAt(12, 1), 1, 'display re-sorted to canonical order')
   assert.equal(qDisp.backgroundAt(12, 8), QUICK_CHECKLIST_HIGHLIGHT_COLOR)
   assert.ok(calls.some((c) => c.startsWith('Quick Checklist.sort(')))
 })
 
-test('processChanges with skipSnapshot keeps the baseline', () => {
+test('keep-baseline: highlights accumulate, and with no baseline nothing is written', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
-  snapshot()
-  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[1]])
-  resetToastProgress('upload')
-  processChanges({ skipSnapshot: true })
   resetToastProgress('upload')
   processChanges({ skipSnapshot: true })
   assert.equal(
-    ss.getSheetByName('Quick Checklist')!.backgroundAt(12, 8),
-    QUICK_CHECKLIST_HIGHLIGHT_COLOR,
+    ss.getSheetByName(snapshotSheetName('QuickChecklist')),
+    null,
+    'no baseline created',
   )
+  snapshot()
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[42]])
+  resetToastProgress('upload')
+  processChanges({ skipSnapshot: true })
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(13, 4, [[43]])
+  resetToastProgress('upload')
+  processChanges({ skipSnapshot: true })
+  const q = ss.getSheetByName('Quick Checklist')!
+  assert.equal(
+    q.backgroundAt(12, 8),
+    QUICK_CHECKLIST_HIGHLIGHT_COLOR,
+    'still highlighted against the kept baseline',
+  )
+  assert.equal(q.backgroundAt(13, 8), QUICK_CHECKLIST_HIGHLIGHT_COLOR)
 })
 
-test('clearHighlights blanks the tracked block only', () => {
+test('clearHighlights blanks only the highlighted rows of the tracked block', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
   snapshot()
-  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[1]])
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(12, 4, [[42]])
   highlightChanges()
   const q = ss.getSheetByName('Quick Checklist')!
-  q.load(12, 2, [['x']])
   q.writeBackgrounds(12, 2, [['#123456']]) // a creator fill in the image column
+  q.writeBackgrounds(14, 8, [['#abcdef']]) // a fill in a non-highlighted row of the block: left alone
   clearHighlights()
   assert.equal(q.backgroundAt(12, 8), null)
   assert.equal(q.backgroundAt(12, 2), '#123456', 'untouched outside the block')
+  assert.equal(
+    q.backgroundAt(14, 8),
+    '#abcdef',
+    'only remembered rows are cleared',
+  )
 })
 
-test('upgrade: a v1 snapshot (header-offset rows) diffs correctly once, then v2 is written', () => {
+test('upgrade from a v2 grid snapshot: diffs once, converts to v3, clears the whole block once', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
-  // Hand-build the old layout: Quick snapshot header in row 1, data from row 2 (headerRows 1 + 1)
-  const data = ss.getSheetByName('STARTER_CHECKLIST.data')!
-  const old = ss.addSheet(snapshotSheetName('QuickChecklist'))
-  old.load(1, 4, [data.readValues(1, 4, 1, 8)[0]!])
-  old.load(2, 4, data.readValues(12, 4, 5, 8))
-  // Dex snapshots: two header rows, data from row 3
-  for (const [key, name, col] of [
-    ['StarterDex', 'STARTER_DEX.data', 12],
-    ['FullDex', 'FULL_DEX.data', 8],
+  props().setProperty(SNAPSHOT_FORMAT_PROPERTY, '2')
+  // v2 layout: header band rows 1..firstRow-1, data at the data sheet's own rows
+  for (const [key, name, col, first, last] of [
+    ['QuickChecklist', 'STARTER_CHECKLIST.data', 4, 12, 11],
+    ['StarterDex', 'STARTER_DEX.data', 12, 3, 143],
+    ['FullDex', 'FULL_DEX.data', 8, 3, 139],
   ] as const) {
     const d = ss.getSheetByName(name)!
     const s = ss.addSheet(snapshotSheetName(key))
-    const width = d.getLastColumn() - col + 1
-    s.load(1, col, d.readValues(1, col, 2, width))
-    s.load(3, col, d.readValues(3, col, 5, width))
+    const width = last - col + 1
+    s.load(1, col, d.readValues(1, col, first - 1, width))
+    s.load(first, col, d.readValues(first, col, 5, width))
   }
-  // Legacy markers in the old marker columns
-  ss.getSheetByName('Quick Checklist')!.load(12, 17, [
-    ['●'],
-    [''],
-    ['●'],
-    [''],
-    [''],
-  ])
+  const q = ss.getSheetByName('Quick Checklist')!
+  q.load(12, 17, [['●'], [''], ['●'], [''], ['']]) // legacy markers
+  q.writeBackgrounds(13, 8, [['#ff0000']]) // a stale highlight from the old flow
 
-  data.load(14, 4, [[42]]) // row 14 SHINY changes
+  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(14, 4, [[42]])
   resetToastProgress('upload')
   processChanges()
-  const q = ss.getSheetByName('Quick Checklist')!
   assert.equal(
     q.backgroundAt(14, 8),
     QUICK_CHECKLIST_HIGHLIGHT_COLOR,
-    'diffed against the v1 rows',
+    'diffed against the v2 rows',
   )
-  assert.equal(q.backgroundAt(12, 8), null)
-  assert.equal(q.valueAt(12, 17), '', 'legacy markers cleared')
-  const props = PropertiesService.getDocumentProperties()
-  assert.equal(props.getProperty(SNAPSHOT_FORMAT_PROPERTY), '2')
-  assert.equal(props.getProperty(LEGACY_MARKERS_PROPERTY), 'true')
-  // v2 layout: data at row 12
   assert.equal(
-    ss.getSheetByName(snapshotSheetName('QuickChecklist'))!.valueAt(14, 4),
-    42,
+    q.backgroundAt(13, 8),
+    null,
+    'whole block cleared once on upgrade',
   )
+  assert.equal(q.valueAt(12, 17), '', 'legacy markers cleared')
+  assert.equal(props().getProperty(SNAPSHOT_FORMAT_PROPERTY), '3')
+  assert.equal(props().getProperty(LEGACY_MARKERS_PROPERTY), 'true')
+  const snap = ss.getSheetByName(snapshotSheetName('QuickChecklist'))!
+  assert.match(String(snap.valueAt(1, 1)), /^\{"v":3/)
+  assert.equal(snap.valueAt(1, 4), '', 'old grid cleared')
 
-  // Second upload, no change → nothing painted
   resetToastProgress('upload')
   processChanges()
   assert.equal(q.backgroundAt(14, 8), null)
@@ -341,4 +386,33 @@ test('a creator layout change stops the paint with a precise message', () => {
     /could not find the header "Fought Flag" .* "Starter Dex Checklist"/,
   )
   assert.equal(disp.backgroundAt(4, 4), null)
+})
+
+test('a creator column insert between uploads is absorbed: the v3 snapshot is realigned', () => {
+  const ss = buildWorkbook({ rows: 5 })
+  setActiveSpreadsheet(ss)
+  snapshot()
+  // Creator inserts a column before "Fought Flag" in STARTER_DEX.data and its display.
+  const d = ss.getSheetByName('STARTER_DEX.data')!
+  const grid = d.readValues(1, 1, d.getLastRow(), d.getLastColumn())
+  d.clear()
+  d.load(
+    1,
+    1,
+    grid.map((row) => [...row.slice(0, 11), '', ...row.slice(11)]),
+  )
+  const v = ss.getSheetByName('Starter Dex Checklist')!
+  const vgrid = v.readValues(1, 1, v.getLastRow(), v.getLastColumn())
+  v.clear()
+  v.load(
+    1,
+    1,
+    vgrid.map((row) => [...row.slice(0, 3), '', ...row.slice(3)]),
+  )
+  resetToastProgress('upload')
+  processChanges()
+  assert.ok(
+    logs.some((l) => l.includes('StarterDex: highlighted 0 changed cells')),
+    logs.join('\n'),
+  )
 })

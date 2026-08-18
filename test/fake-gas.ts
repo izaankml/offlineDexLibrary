@@ -18,6 +18,8 @@ export function resetFakes(): void {
   calls.length = 0
   logs.length = 0
   toasts.length = 0
+  apiCalls.length = 0
+  batchUpdates.length = 0
   activeSpreadsheet = null
   docProps.clear()
 }
@@ -491,5 +493,231 @@ g['Utilities'] = { sleep(): void {} }
 g['LockService'] = {
   getDocumentLock() {
     return { waitLock(): void {}, releaseLock(): void {} }
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Fake Sheets advanced service (the subset the library uses), operating on the
+// active FakeSpreadsheet. Ranges are A1 with a sheet name:
+//   'Quick Checklist'!1:10  |  STARTER_DEX.data!3:2000  |  'Sheet'!A12:A  |  'Sheet'!D12:K900
+// ---------------------------------------------------------------------------
+
+export const apiCalls: { method: string; detail: unknown }[] = []
+export const batchUpdates: {
+  id: string
+  requests: Record<string, unknown>[]
+}[] = []
+
+function sheetIdOf(sheet: FakeSheet): number {
+  return sheet.spreadsheet.getSheets().indexOf(sheet) + 100
+}
+function sheetById(ss: FakeSpreadsheet, id: number): FakeSheet {
+  const s = ss.getSheets()[id - 100]
+  if (!s) throw new Error('fake Sheets: no sheet with id ' + id)
+  return s
+}
+
+function parseSheetRange(
+  ss: FakeSpreadsheet,
+  ref: string,
+): {
+  sheet: FakeSheet
+  row: number
+  col: number
+  numRows: number
+  numCols: number
+} {
+  const m = ref.match(/^(?:'((?:[^']|'')*)'|([^'!]+))!(.+)$/)
+  if (!m) throw new Error('fake Sheets: bad range ' + ref)
+  const name = (m[1] ?? m[2] ?? '').replace(/''/g, "'")
+  const sheet = ss.getSheetByName(name)
+  if (!sheet) throw new Error(`fake Sheets: Unable to parse range: ${ref}`)
+  const a1 = m[3]!
+  const lastRow = Math.max(sheet.getLastRow(), 1)
+  const lastCol = Math.max(sheet.getLastColumn(), 1)
+  let row: number, col: number, row2: number, col2: number
+  const rows = a1.match(/^(\d+):(\d+)$/)
+  const cols = a1.match(/^([A-Z]+):([A-Z]+)$/)
+  if (rows) {
+    row = parseInt(rows[1]!, 10)
+    row2 = Math.min(parseInt(rows[2]!, 10), sheet.getMaxRows())
+    col = 1
+    col2 = lastCol
+  } else if (cols) {
+    col = lettersToCol(cols[1]!)
+    col2 = lettersToCol(cols[2]!)
+    row = 1
+    row2 = lastRow
+  } else {
+    const [s1, s2] = a1.split(':') as [string, string | undefined]
+    const p1 = s1.match(/^([A-Z]+)(\d+)$/)
+    if (!p1) throw new Error('fake Sheets: bad A1 ' + a1)
+    col = lettersToCol(p1[1]!)
+    row = parseInt(p1[2]!, 10)
+    if (!s2) {
+      col2 = col
+      row2 = row
+    } else {
+      const p2 = s2.match(/^([A-Z]+)(\d*)$/)
+      if (!p2) throw new Error('fake Sheets: bad A1 ' + a1)
+      col2 = lettersToCol(p2[1]!)
+      row2 = p2[2] ? parseInt(p2[2], 10) : Math.max(lastRow, row)
+    }
+  }
+  return {
+    sheet,
+    row,
+    col,
+    numRows: Math.max(0, row2 - row + 1),
+    numCols: Math.max(0, col2 - col + 1),
+  }
+}
+
+/** Trim like the API: drop trailing '' cells per row and trailing empty rows. */
+function ragged(values: CellValue[][]): CellValue[][] {
+  const rows = values.map((r) => {
+    let end = r.length
+    while (end > 0 && (r[end - 1] === '' || r[end - 1] === null)) end--
+    return r.slice(0, end)
+  })
+  let n = rows.length
+  while (n > 0 && rows[n - 1]!.length === 0) n--
+  return rows.slice(0, n)
+}
+
+function hexOf(
+  color: { red?: number; green?: number; blue?: number } | undefined,
+): string | null {
+  if (!color) return null
+  const h = (x: number | undefined): string =>
+    Math.round((x ?? 0) * 255)
+      .toString(16)
+      .padStart(2, '0')
+  return '#' + h(color.red) + h(color.green) + h(color.blue)
+}
+
+function applyRequest(ss: FakeSpreadsheet, req: Record<string, unknown>): void {
+  if ('updateCells' in req) {
+    const u = req['updateCells'] as {
+      range: Record<string, number>
+      rows: {
+        values: {
+          userEnteredFormat?: {
+            backgroundColor?: { red?: number; green?: number; blue?: number }
+          }
+        }[]
+      }[]
+      fields: string
+    }
+    if (!u.fields.includes('backgroundColor')) return
+    const sheet = sheetById(ss, u.range['sheetId']!)
+    u.rows.forEach((row, r) => {
+      const bg = row.values.map((cell) =>
+        hexOf(cell.userEnteredFormat?.backgroundColor),
+      )
+      sheet.writeBackgrounds(
+        u.range['startRowIndex']! + 1 + r,
+        u.range['startColumnIndex']! + 1,
+        [bg],
+      )
+    })
+    return
+  }
+  if ('repeatCell' in req) {
+    const u = req['repeatCell'] as {
+      range: Record<string, number>
+      cell: {
+        userEnteredFormat?: {
+          backgroundColor?: { red?: number; green?: number; blue?: number }
+        }
+      }
+      fields: string
+    }
+    if (!u.fields.includes('backgroundColor')) return
+    const sheet = sheetById(ss, u.range['sheetId']!)
+    const color = hexOf(u.cell.userEnteredFormat?.backgroundColor)
+    const nr = u.range['endRowIndex']! - u.range['startRowIndex']!
+    const nc = u.range['endColumnIndex']! - u.range['startColumnIndex']!
+    const bg = Array.from({ length: nr }, () =>
+      new Array<string | null>(nc).fill(color),
+    )
+    sheet.writeBackgrounds(
+      u.range['startRowIndex']! + 1,
+      u.range['startColumnIndex']! + 1,
+      bg,
+    )
+    return
+  }
+  // Other request kinds are recorded only.
+}
+
+g['Sheets'] = {
+  Spreadsheets: {
+    get(_id: string, params: { fields?: string; ranges?: string[] }) {
+      apiCalls.push({ method: 'spreadsheets.get', detail: params })
+      const ss = (
+        g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
+      ).getActiveSpreadsheet()
+      return {
+        spreadsheetId: ss.getId(),
+        sheets: ss.getSheets().map((s) => ({
+          properties: {
+            sheetId: sheetIdOf(s),
+            title: s.name,
+            hidden: s.hidden,
+            gridProperties: {
+              rowCount: s.getMaxRows(),
+              columnCount: s.getMaxColumns(),
+            },
+          },
+        })),
+      }
+    },
+    batchUpdate(body: { requests: Record<string, unknown>[] }, id: string) {
+      apiCalls.push({
+        method: 'spreadsheets.batchUpdate',
+        detail: body.requests.length,
+      })
+      batchUpdates.push({ id, requests: body.requests })
+      const ss = (
+        g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
+      ).getActiveSpreadsheet()
+      for (const r of body.requests) applyRequest(ss, r)
+      return {}
+    },
+    Values: {
+      batchGet(_id: string, params: { ranges: string[] }) {
+        apiCalls.push({ method: 'values.batchGet', detail: params.ranges })
+        const ss = (
+          g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
+        ).getActiveSpreadsheet()
+        return {
+          valueRanges: params.ranges.map((ref) => {
+            const p = parseSheetRange(ss, ref)
+            const values = ragged(
+              p.sheet.readValues(p.row, p.col, p.numRows, p.numCols),
+            )
+            return values.length ? { range: ref, values } : { range: ref }
+          }),
+        }
+      },
+      batchUpdate(
+        body: { data: { range: string; values: CellValue[][] }[] },
+        _id: string,
+      ) {
+        apiCalls.push({
+          method: 'values.batchUpdate',
+          detail: body.data.map((d) => d.range),
+        })
+        const ss = (
+          g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
+        ).getActiveSpreadsheet()
+        for (const d of body.data) {
+          const p = parseSheetRange(ss, d.range)
+          p.sheet.writeValues(p.row, p.col, d.values)
+        }
+        return {}
+      },
+    },
   },
 }

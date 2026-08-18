@@ -628,6 +628,8 @@ test('applyPlan sends every request in one batchUpdate to the destination', () =
   const client: SheetsClient = {
     get: () => ({}) as SpreadsheetInfo,
     batchUpdate: (id, requests) => sent.push({ id, requests }),
+    valuesBatchGet: () => [],
+    valuesBatchUpdate: () => {},
   }
   const { ops, notes } = buildPlan(source(), freshDest(), '6.03')
   applyPlan(

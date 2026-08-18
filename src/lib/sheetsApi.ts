@@ -74,9 +74,25 @@ export type GetParams = {
   fields?: string
 }
 
+/** One range's values as returned by values.batchGet: ragged rows, trailing blanks omitted. */
+export type ValueRange = { range?: string; values?: unknown[][] }
+export type ValueRenderOption =
+  'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA'
+
 export interface SheetsClient {
   get(spreadsheetId: string, params: GetParams): SpreadsheetInfo
   batchUpdate(spreadsheetId: string, requests: Request[]): void
+  /** values.batchGet — one HTTP call for many ranges; result order matches `ranges`. */
+  valuesBatchGet(
+    spreadsheetId: string,
+    ranges: string[],
+    render: ValueRenderOption,
+  ): ValueRange[]
+  /** values.batchUpdate with RAW input — one HTTP call for many ranges. */
+  valuesBatchUpdate(
+    spreadsheetId: string,
+    data: { range: string; values: unknown[][] }[],
+  ): void
 }
 
 /** The real service (requires "Sheets" in appsscript.json enabledAdvancedServices). */
@@ -89,6 +105,20 @@ export const liveSheets: SheetsClient = {
   },
   batchUpdate(spreadsheetId, requests) {
     service().batchUpdate({ requests: requests as never }, spreadsheetId)
+  },
+  valuesBatchGet(spreadsheetId, ranges, render) {
+    const res = service().Values!.batchGet(spreadsheetId, {
+      ranges,
+      valueRenderOption: render,
+      dateTimeRenderOption: 'FORMATTED_STRING',
+    } as never) as unknown as { valueRanges?: ValueRange[] }
+    return res.valueRanges ?? []
+  },
+  valuesBatchUpdate(spreadsheetId, data) {
+    service().Values!.batchUpdate(
+      { valueInputOption: 'RAW', data } as never,
+      spreadsheetId,
+    )
   },
 }
 
@@ -151,6 +181,43 @@ export function hexToColor(hex: string): Color {
     green: parseInt(m.slice(2, 4), 16) / 255,
     blue: parseInt(m.slice(4, 6), 16) / 255,
   }
+}
+
+/** Quote a sheet name for an A1 range: 'Quick Checklist'!A1:B2 */
+export function sheetRange(sheetName: string, a1Range: string): string {
+  return `'${sheetName.replace(/'/g, "''")}'!${a1Range}`
+}
+
+/**
+ * Normalize a values.batchGet block to exactly `rows` × `cols`, blanks as ''.
+ * (The API omits trailing empty cells and rows.)
+ */
+export function padValues(
+  values: unknown[][] | undefined,
+  rows: number,
+  cols: number,
+): unknown[][] {
+  const out: unknown[][] = []
+  for (let r = 0; r < rows; r++) {
+    const src = values?.[r] ?? []
+    const row: unknown[] = new Array(cols)
+    for (let c = 0; c < cols; c++) {
+      const v = src[c]
+      row[c] = v === undefined || v === null ? '' : v
+    }
+    out.push(row)
+  }
+  return out
+}
+
+/** API Color → '#rrggbb' (used by tests / logs). */
+export function colorToHex(c: Color | undefined): string | null {
+  if (!c) return null
+  const h = (x: number | undefined): string =>
+    Math.round((x ?? 0) * 255)
+      .toString(16)
+      .padStart(2, '0')
+  return '#' + h(c.red) + h(c.green) + h(c.blue)
 }
 
 export function a1(row1: number, col1: number): string {
