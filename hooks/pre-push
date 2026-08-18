@@ -1,12 +1,25 @@
 #!/bin/bash
-# Runs clasp push for library/ and/or bound/ if their tracked files changed
-# in the commits being pushed. Bypass with: git push --no-verify
+# Runs clasp push for library/ and/or bound/ if their sources changed in the
+# commits being pushed. The library is bundled from src/ first.
+# Bypass with: git push --no-verify
 
-PROJECTS=("library" "bound")
 FAILED=0
 
 # SHA of the empty git tree — used as base when pushing a new branch
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+push_project() {
+    local dir="$1"
+    if [[ ! -f "$dir/.clasp.json" ]]; then
+        echo "warning: $dir/ changed but $dir/.clasp.json missing — skipping clasp push"
+        return 0
+    fi
+    echo "pre-push: $dir/ changed, pushing to Apps Script..."
+    if ! (cd "$dir" && clasp push -f); then
+        echo "error: clasp push failed in $dir/"
+        FAILED=1
+    fi
+}
 
 while read local_ref local_sha remote_ref remote_sha; do
     if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
@@ -15,21 +28,20 @@ while read local_ref local_sha remote_ref remote_sha; do
         base="$remote_sha"
     fi
 
-    for dir in "${PROJECTS[@]}"; do
-        changed=$(git diff --name-only "$base" "$local_sha" -- "$dir/")
-        [[ -z "$changed" ]] && continue
-
-        if [[ ! -f "$dir/.clasp.json" ]]; then
-            echo "warning: $dir/ changed but $dir/.clasp.json missing — skipping clasp push"
-            continue
-        fi
-
-        echo "pre-push: $dir/ changed, pushing to Apps Script..."
-        if ! (cd "$dir" && clasp push -f); then
-            echo "error: clasp push failed in $dir/"
+    # Library: bundled from src/lib + src/shared into library/Code.js
+    lib_changed=$(git diff --name-only "$base" "$local_sha" -- src/ library/ scripts/build.ts)
+    if [[ -n "$lib_changed" ]]; then
+        echo "pre-push: building library bundle..."
+        if ! npm run --silent build; then
+            echo "error: library build failed"
             FAILED=1
+        else
+            push_project library
         fi
-    done
+    fi
+
+    bound_changed=$(git diff --name-only "$base" "$local_sha" -- bound/)
+    [[ -n "$bound_changed" ]] && push_project bound
 done
 
 exit $FAILED

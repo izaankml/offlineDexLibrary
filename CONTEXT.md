@@ -21,15 +21,19 @@ offlinedex-scripts/
 ├── CONTEXT.md                   # this file
 ├── .gitignore
 ├── UPDATING.md                  # per-version runbook
-├── package.json                 # `npm run update` / `typecheck` / `setup`
+├── package.json                 # `npm run build` / `test` / `typecheck` / `update` / `setup`
+├── src/
+│   ├── lib/                     # library sources (TypeScript); see index.ts for the public surface
+│   │   ├── saveTracker.ts, migrator.ts, setup.ts, progress.ts
+│   └── shared/naming.ts         # copy-naming rules shared by the library and the CLI
 ├── scripts/
+│   ├── build.ts                 # esbuild: src/lib → library/Code.js (+ forwarding stubs)
 │   └── update.ts                # the terminal half of a version update (TypeScript, Node 24)
+├── test/                        # node:test + fake SpreadsheetApp; fixtures from the real 6.03 sheets
 ├── library/                     # OfflineDex Library project (standalone Apps Script)
 │   ├── .clasp.json              # has the library's Script ID (gitignored)
-│   ├── appsscript.json          # no advanced services — DriveApp/SpreadsheetApp only
-│   ├── SaveTracker.js
-│   ├── Migrator.js
-│   └── Setup.js                 # Prepare Next Version, Finish Setup, copy naming rules
+│   ├── appsscript.json
+│   └── Code.js                  # generated bundle (gitignored); the only code file clasp pushes
 └── bound/                       # bound script for the spreadsheet (per-version)
     ├── .clasp.json              # has the current spreadsheet's Script ID (gitignored, written by the CLI)
     ├── appsscript.json
@@ -42,6 +46,14 @@ Notes:
 
 - clasp uses `.js` locally; converts to `.gs` on push
 - `.clasp.json` is gitignored because it contains Script IDs
+- The library is written in TypeScript under `src/lib` and bundled into a single
+  `library/Code.js` (`npm run build`). Apps Script libraries expose only top-level function
+  declarations, so the build appends one forwarding stub per export of `src/lib/index.ts`.
+  The bound project stays plain JS because it is 3-way merged with the creator's code.
+- `src/lib/progress.ts` also appends every flow's per-step durations to a hidden `_timings`
+  sheet (one write per flow), so wait times are measurable across versions.
+- The sections below describe the modules by their pre-TypeScript file names
+  (`SaveTracker.js` → `saveTracker.ts`, etc.); the behaviour is unchanged.
 
 ## The library: OfflineDexLib
 

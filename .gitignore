@@ -19,3 +19,6 @@ bound/*
 node_modules/
 
 .claude/
+
+# Built library bundle (npm run build) — clasp pushes it, git doesn't track it
+library/Code.js

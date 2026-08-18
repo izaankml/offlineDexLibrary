@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
-    "target": "es2024",
+    "target": "es2022",
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "lib": ["es2024"],
-    "types": ["node"],
+    "lib": ["es2022"],
+    "types": ["node", "google-apps-script"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -15,5 +15,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }

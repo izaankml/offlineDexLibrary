@@ -187,8 +187,13 @@ brings it along.)
 - **The creator moved the public sheet** — update `PUBLIC_SHEET_FILE_ID` in
   `scripts/update.ts` and `library/Setup.js`.
 - **Library changes not taking effect** — the bound manifest uses
-  `developmentMode: true`, so pushing `library/` (`clasp push` from `library/`, or
-  automatically on `git push` via the pre-push hook) is enough; no redeploy needed.
+  `developmentMode: true`, so building and pushing the library (`npm run build && cd library
+  && clasp push`, or automatically on `git push` via the pre-push hook) is enough; no
+  redeploy needed. Note that this also means a bad push reaches every copy at once — run
+  `npm run check` first.
+- **Finish Setup reported errors** — the migration steps that failed are listed in the
+  alert and the copy is *not* marked as migrated. Every flow also writes per-step timings
+  to the hidden `_timings` sheet.
 
 ---
 

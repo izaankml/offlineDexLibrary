@@ -38,6 +38,12 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  PUBLIC_SHEET_FILE_ID,
+  COPY_NAME_RE as SHEET_NAME_RE,
+  VERSION_RE,
+  extractScriptId as parseScriptId,
+} from '../src/shared/naming.ts'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,21 +64,6 @@ const TRACKED_BOUND_FILES = [
   'UploadPlayerData.html',
   'appsscript.json',
 ]
-
-/**
- * Your copies are named like this; the version is parsed out of the name.
- * Mirrors COPY_NAME_RE / VERSION_RE in library/Setup.js (different runtime, so
- * keep the two in sync by hand).
- */
-const SHEET_NAME_RE = /^Offline RogueDex (\d+\.\d+)$/
-/**
- * The creator's public spreadsheet is a single Drive file that gets renamed
- * on every release ("PUBLIC_Offline RogueDex 6.03"). Reading its title tells
- * us the newest version without any copy being made. Mirrors
- * PUBLIC_SHEET_FILE_ID in library/Setup.js.
- */
-const PUBLIC_SHEET_FILE_ID = '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
-const VERSION_RE = /\d+\.\d+/
 
 /** A marker that only ever appears in *your* code, never in the creator's. */
 const CUSTOM_CODE_MARKER = 'OfflineDexLib'
@@ -365,11 +356,8 @@ function parseArgs(argv: string[]): Args {
  * (script.google.com/.../projects/<id>/edit, ?scriptId=..., etc.).
  */
 function extractScriptId(target: string): string {
-  const fromPath = target.match(/\/projects\/([A-Za-z0-9_-]{20,})/)
-  if (fromPath) return fromPath[1]!
-  const fromQuery = target.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)
-  if (fromQuery) return fromQuery[1]!
-  if (/^[A-Za-z0-9_-]{20,}$/.test(target)) return target
+  const id = parseScriptId(target)
+  if (id) return id
   fail(
     `"${target}" doesn't look like a Script ID or an Apps Script editor URL.\n` +
       '  Get it from the "Prepare Next Version" dialog in your current sheet, or from\n' +
