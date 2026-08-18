@@ -16,6 +16,9 @@ type Spreadsheet = GoogleAppsScript.Spreadsheet.Spreadsheet
 
 export const TIMINGS_SHEET = '_timings'
 const TIMINGS_HEADER = ['when', 'sheet', 'flow', 'step', 'ms']
+/** Pixel widths so the ISO timestamp, sheet name and step labels are readable without resizing. */
+const TIMINGS_COLUMN_WIDTHS = [220, 200, 90, 300, 90]
+const TIMINGS_WIDTHS_PROPERTY = 'OFFLINEDEX_TIMINGS_WIDTHS''
 /** Keep the timings sheet from growing forever: oldest rows are dropped past this. */
 const TIMINGS_MAX_ROWS = 2000
 
@@ -172,11 +175,20 @@ function writeTimings(
     sheet.hideSheet()
     sheet.getRange(1, 1, 1, TIMINGS_HEADER.length).setValues([TIMINGS_HEADER])
   }
+  // Column widths, once per workbook (also fixes sheets created before widths existed).
+  const props = PropertiesService.getDocumentProperties()
+  if (props.getProperty(TIMINGS_WIDTHS_PROPERTY) !== '1') {
+    TIMINGS_COLUMN_WIDTHS.forEach((w, i) => sheet!.setColumnWidth(i + 1, w))
+    props.setProperty(TIMINGS_WIDTHS_PROPERTY, '1')
+  }
+  // Newest flow on top: its rows go right under the header, followed by a
+  // blank separator row so consecutive flows are easy to tell apart.
   const rows = timingRows(f, totalMs, outcome, new Date(), ss.getName())
+  const block: (string | number)[][] = [...rows, TIMINGS_HEADER.map(() => '')]
+  sheet.insertRowsBefore(2, block.length)
+  sheet.getRange(2, 1, block.length, TIMINGS_HEADER.length).setValues(block)
   const lastRow = sheet.getLastRow()
-  sheet
-    .getRange(lastRow + 1, 1, rows.length, TIMINGS_HEADER.length)
-    .setValues(rows)
-  const excess = lastRow + 1 + rows.length - 1 - TIMINGS_MAX_ROWS
-  if (excess > 0) sheet.deleteRows(2, excess)
+  if (lastRow > TIMINGS_MAX_ROWS) {
+    sheet.deleteRows(TIMINGS_MAX_ROWS + 1, lastRow - TIMINGS_MAX_ROWS)
+  }
 }

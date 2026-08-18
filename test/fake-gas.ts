@@ -405,6 +405,19 @@ export class FakeSheet {
     calls.push(`${this.name}.clear`)
     this.cells.clear()
   }
+  insertRowsBefore(row: number, n: number): void {
+    calls.push(`${this.name}.insertRowsBefore(${row},${n})`)
+    const next = new Map<string, Cell>()
+    for (const [k, cell] of this.cells) {
+      const [r, c] = k.split(':').map(Number) as [number, number]
+      next.set(this.key(r >= row ? r + n : r, c), cell)
+    }
+    this.cells = next
+    this.maxRows += n
+  }
+  setColumnWidth(col: number, width: number): void {
+    calls.push(`${this.name}.setColumnWidth(${col},${width})`)
+  }
   deleteRows(row: number, n: number): void {
     calls.push(`${this.name}.deleteRows(${row},${n})`)
     const next = new Map<string, Cell>()
