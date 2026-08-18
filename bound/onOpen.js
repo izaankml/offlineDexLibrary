@@ -10,13 +10,24 @@ function onOpen() {
     .addItem('Highlight Changes', 'highlightChanges')
     .addItem('Clear Highlights', 'clearHighlights')
     .addSeparator()
-    .addItem('Finish Setup (migrate + upload)', 'finishSetup')
+    .addItem('Finish Setup (Migrate + Upload)', 'finishSetup')
     .addItem('Prepare Next Version', 'prepareNextVersion')
-    .addItem('Change Public Sheet…', 'changePublicSheet')
+    .addToUi()
+
+  SpreadsheetApp.getUi()
+    .createMenu('Manually Update Database')
+    .addItem('Update the sheet manually', 'forceUpdate')
     .addToUi()
 
   nudgeFinishSetupIfFresh()
-  forceUpdate(true)
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const directions = ss.getSheetByName('DIRECTIONS')
+  const autoupdate = directions.getRange('D51').getValue()
+
+  if (autoupdate) {
+    forceUpdate(true)
+  }
 }
 
 // ============================================================
@@ -58,11 +69,6 @@ function nudgeFinishSetupIfFresh() {
 /** Menu (run in the OLD sheet): copy the public sheet + hand off to the CLI. */
 function prepareNextVersion() {
   OfflineDexLib.prepareNextVersion()
-}
-
-/** Menu: override which Drive file is the creator's public sheet. */
-function changePublicSheet() {
-  OfflineDexLib.changePublicSheet()
 }
 
 /**

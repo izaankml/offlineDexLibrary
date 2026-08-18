@@ -18,71 +18,13 @@
  * The creator publishes every version as the SAME Drive file, renamed on each
  * release (e.g. "PUBLIC_Offline RogueDex 6.03"). Reading its title tells us the
  * newest version; copying it gives a fresh copy with the creator's bound code.
- * Override without redeploying via the user property below (Change Public
- * Sheet… menu item), in case the creator ever publishes under a new file.
  * Mirrors PUBLIC_SHEET_FILE_ID in scripts/update.ts.
  */
 const PUBLIC_SHEET_FILE_ID = '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
-const PUBLIC_SHEET_ID_PROPERTY = 'OFFLINEDEX_PUBLIC_SHEET_ID'
 
 /** Your copies: "Offline RogueDex X.YY". Same pattern as FILE_NAME_PATTERN. */
 const COPY_NAME_RE = /^Offline RogueDex (\d+\.\d+)$/
 const VERSION_IN_NAME_RE = /\d+\.\d+/
-
-/** The public sheet's Drive file ID, honoring any user override. */
-function getPublicSheetId() {
-  return (
-    PropertiesService.getUserProperties().getProperty(
-      PUBLIC_SHEET_ID_PROPERTY,
-    ) || PUBLIC_SHEET_FILE_ID
-  )
-}
-
-/**
- * Menu: let the user point at a different public sheet (URL or ID). Stored per
- * user so it survives across every spreadsheet copy.
- */
-function changePublicSheet() {
-  const ui = SpreadsheetApp.getUi()
-  const current = getPublicSheetId()
-  const resp = ui.prompt(
-    'Change Public Sheet',
-    "Paste the creator's public spreadsheet URL (or its file ID).\n" +
-      'Current: ' +
-      current +
-      '\n\nLeave blank to reset to the built-in default.',
-    ui.ButtonSet.OK_CANCEL,
-  )
-  if (resp.getSelectedButton() !== ui.Button.OK) return
-  const text = resp.getResponseText().trim()
-  const props = PropertiesService.getUserProperties()
-  if (!text) {
-    props.deleteProperty(PUBLIC_SHEET_ID_PROPERTY)
-    ui.alert('Reset to the built-in public sheet.')
-    return
-  }
-  const id = extractDriveId(text)
-  if (!id) {
-    ui.alert("That doesn't look like a Drive URL or file ID.")
-    return
-  }
-  try {
-    const name = DriveApp.getFileById(id).getName()
-    props.setProperty(PUBLIC_SHEET_ID_PROPERTY, id)
-    ui.alert('Public sheet set to "' + name + '".')
-  } catch (e) {
-    ui.alert("Couldn't open that file: " + e.message)
-  }
-}
-
-/** Pull a Drive file ID out of a docs/drive URL, or accept a bare ID. */
-function extractDriveId(text) {
-  const m =
-    text.match(/\/d\/([A-Za-z0-9_-]{20,})/) ||
-    text.match(/[?&]id=([A-Za-z0-9_-]{20,})/) ||
-    text.match(/^([A-Za-z0-9_-]{20,})$/)
-  return m ? m[1] : null
-}
 
 /**
  * Menu (run from your CURRENT sheet). Copies the creator's public sheet into
@@ -95,13 +37,13 @@ function prepareNextVersion() {
 
   let publicFile
   try {
-    publicFile = DriveApp.getFileById(getPublicSheetId())
+    publicFile = DriveApp.getFileById(PUBLIC_SHEET_FILE_ID)
   } catch (e) {
     ui.alert(
       "Couldn't open the creator's public sheet (" +
-        getPublicSheetId() +
+        PUBLIC_SHEET_FILE_ID +
         '). ' +
-        'If the creator moved it, use RogueDex Functions → Change Public Sheet…\n\n' +
+        'If the creator moved it, update PUBLIC_SHEET_FILE_ID in library/Setup.js.\n\n' +
         e.message,
     )
     return

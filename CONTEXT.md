@@ -178,8 +178,7 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
 
 - `prepareNextVersion()` — run from the *current* sheet's menu. The creator publishes
   every version as **the same Drive file**, renamed per release
-  (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`, overridable per user via
-  **Change Public Sheet…**). It reads the version from that title, `makeCopy()`s it as
+  (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`). It reads the version from that title, `makeCopy()`s it as
   `Offline RogueDex <new>` (reusing an existing same-named copy if you say so), finds the
   copy's bound Script ID with the Drive advanced service
   (`Drive.Files.list({q: "'<sheetId>' in parents and mimeType='application/vnd.google-apps.script'"})`),
@@ -204,8 +203,8 @@ Lives inside each spreadsheet copy. Has the creator's original code plus my modi
 
 The creator provides `onOpen()`, `checkVersion()`, and `htmlmodalDialog()`. I:
 
-- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Finish Setup (migrate + upload), Prepare Next Version, Change Public Sheet…
-- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, `changePublicSheet()`, and `finishSetup()`
+- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Finish Setup (migrate + upload), Prepare Next Version
+- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, and `finishSetup()`
 - Point the two Upload Data items at my own `openUploadDialog()` / `openUploadDialogKeepBaseline()` wrappers instead of the creator's `openAttachmentDialog()` directly
 - `nudgeFinishSetupIfFresh()` runs in `onOpen`: if the `OFFLINEDEX_MIGRATED_FROM` document property is unset *and* no `_snapshot_*` sheet exists (a fresh copy that just received the code), it toasts a pointer to Finish Setup
 

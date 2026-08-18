@@ -171,10 +171,8 @@ brings it along.)
   `git add`, `npm run update -- --continue`.
 - **Suddenly lots of formatting-only conflicts** — Prettier didn't run. The CLI
   refuses to start without it; `npm i -g prettier` (or add it locally) and re-run.
-- **The creator moved the public sheet** — RogueDex Functions → Change Public
-  Sheet… and paste the new URL (stored per user; the CLI's no-arg check uses the
-  built-in ID, update `PUBLIC_SHEET_FILE_ID` in `scripts/update.ts` and
-  `library/Setup.js` when that happens for good).
+- **The creator moved the public sheet** — update `PUBLIC_SHEET_FILE_ID` in
+  `scripts/update.ts` and `library/Setup.js`.
 - **Library changes not taking effect** — the bound manifest uses
   `developmentMode: true`, so pushing `library/` (`clasp push` from `library/`, or
   automatically on `git push` via the pre-push hook) is enough; no redeploy needed.
