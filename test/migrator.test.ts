@@ -269,6 +269,7 @@ function freshDest(): DestInfo {
             },
           ],
         }),
+        sheet('Form Checklist', 17, { columnCount: 59 }),
       ],
     },
     grid: {
@@ -341,7 +342,14 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     'Hide 1 sheet(s)',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
+    'Form Checklist: unchecked forms first',
   ])
+  const sort = reqOf(ops, 'sortRange')[0]!['sortRange'] as {
+    range: Record<string, number>
+    sortSpecs: { dimensionIndex: number }[]
+  }
+  assert.equal(sort.range['startRowIndex'], 1)
+  assert.equal(sort.sortSpecs[0]!.dimensionIndex, 2)
   assert.deepEqual(notes, [])
 
   // Quick Checklist: source 15 cols + offset 1 = 16 needed; dest has 16 → no append.

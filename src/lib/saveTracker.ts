@@ -21,7 +21,7 @@
  *   1 batchUpdate        (clear last upload's highlighted rows, paint the
  *                         changed rows — only those rows travel)
  *   1 values.batchUpdate (snapshots as compact JSON in a few cells)
- * plus the Form Checklist sort and, only if a slicer moved rows, a display sort.
+ * plus, only if a slicer moved rows, a display sort.
  *
  * Snapshot format v3: `_snapshot_<key>` holds JSON — A1 = metadata (rows,
  * columns, which display rows are currently highlighted), A2… = chunks of
@@ -59,11 +59,6 @@ type CellValue = string | number | boolean | null
 export const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#ffff00' // yellow
 export const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
 export const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
-
-// Form Checklist: kept sorted so unchecked forms (column C "Done" = ☐) sit
-// above checked ones (☑). Re-applied after every upload.
-export const FORM_CHECKLIST_SHEET = 'Form Checklist'
-export const FORM_CHECKLIST_DONE_COLUMN = 3
 
 /** Which snapshot layout is on disk: '3' = JSON cells; '2' = grid at data rows; unset = v1 grid. */
 export const SNAPSHOT_FORMAT_PROPERTY = 'OFFLINEDEX_SNAPSHOT_FORMAT'
@@ -755,14 +750,6 @@ export function processChanges(
     }
     if (paint.length) client.batchUpdate(ss.getId(), paint)
 
-    try {
-      sortFormChecklistByDone(ss)
-    } catch (e) {
-      Logger.log(
-        'Form Checklist sort failed: ' + (e instanceof Error ? e.message : e),
-      )
-    }
-
     startStep(ss, skipSnapshot ? 'Saving highlight state' : 'Snapshotting')
     const writes: { range: string; values: unknown[][] }[] = []
     const touched: Loaded[] = []
@@ -867,27 +854,6 @@ export function describeLayout(client: SheetsClient = liveSheets): string {
 // ---------------------------------------------------------------------------
 // Housekeeping
 // ---------------------------------------------------------------------------
-
-/**
- * Sort the Form Checklist's data rows by column C ("Done") ascending so
- * unchecked forms (☐) sit above checked ones (☑); the header row stays put.
- */
-export function sortFormChecklistByDone(ss: Spreadsheet): void {
-  const sheet = ss.getSheetByName(FORM_CHECKLIST_SHEET)
-  if (!sheet) {
-    Logger.log(FORM_CHECKLIST_SHEET + ' not found, skipping sort')
-    return
-  }
-  startStep(ss, 'Sorting ' + FORM_CHECKLIST_SHEET)
-  const lastRow = sheet.getLastRow()
-  const lastCol = sheet.getLastColumn()
-  if (lastRow > 2) {
-    sheet
-      .getRange(2, 1, lastRow - 1, lastCol)
-      .sort({ column: FORM_CHECKLIST_DONE_COLUMN, ascending: true })
-  }
-  finishStep()
-}
 
 /**
  * One-time cleanup after the marker-column workflow was removed: blank the

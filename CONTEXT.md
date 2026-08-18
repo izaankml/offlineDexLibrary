@@ -108,8 +108,7 @@ API instead:
    changed rows (`updateCells` with `backgroundColor` per row of the tracked block, `{}`
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
    the display is physically re-sorted first — otherwise no sort.
-3. *Sorting Form Checklist* — unchecked forms above checked ones (SpreadsheetApp sort).
-4. *Snapshotting* — ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
+3. *Snapshotting* — ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
    few cells** of the hidden `_snapshot_<key>` sheet (v3: A1 = metadata `{v, firstRow,
    minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). Older
    grid snapshots (v1/v2) are read once through SpreadsheetApp and converted; the
@@ -117,7 +116,9 @@ API instead:
    upload realign the baseline by header label if the creator inserts a column between
    uploads (k-th occurrence ↔ k-th occurrence, since "SHINY"/"Friendship" repeat).
 
-That is 4 API calls + one small sort per upload (was ≈100 SpreadsheetApp calls, 4 sorts).
+That is 4 API calls per upload (was ≈100 SpreadsheetApp calls, 4 sorts). The Form Checklist
+"unchecked first" sort is a migration op now (one `sortRange` in the batchUpdate), not a
+per-upload step.
 **Upload Data (Keep Baseline)** paints and stores the painted rows but leaves the baseline.
 
 **Standalone menu items:** *Snapshot Data* (baseline ← current, highlights untouched),
@@ -164,7 +165,8 @@ is a **plan → preview → apply** pipeline on the Sheets advanced service (She
   existing merge overlapping B16:M131 (in post-insert coordinates) then `mergeCells`;
   B16 formula/value top-aligned; L12:M14 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
-  checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
+  checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first;
+  *Form Checklist*: `sortRange` by "Done" ascending (unchecked forms first).
 
 Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
 notes what was already done), and `previewMigration()` returns the plan as text.

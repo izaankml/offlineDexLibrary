@@ -66,6 +66,11 @@ export const DAILY_MODE_LANDMARK_COL_WITHOUT_L = 13 // M
 export const B16_MERGE = { row1: 16, col1: 2, row2: 131, col2: 13 } // B16:M131
 export const DAILY_INPUTS = { row1: 12, col1: 12, row2: 14, col2: 13 } // L12:M14
 
+// Form Checklist: sorted once at migration so unchecked forms (column C
+// "Done" = ☐) sit above checked ones (☑); the header row stays put.
+export const FORM_CHECKLIST_SHEET = 'Form Checklist'
+export const FORM_CHECKLIST_DONE_COLUMN = 3
+
 // IV conditional formatting on the dex checklists.
 export const DEX_IV_HIGHLIGHT_SHEETS = [
   'Starter DEX Checklist',
@@ -247,7 +252,44 @@ export function buildPlan(
   ops.push(...planDailyMode(src, dst, notes))
   ops.push(...planHiddenSheets(src, dst, notes))
   ops.push(...planDexIvHighlight(dst, notes))
+  ops.push(...planFormChecklistSort(dst, notes))
   return { ops, notes }
+}
+
+/** Sort the Form Checklist's data rows by "Done" ascending (unchecked first); header row stays. */
+export function planFormChecklistSort(dst: DestInfo, notes: string[]): Op[] {
+  const sheet = sheetByTitle(dst.meta, FORM_CHECKLIST_SHEET)
+  if (!sheet) {
+    notes.push(`${FORM_CHECKLIST_SHEET}: not found, not sorted`)
+    return []
+  }
+  const rows = sheet.properties.gridProperties?.rowCount ?? 0
+  const cols = sheet.properties.gridProperties?.columnCount ?? 0
+  if (rows < 3) return []
+  return [
+    {
+      label: `${FORM_CHECKLIST_SHEET}: unchecked forms first`,
+      requests: [
+        {
+          sortRange: {
+            range: {
+              sheetId: sheet.properties.sheetId,
+              startRowIndex: 1,
+              endRowIndex: rows,
+              startColumnIndex: 0,
+              endColumnIndex: cols,
+            },
+            sortSpecs: [
+              {
+                dimensionIndex: FORM_CHECKLIST_DONE_COLUMN - 1,
+                sortOrder: 'ASCENDING',
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ]
 }
 
 function need<T>(v: T | null | undefined, what: string): T {

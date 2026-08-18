@@ -213,14 +213,6 @@ test('processChanges: full flow; a no-change upload clears old highlights in 4 A
     'first baseline clears the block once',
   )
   assert.ok(ss.getSheetByName(snapshotSheetName('QuickChecklist')))
-  const form = ss.getSheetByName('Form Checklist')!
-  assert.deepEqual(
-    form
-      .grid()
-      .slice(1)
-      .map((r) => r[2]),
-    ['☐', '☐', '☑', '☑'],
-  )
   assert.equal(
     ss.getSheetByName(TIMINGS_SHEET)!.grid().at(-1)![3],
     'TOTAL (ok)',
@@ -263,7 +255,7 @@ test('processChanges: full flow; a no-change upload clears old highlights in 4 A
   )
   assert.deepEqual(
     heavy,
-    ['Form Checklist.sort(2,1,4,4)'],
+    [],
     'no SpreadsheetApp bulk I/O left: ' + heavy.join(', '),
   )
 })
