@@ -322,8 +322,8 @@ test('clearHighlights blanks the whole tracked block (manual clear), nothing out
   assert.equal(q.backgroundAt(12, 2), '#123456', 'untouched outside the block')
   assert.equal(
     q.backgroundAt(14, 8),
-    '#abcdef',
-    'only remembered rows are cleared',
+    null,
+    'stray fills inside the block go too',
   )
 })
 
