@@ -29,7 +29,7 @@ offlinedex-scripts/
 │   ├── appsscript.json          # no advanced services — DriveApp/SpreadsheetApp only
 │   ├── SaveTracker.js
 │   ├── Migrator.js
-│   └── Setup.js                 # Prepare Next Version + previous-version detection
+│   └── Setup.js                 # Prepare Next Version, Finish Setup, copy naming rules
 └── bound/                       # bound script for the spreadsheet (per-version)
     ├── .clasp.json              # has the current spreadsheet's Script ID (gitignored, written by the CLI)
     ├── appsscript.json
@@ -188,8 +188,20 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   nothing even with full Drive scope inside Apps Script), so no lookup is attempted —
   it was removed to keep the library's permissions to `DriveApp` only (no Drive advanced
   service, no `UrlFetchApp`).
+- `finishSetup()` — run from the *new* sheet's menu. Reads the destination version from
+  the sheet's name, asks `detectPreviousVersion` for the source, shows one YES/NO/CANCEL
+  confirm (NO falls back to a typed prompt), calls `portAll(source, dest)`, and records
+  `OFFLINEDEX_MIGRATED_FROM` in document properties. Returns `true` when the migration
+  ran; the bound wrapper then opens the upload dialog (the dialog HTML lives in the bound
+  project, so the library can't open it).
+- `nudgeFinishSetupIfFresh()` — called from `onOpen`: if `OFFLINEDEX_MIGRATED_FROM` is
+  unset *and* no `_snapshot_*` sheet exists (a fresh copy that just received the code),
+  toasts a pointer to Finish Setup.
 - `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
   lower than `dest`; used by Finish Setup so you never type the source version.
+- `copyName(v)` / `versionFromName(name)` — the one place the `Offline RogueDex X.YY`
+  naming rule lives on the Apps Script side (Migrator's `findFileIdByVersion` uses it too;
+  `scripts/update.ts` mirrors it for Node).
 
 Why the copy/lookup happen in Apps Script and not the CLI: `drive` / `drive.readonly` are
 Google-*restricted* scopes and clasp's built-in OAuth client isn't verified for them, so
@@ -207,15 +219,15 @@ Lives inside each spreadsheet copy. Has the creator's original code plus my modi
 The creator provides `onOpen()`, `checkVersion()`, and `htmlmodalDialog()`. I:
 
 - Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Finish Setup (migrate + upload), Prepare Next Version
-- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, and `finishSetup()`
+- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, and `finishSetup()` (which opens the upload dialog when the library reports the migration ran)
 - Point the two Upload Data items at my own `openUploadDialog()` / `openUploadDialogKeepBaseline()` wrappers instead of the creator's `openAttachmentDialog()` directly
-- `nudgeFinishSetupIfFresh()` runs in `onOpen`: if the `OFFLINEDEX_MIGRATED_FROM` document property is unset *and* no `_snapshot_*` sheet exists (a fresh copy that just received the code), it toasts a pointer to Finish Setup
+- Call `OfflineDexLib.nudgeFinishSetupIfFresh()` from `onOpen` (fresh-copy toast pointing at Finish Setup)
 
 **How the "keep baseline" choice reaches `uploadFile`:** the creator's dialog (`UploadPlayerData.html`) always dispatches `google.script.run.uploadFile(obj)`, and it's a separate server execution, so module state can't carry the choice across. Instead each menu wrapper writes (or deletes) the `OFFLINEDEX_SKIP_SNAPSHOT` document property before opening the dialog, and `uploadFile` reads and clears it. Both entry points always set it, so it can't go stale. This keeps `openAttachmentDialog()` and the dialog HTML unmodified — one less thing to reconcile on each version merge.
 
 The wrapper functions are needed because Apps Script menu items can't directly call library functions. They have to call top-level functions in the bound script that then forward to the library.
 
-`finishSetup()` extracts the destination version from the spreadsheet's filename via regex match `\d+\.\d+`, asks the library for the previous version (`detectPreviousVersion`), shows one YES/NO/CANCEL confirm (NO falls back to a typed prompt), calls `OfflineDexLib.portAll(source, dest)`, records `OFFLINEDEX_MIGRATED_FROM` in document properties, and then opens the upload dialog.
+All of the Finish Setup logic lives in the library (`Setup.js`); the bound file is kept to thin wrappers so there's as little as possible to reconcile with the creator's `onOpen.js` on each version merge.
 
 ### LoadPlayerData.js
 

@@ -9,7 +9,7 @@ Automation on top of the OfflineDex spreadsheet: save-change highlighting, per-v
 │   ├── appsscript.json
 │   ├── SaveTracker.js
 │   ├── Migrator.js
-│   └── Setup.js          Prepare Next Version / previous-version detection
+│   └── Setup.js          Prepare Next Version / Finish Setup / copy naming rules
 ├── bound/            Bound script — per-version, lives inside each spreadsheet copy
 │   ├── appsscript.json
 │   ├── onOpen.js

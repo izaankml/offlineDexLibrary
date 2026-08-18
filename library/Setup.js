@@ -3,13 +3,21 @@
 //
 // The Google-side half of a version update:
 //
-//   prepareNextVersion()   — from your CURRENT sheet: copy the creator's
-//                            public sheet into Drive under the right name and
-//                            walk you to the one terminal command that
-//                            finishes the job.
-//   detectPreviousVersion  — from the NEW sheet: which of your copies is the
-//                            newest one older than this, so Finish Setup can
-//                            migrate from it without asking you to type it.
+//   prepareNextVersion()      — from your CURRENT sheet: copy the creator's
+//                               public sheet into Drive under the right name
+//                               and walk you to the one terminal command that
+//                               finishes the job.
+//   finishSetup()             — from the NEW sheet: confirm the previous
+//                               version (auto-detected from Drive), run the
+//                               migration, and mark this copy as migrated.
+//                               Returns true when the migration ran so the
+//                               bound wrapper can open the upload dialog.
+//   nudgeFinishSetupIfFresh() — on open: toast a pointer to Finish Setup when
+//                               this copy has never been migrated.
+//   detectPreviousVersion()   — newest of your copies older than a version.
+//
+// Also the single home of the "Offline RogueDex X.YY" naming rules
+// (copyName / versionFromName) used by Migrator and the bound script.
 //
 // Called via OfflineDexLib.<name> from the bound script's menu wrappers.
 // ============================================================
@@ -22,9 +30,27 @@
  */
 const PUBLIC_SHEET_FILE_ID = '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
 
-/** Your copies: "Offline RogueDex X.YY". Same pattern as FILE_NAME_PATTERN. */
+// ---------------------------------------------------------------------------
+// Naming: your copies are "Offline RogueDex X.YY". These are mirrored (for a
+// different runtime) by SHEET_NAME_RE / VERSION_RE in scripts/update.ts.
+// ---------------------------------------------------------------------------
+const COPY_NAME_PREFIX = 'Offline RogueDex '
 const COPY_NAME_RE = /^Offline RogueDex (\d+\.\d+)$/
-const VERSION_IN_NAME_RE = /\d+\.\d+/
+const VERSION_RE = /\d+\.\d+/
+
+/** Set once Finish Setup has run in a copy; holds the source version. */
+const MIGRATED_FROM_PROPERTY = 'OFFLINEDEX_MIGRATED_FROM'
+
+/** "Offline RogueDex 6.03" for '6.03'. */
+function copyName(version) {
+  return COPY_NAME_PREFIX + version
+}
+
+/** The first "X.YY" in a sheet/file name, or null if there isn't one. */
+function versionFromName(name) {
+  const m = String(name).match(VERSION_RE)
+  return m ? m[0] : null
+}
 
 /**
  * Menu (run from your CURRENT sheet). Copies the creator's public sheet into
@@ -50,8 +76,8 @@ function prepareNextVersion() {
   }
 
   const publicName = publicFile.getName()
-  const versionMatch = publicName.match(VERSION_IN_NAME_RE)
-  if (!versionMatch) {
+  const newVersion = versionFromName(publicName)
+  if (!newVersion) {
     ui.alert(
       'The public sheet is named "' +
         publicName +
@@ -60,17 +86,16 @@ function prepareNextVersion() {
     )
     return
   }
-  const newVersion = versionMatch[0]
-  const copyName = FILE_NAME_PATTERN.replace('{v}', newVersion)
+  const newCopyName = copyName(newVersion)
 
-  const currentMatch = ss.getName().match(VERSION_IN_NAME_RE)
-  if (currentMatch && compareVersions(currentMatch[0], newVersion) >= 0) {
+  const currentVersion = versionFromName(ss.getName())
+  if (currentVersion && compareVersions(currentVersion, newVersion) >= 0) {
     const go = ui.alert(
       'Prepare Next Version',
       'The public sheet is still on ' +
         newVersion +
         ' and this sheet is ' +
-        currentMatch[0] +
+        currentVersion +
         ' — nothing newer to prepare.\n\nMake a copy of ' +
         newVersion +
         ' anyway?',
@@ -82,12 +107,12 @@ function prepareNextVersion() {
   // Reuse an existing copy of that name if there is one (e.g. re-running after
   // a hiccup), unless the user wants a fresh one.
   let copy = null
-  const existing = findExistingCopies(copyName)
+  const existing = findExistingCopies(newCopyName)
   if (existing.length > 0) {
     const choice = ui.alert(
       'Prepare Next Version',
       'You already have a sheet named "' +
-        copyName +
+        newCopyName +
         '" (created ' +
         existing[0].getDateCreated().toLocaleString() +
         ').\n\n' +
@@ -106,14 +131,14 @@ function prepareNextVersion() {
     // folder) rather than in My Drive root.
     const folder = firstParentFolder(ss.getId())
     copy = folder
-      ? publicFile.makeCopy(copyName, folder)
-      : publicFile.makeCopy(copyName)
+      ? publicFile.makeCopy(newCopyName, folder)
+      : publicFile.makeCopy(newCopyName)
   }
 
   ss.toast('', 'Ready', 3)
 
   showPrepareDialog(ui, {
-    copyName: copyName,
+    copyName: newCopyName,
     copyUrl: copy.getUrl(),
     version: newVersion,
   })
@@ -196,6 +221,105 @@ function showPrepareDialog(ui, info) {
     HtmlService.createHtmlOutput(html).setWidth(560).setHeight(330),
     'Prepare Next Version',
   )
+}
+
+/**
+ * On open: if this copy has never been migrated and has no snapshot sheets
+ * yet (i.e. it's a fresh copy that just received the code), toast a pointer
+ * to Finish Setup. Silent on sheets that are already set up.
+ */
+function nudgeFinishSetupIfFresh() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet()
+    const props = PropertiesService.getDocumentProperties()
+    if (props.getProperty(MIGRATED_FROM_PROPERTY)) return
+    if (ss.getSheetByName('_snapshot_' + TRACKERS[0].key)) return
+    ss.toast(
+      'This looks like a fresh copy. Run RogueDex Functions → Finish Setup ' +
+        'to bring over your customizations and load your save.',
+      'New version',
+      15,
+    )
+  } catch (e) {
+    Logger.log('nudgeFinishSetupIfFresh: ' + e.message)
+  }
+}
+
+/**
+ * Menu (run in the NEW sheet): migrate customizations from the previous
+ * version — auto-detected from your Drive, one confirm — and mark this copy
+ * as migrated. Returns true when the migration ran, so the bound wrapper can
+ * open the upload dialog (the dialog HTML lives in the bound project);
+ * false when the user cancelled or the sheet name has no version.
+ * @return {boolean}
+ */
+function finishSetup() {
+  const ui = SpreadsheetApp.getUi()
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+
+  const destVersion = versionFromName(ss.getName())
+  if (!destVersion) {
+    ui.alert(
+      'Could not determine this sheet\'s version from its name "' +
+        ss.getName() +
+        '". Expected "' +
+        copyName('X.YY') +
+        '".',
+    )
+    return false
+  }
+
+  const props = PropertiesService.getDocumentProperties()
+  const already = props.getProperty(MIGRATED_FROM_PROPERTY)
+  if (already) {
+    const again = ui.alert(
+      'Finish Setup',
+      'This sheet was already migrated from ' +
+        already +
+        '. Run the migration again?',
+      ui.ButtonSet.YES_NO,
+    )
+    if (again !== ui.Button.YES) return false
+  }
+
+  let sourceVersion = detectPreviousVersion(destVersion)
+  if (sourceVersion) {
+    const choice = ui.alert(
+      'Finish Setup',
+      'Migrate your customizations from ' +
+        copyName(sourceVersion) +
+        ' into this ' +
+        destVersion +
+        ' sheet?\n\n' +
+        "Takes a couple of minutes; the upload dialog opens when it's done.\n" +
+        '(NO to type a different source version.)',
+      ui.ButtonSet.YES_NO_CANCEL,
+    )
+    if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return false
+    if (choice === ui.Button.NO) sourceVersion = null
+  }
+
+  if (!sourceVersion) {
+    const response = ui.prompt(
+      'Finish Setup',
+      'Version you are migrating from (e.g. 6.01):',
+      ui.ButtonSet.OK_CANCEL,
+    )
+    if (response.getSelectedButton() !== ui.Button.OK) return false
+    sourceVersion = response.getResponseText().trim()
+    if (!/^\d+\.\d+$/.test(sourceVersion)) {
+      ui.alert(
+        '"' +
+          sourceVersion +
+          '" doesn\'t look like a version number. Expected format: X.YY',
+      )
+      return false
+    }
+  }
+
+  portAll(sourceVersion, destVersion)
+  props.setProperty(MIGRATED_FROM_PROPERTY, sourceVersion)
+  return true
 }
 
 /**

@@ -6,8 +6,6 @@
 // script via OfflineDexLib.portAll(sourceVersion, destVersion).
 // ============================================================
 
-const FILE_NAME_PATTERN = 'Offline RogueDex {v}'
-
 const INSERT_COLUMN_L_IN_DAILY_MODE = true
 const DELETE_COLUMN_E_IN_QUICK_CHECKLIST = true
 const B16_MERGE_RANGE = 'B16:M131'
@@ -360,14 +358,14 @@ function findSpreadsheetsNamed(name) {
 
 /**
  * Look up the Drive file ID of an Offline RogueDex spreadsheet by version.
- * Searches by name using FILE_NAME_PATTERN and, if multiple matches exist,
+ * Searches by name (see copyName in Setup.js) and, if multiple matches exist,
  * returns the most recently updated one (logging the others). Throws if no
  * file matches.
  * @param {string} version - e.g. 'X.YY'
  * @return {string} Drive file ID
  */
 function findFileIdByVersion(version) {
-  const targetName = FILE_NAME_PATTERN.replace('{v}', version)
+  const targetName = copyName(version)
   const matches = findSpreadsheetsNamed(targetName)
 
   if (matches.length === 0) {

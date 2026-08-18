@@ -59,7 +59,11 @@ const TRACKED_BOUND_FILES = [
   'appsscript.json',
 ]
 
-/** Your copies are named like this; the version is parsed out of the name. */
+/**
+ * Your copies are named like this; the version is parsed out of the name.
+ * Mirrors COPY_NAME_RE / VERSION_RE in library/Setup.js (different runtime, so
+ * keep the two in sync by hand).
+ */
 const SHEET_NAME_RE = /^Offline RogueDex (\d+\.\d+)$/
 /**
  * The creator's public spreadsheet is a single Drive file that gets renamed
