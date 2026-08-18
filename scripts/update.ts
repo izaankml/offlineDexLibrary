@@ -272,10 +272,18 @@ async function resolveScript(scriptId: string): Promise<ScriptInfo> {
     id: string
     name: string
     createdTime: string
+    trashed?: boolean
   }>(
-    `https://www.googleapis.com/drive/v3/files/${project.parentId}?fields=id,name,createdTime&supportsAllDrives=true`,
+    `https://www.googleapis.com/drive/v3/files/${project.parentId}?fields=id,name,createdTime,trashed&supportsAllDrives=true`,
     'Parent spreadsheet',
   )
+
+  if (file.trashed) {
+    fail(
+      `That script belongs to "${file.name}" (${file.id}), which is in the trash. ` +
+        'Use the Script ID of the live copy instead.',
+    )
+  }
 
   const match = file.name.match(SHEET_NAME_RE)
   if (!match) {
