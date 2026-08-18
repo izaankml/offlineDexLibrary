@@ -83,7 +83,10 @@ export function normalizeLabel(s: unknown): string {
  * Find a label in a header band. Returns the 1-based column of its first
  * occurrence (scanning row by row, left to right), or null.
  */
-export function findLabel(band: unknown[][], text: string): { row: number; col: number } | null {
+export function findLabel(
+  band: unknown[][],
+  text: string,
+): { row: number; col: number } | null {
   const want = normalizeLabel(text)
   for (let r = 0; r < band.length; r++) {
     const row = band[r] ?? []
@@ -94,7 +97,11 @@ export function findLabel(band: unknown[][], text: string): { row: number; col: 
   return null
 }
 
-function mustFind(band: unknown[][], text: string, where: string): { row: number; col: number } {
+function mustFind(
+  band: unknown[][],
+  text: string,
+  where: string,
+): { row: number; col: number } {
   const hit = findLabel(band, text)
   if (!hit) {
     throw new Error(
@@ -106,7 +113,12 @@ function mustFind(band: unknown[][], text: string, where: string): { row: number
 }
 
 /** First non-blank cell of `row` (1-based, from the band) right of `fixedColumns`; 1-based column. */
-export function firstNonBlankRightOf(band: unknown[][], row: number, fixedColumns: number, where: string): number {
+export function firstNonBlankRightOf(
+  band: unknown[][],
+  row: number,
+  fixedColumns: number,
+  where: string,
+): number {
   const line = band[row - 1] ?? []
   for (let c = fixedColumns; c < line.length; c++) {
     if (String(line[c] ?? '').trim() !== '') return c + 1
@@ -121,7 +133,11 @@ export function firstNonBlankRightOf(band: unknown[][], row: number, fixedColumn
  * @param dataBand   header rows of the data sheet (band rows × full width)
  * @param displayBand header rows of the display sheet
  */
-export function resolveFromBands(spec: TrackerSpec, dataBand: unknown[][], displayBand: unknown[][]): ResolvedTracker {
+export function resolveFromBands(
+  spec: TrackerSpec,
+  dataBand: unknown[][],
+  displayBand: unknown[][],
+): ResolvedTracker {
   const dataWhere = `"${spec.dataSheet}"`
   const displayWhere = `"${spec.displaySheet}"`
 
@@ -129,7 +145,12 @@ export function resolveFromBands(spec: TrackerSpec, dataBand: unknown[][], displ
   const displayBlockStart =
     spec.displayAnchor.kind === 'label'
       ? mustFind(displayBand, spec.displayAnchor.text, displayWhere).col
-      : firstNonBlankRightOf(displayBand, spec.displayAnchor.locatorRow, spec.displayAnchor.fixedColumns, displayWhere)
+      : firstNonBlankRightOf(
+          displayBand,
+          spec.displayAnchor.locatorRow,
+          spec.displayAnchor.fixedColumns,
+          displayWhere,
+        )
   const shift = displayBlockStart - dataBlockStart.col
 
   // Tracked range, by label, on the same header row as the block anchor.
@@ -142,7 +163,10 @@ export function resolveFromBands(spec: TrackerSpec, dataBand: unknown[][], displ
     to = headerRow.length
     while (to > from.col && String(headerRow[to - 1] ?? '').trim() === '') to--
   }
-  if (to < from.col) throw new Error(`Layout: "${spec.trackTo}" is left of "${spec.trackFrom}" in ${dataWhere}`)
+  if (to < from.col)
+    throw new Error(
+      `Layout: "${spec.trackTo}" is left of "${spec.trackFrom}" in ${dataWhere}`,
+    )
 
   if (spec.crossCheck) {
     const d = mustFind(dataBand, spec.crossCheck, dataWhere)
@@ -163,7 +187,9 @@ export function resolveFromBands(spec: TrackerSpec, dataBand: unknown[][], displ
     for (let c = from.col; c <= to; c++) {
       if (normalizeLabel(headerRow[c - 1]) === want) return c
     }
-    throw new Error(`Layout: tracked column "${name}" not found in the header of ${dataWhere}; update the tracker spec.`)
+    throw new Error(
+      `Layout: tracked column "${name}" not found in the header of ${dataWhere}; update the tracker spec.`,
+    )
   }
   const excluded = new Set(spec.exclude.map(firstColOf))
   const increment = new Set(spec.increment.map(firstColOf))
@@ -177,7 +203,11 @@ export function resolveFromBands(spec: TrackerSpec, dataBand: unknown[][], displ
     cells.push({
       dataCol: c,
       displayCol: c + shift,
-      color: excluded.has(c) ? null : increment.has(c) ? spec.incrementColor : spec.color,
+      color: excluded.has(c)
+        ? null
+        : increment.has(c)
+          ? spec.incrementColor
+          : spec.color,
     })
   }
 
@@ -202,7 +232,11 @@ export function readBand(sheet: Sheet, rows = HEADER_BAND_ROWS): string[][] {
 }
 
 /** Resolve a tracker against live sheets (two header reads). */
-export function resolveTracker(spec: TrackerSpec, data: Sheet, display: Sheet): ResolvedTracker {
+export function resolveTracker(
+  spec: TrackerSpec,
+  data: Sheet,
+  display: Sheet,
+): ResolvedTracker {
   return resolveFromBands(spec, readBand(data), readBand(display))
 }
 
@@ -211,7 +245,9 @@ export function describeResolved(r: ResolvedTracker): string {
   const a1 = (c: number): string => columnLetter(c)
   const first = r.cells[0]!
   const last = r.cells[r.cells.length - 1]!
-  const excluded = r.cells.filter((c) => c.color === null).map((c) => `${r.labels[c.dataCol]}→${a1(c.displayCol)}`)
+  const excluded = r.cells
+    .filter((c) => c.color === null)
+    .map((c) => `${r.labels[c.dataCol]}→${a1(c.displayCol)}`)
   const inc = r.cells
     .filter((c) => c.color === r.spec.incrementColor)
     .map((c) => `${r.labels[c.dataCol]}→${a1(c.displayCol)}`)

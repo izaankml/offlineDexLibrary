@@ -25,7 +25,13 @@ test('compareVersions is numeric, not lexical', () => {
 test('extractScriptId accepts ids, editor URLs and query params', () => {
   const id = '1vPLtrHsiTIjUsLLjNJoWY968IlnmtjJoVsJES9c3BCPaSKg0-Dwz3UyH'
   assert.equal(extractScriptId(id), id)
-  assert.equal(extractScriptId(`https://script.google.com/home/projects/${id}/edit`), id)
-  assert.equal(extractScriptId(`https://script.google.com/d/x?scriptId=${id}`), id)
+  assert.equal(
+    extractScriptId(`https://script.google.com/home/projects/${id}/edit`),
+    id,
+  )
+  assert.equal(
+    extractScriptId(`https://script.google.com/d/x?scriptId=${id}`),
+    id,
+  )
   assert.equal(extractScriptId('not an id'), null)
 })

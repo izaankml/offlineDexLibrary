@@ -9,7 +9,8 @@
  * release (e.g. "PUBLIC_Offline RogueDex 6.03"). Reading its title tells us the
  * newest version; copying it gives a fresh copy with the creator's bound code.
  */
-export const PUBLIC_SHEET_FILE_ID = '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
+export const PUBLIC_SHEET_FILE_ID =
+  '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
 
 export const COPY_NAME_PREFIX = 'Offline RogueDex '
 /** Exact match for one of your copies. */

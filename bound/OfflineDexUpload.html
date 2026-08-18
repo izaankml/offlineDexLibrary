@@ -1,4 +1,10 @@
 <!doctype html>
+<!--
+  OfflineDex upload dialog: a copy of the creator's UploadPlayerData.html that
+  dispatches uploadFileTracked() (OfflineDexBound.js) instead of uploadFile(),
+  and closes shortly after dispatch so the highlight/snapshot flow keeps
+  running server-side while you watch the toasts. Ours; never merged.
+-->
 <html>
   <head>
     <base target="_top" />
@@ -17,6 +23,7 @@
 
       if (!file) {
         alert('No file selected.')
+        document.getElementById('uploadButton').disabled = false
         return
       }
 
@@ -25,9 +32,6 @@
       fr.onprogress = (e) => {
         if (e.lengthComputable) {
           const percentLoaded = Math.round((e.loaded / e.total) * 100)
-          console.log(
-            `Progress: ${e.loaded} of ${e.total} bytes loaded. (${percentLoaded}% completed)`,
-          )
           progressText.innerHTML = `Reading file: ${percentLoaded}%`
         }
       }
@@ -42,16 +46,15 @@
             data: data[1],
           }
           google.script.run
-            .withSuccessHandler((id) => {
-              progressText.innerHTML = 'Upload completed'
-              google.script.host.close()
-            })
             .withFailureHandler((error) => {
               console.error('Error during file upload:', error)
-              progressText.innerHTML = 'Failed to upload file'
+              progressText.innerHTML = 'Failed to upload file: ' + error.message
               document.getElementById('uploadButton').disabled = false
             })
-            .uploadFile(obj)
+            .uploadFileTracked(obj)
+          // Close after a brief delay so the dispatch fully registers
+          // server-side; processing continues in the background (toasts).
+          setTimeout(() => google.script.host.close(), 500)
         } catch (error) {
           console.error('Error during file processing:', error)
           progressText.innerHTML = 'Failed to process file'

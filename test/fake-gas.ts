@@ -39,7 +39,10 @@ function lettersToCol(letters: string): number {
 }
 
 /** Parse "B16", "B16:M131", "A:A" (unbounded rows become the sheet's max). */
-function parseA1(a1: string, sheet: FakeSheet): { row: number; col: number; numRows: number; numCols: number } {
+function parseA1(
+  a1: string,
+  sheet: FakeSheet,
+): { row: number; col: number; numRows: number; numCols: number } {
   const [start, end] = a1.split(':') as [string, string | undefined]
   const m1 = start.match(/^([A-Za-z]+)(\d*)$/)
   if (!m1) throw new Error('bad A1: ' + a1)
@@ -59,7 +62,13 @@ export class FakeRange {
   readonly col: number
   readonly numRows: number
   readonly numCols: number
-  constructor(sheet: FakeSheet, row: number, col: number, numRows: number, numCols: number) {
+  constructor(
+    sheet: FakeSheet,
+    row: number,
+    col: number,
+    numRows: number,
+    numCols: number,
+  ) {
     this.sheet = sheet
     this.row = row
     this.col = col
@@ -67,7 +76,9 @@ export class FakeRange {
     this.numCols = numCols
   }
   private call(name: string): void {
-    calls.push(`${this.sheet.name}.${name}(${this.row},${this.col},${this.numRows},${this.numCols})`)
+    calls.push(
+      `${this.sheet.name}.${name}(${this.row},${this.col},${this.numRows},${this.numCols})`,
+    )
   }
   getRow(): number {
     return this.row
@@ -113,8 +124,13 @@ export class FakeRange {
   }
   setValues(values: CellValue[][]): FakeRange {
     this.call('setValues')
-    if (values.length !== this.numRows || values.some((r) => r.length !== this.numCols)) {
-      throw new Error(`setValues size mismatch on ${this.getA1Notation()}: got ${values.length}x${values[0]?.length}`)
+    if (
+      values.length !== this.numRows ||
+      values.some((r) => r.length !== this.numCols)
+    ) {
+      throw new Error(
+        `setValues size mismatch on ${this.getA1Notation()}: got ${values.length}x${values[0]?.length}`,
+      )
     }
     this.sheet.writeValues(this.row, this.col, values)
     return this
@@ -124,18 +140,31 @@ export class FakeRange {
   }
   getFormulas(): string[][] {
     this.call('getFormulas')
-    return this.sheet.readFormulas(this.row, this.col, this.numRows, this.numCols)
+    return this.sheet.readFormulas(
+      this.row,
+      this.col,
+      this.numRows,
+      this.numCols,
+    )
   }
   getFormula(): string {
     return this.getFormulas()[0]![0]!
   }
   getBackgrounds(): (string | null)[][] {
     this.call('getBackgrounds')
-    return this.sheet.readBackgrounds(this.row, this.col, this.numRows, this.numCols)
+    return this.sheet.readBackgrounds(
+      this.row,
+      this.col,
+      this.numRows,
+      this.numCols,
+    )
   }
   setBackgrounds(bg: (string | null)[][]): FakeRange {
     this.call('setBackgrounds')
-    if (bg.length !== this.numRows || bg.some((r) => r.length !== this.numCols)) {
+    if (
+      bg.length !== this.numRows ||
+      bg.some((r) => r.length !== this.numCols)
+    ) {
       throw new Error(`setBackgrounds size mismatch on ${this.getA1Notation()}`)
     }
     this.sheet.writeBackgrounds(this.row, this.col, bg)
@@ -143,19 +172,30 @@ export class FakeRange {
   }
   setBackground(color: string | null): FakeRange {
     this.call('setBackground')
-    const bg = Array.from({ length: this.numRows }, () => new Array<string | null>(this.numCols).fill(color))
+    const bg = Array.from({ length: this.numRows }, () =>
+      new Array<string | null>(this.numCols).fill(color),
+    )
     this.sheet.writeBackgrounds(this.row, this.col, bg)
     return this
   }
   clearContent(): FakeRange {
     this.call('clearContent')
-    const blank = Array.from({ length: this.numRows }, () => new Array<CellValue>(this.numCols).fill(''))
+    const blank = Array.from({ length: this.numRows }, () =>
+      new Array<CellValue>(this.numCols).fill(''),
+    )
     this.sheet.writeValues(this.row, this.col, blank)
     return this
   }
   sort(spec: { column: number; ascending: boolean }): FakeRange {
     this.call('sort')
-    this.sheet.sortRows(this.row, this.col, this.numRows, this.numCols, spec.column, spec.ascending)
+    this.sheet.sortRows(
+      this.row,
+      this.col,
+      this.numRows,
+      this.numCols,
+      spec.column,
+      spec.ascending,
+    )
     return this
   }
 }
@@ -211,7 +251,8 @@ export class FakeSheet {
     const out: CellValue[][] = []
     for (let r = 0; r < nr; r++) {
       const line: CellValue[] = []
-      for (let c = 0; c < nc; c++) line.push(this.cells.get(this.key(row + r, col + c))?.value ?? '')
+      for (let c = 0; c < nc; c++)
+        line.push(this.cells.get(this.key(row + r, col + c))?.value ?? '')
       out.push(line)
     }
     return out
@@ -220,16 +261,25 @@ export class FakeSheet {
     const out: string[][] = []
     for (let r = 0; r < nr; r++) {
       const line: string[] = []
-      for (let c = 0; c < nc; c++) line.push(this.cells.get(this.key(row + r, col + c))?.formula ?? '')
+      for (let c = 0; c < nc; c++)
+        line.push(this.cells.get(this.key(row + r, col + c))?.formula ?? '')
       out.push(line)
     }
     return out
   }
-  readBackgrounds(row: number, col: number, nr: number, nc: number): (string | null)[][] {
+  readBackgrounds(
+    row: number,
+    col: number,
+    nr: number,
+    nc: number,
+  ): (string | null)[][] {
     const out: (string | null)[][] = []
     for (let r = 0; r < nr; r++) {
       const line: (string | null)[] = []
-      for (let c = 0; c < nc; c++) line.push(this.cells.get(this.key(row + r, col + c))?.background ?? null)
+      for (let c = 0; c < nc; c++)
+        line.push(
+          this.cells.get(this.key(row + r, col + c))?.background ?? null,
+        )
       out.push(line)
     }
     return out
@@ -249,9 +299,18 @@ export class FakeSheet {
     )
   }
   writeBackgrounds(row: number, col: number, bg: (string | null)[][]): void {
-    bg.forEach((line, r) => line.forEach((v, c) => (this.cell(row + r, col + c).background = v)))
+    bg.forEach((line, r) =>
+      line.forEach((v, c) => (this.cell(row + r, col + c).background = v)),
+    )
   }
-  sortRows(row: number, col: number, nr: number, nc: number, byCol: number, ascending: boolean): void {
+  sortRows(
+    row: number,
+    col: number,
+    nr: number,
+    nc: number,
+    byCol: number,
+    ascending: boolean,
+  ): void {
     const rows: Cell[][] = []
     for (let r = 0; r < nr; r++) {
       const line: Cell[] = []
@@ -262,10 +321,17 @@ export class FakeSheet {
     rows.sort((a, b) => {
       const av = a[idx]!.value
       const bv = b[idx]!.value
-      const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv))
+      const cmp =
+        typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv))
       return ascending ? cmp : -cmp
     })
-    rows.forEach((line, r) => line.forEach((cell, c) => Object.assign(this.cell(row + r, col + c), cell)))
+    rows.forEach((line, r) =>
+      line.forEach((cell, c) =>
+        Object.assign(this.cell(row + r, col + c), cell),
+      ),
+    )
   }
 
   // --- Sheet API ---
@@ -287,7 +353,8 @@ export class FakeSheet {
     calls.push(`${this.name}.getLastRow`)
     let last = 0
     for (const [k, cell] of this.cells) {
-      if (cell.value !== '' && cell.value !== null) last = Math.max(last, parseInt(k.split(':')[0]!, 10))
+      if (cell.value !== '' && cell.value !== null)
+        last = Math.max(last, parseInt(k.split(':')[0]!, 10))
     }
     return last
   }
@@ -295,7 +362,8 @@ export class FakeSheet {
     calls.push(`${this.name}.getLastColumn`)
     let last = 0
     for (const [k, cell] of this.cells) {
-      if (cell.value !== '' && cell.value !== null) last = Math.max(last, parseInt(k.split(':')[1]!, 10))
+      if (cell.value !== '' && cell.value !== null)
+        last = Math.max(last, parseInt(k.split(':')[1]!, 10))
     }
     return last
   }

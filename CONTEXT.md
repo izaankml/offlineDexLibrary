@@ -202,75 +202,29 @@ login for `projects.get` (script → parent sheet) and Drive metadata (sheet nam
 
 ## The bound script (per-version)
 
-Lives inside each spreadsheet copy. Has the creator's original code plus my modifications. Three files I modify:
+Lives inside each spreadsheet copy. Has the creator's original code plus two files of ours.
+Since 2026-08 the creator's files are **pristine except one line**, so the per-version
+3-way merge has almost nothing to conflict on:
 
-### onOpen.js
+- `onOpen.js` — creator's, with the "Upload PokeRogue Data" menu block replaced by a single
+  `offlineDexOnOpen()` call.
+- `LoadPlayerData.js`, `UploadPlayerData.html`, `ImportDB.js`, `Sheet Status Generator.js`
+  — creator's, untouched. The creator's `uploadFile()` still exists (untracked upload);
+  we never call it.
+- **`OfflineDexBound.js`** (ours; every function prefixed `offlineDex…` so it can't collide
+  with a future creator function): builds the *RogueDex Functions* menu, calls
+  `OfflineDexLib.nudgeFinishSetupIfFresh()`, holds the menu wrappers (Apps Script menu
+  items can't call library functions directly), and `uploadFileTracked(obj)` — the tracked
+  upload path: the creator's `createBlob → decryptFile → parseJsonContent → writeJsonToSheet`,
+  `flush`, a 2 s settle, then `OfflineDexLib.processChanges()` (or `…WithoutSnapshot()`
+  when the *Keep Baseline* menu item set the `OFFLINEDEX_SKIP_SNAPSHOT` document property).
+- **`OfflineDexUpload.html`** (ours): the creator's dialog with `uploadFileTracked` in place
+  of `uploadFile`, closing 500 ms after dispatch so the server-side flow continues while the
+  toasts report progress (closing immediately cancels the request).
 
-The creator provides `onOpen()`, `checkVersion()`, and `htmlmodalDialog()`. I:
-
-- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Finish Setup (migrate + upload), Prepare Next Version
-- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, and `finishSetup()` (which opens the upload dialog when the library reports the migration ran)
-- Point the two Upload Data items at my own `openUploadDialog()` / `openUploadDialogKeepBaseline()` wrappers instead of the creator's `openAttachmentDialog()` directly
-- Call `OfflineDexLib.nudgeFinishSetupIfFresh()` from `onOpen` (fresh-copy toast pointing at Finish Setup)
-
-**How the "keep baseline" choice reaches `uploadFile`:** the creator's dialog (`UploadPlayerData.html`) always dispatches `google.script.run.uploadFile(obj)`, and it's a separate server execution, so module state can't carry the choice across. Instead each menu wrapper writes (or deletes) the `OFFLINEDEX_SKIP_SNAPSHOT` document property before opening the dialog, and `uploadFile` reads and clears it. Both entry points always set it, so it can't go stale. This keeps `openAttachmentDialog()` and the dialog HTML unmodified — one less thing to reconcile on each version merge.
-
-The wrapper functions are needed because Apps Script menu items can't directly call library functions. They have to call top-level functions in the bound script that then forward to the library.
-
-All of the Finish Setup logic lives in the library (`Setup.js`); the bound file is kept to thin wrappers so there's as little as possible to reconcile with the creator's `onOpen.js` on each version merge.
-
-### LoadPlayerData.js
-
-The creator provides `uploadFile()`, `decryptFile()`, `parseJsonContent()`, `writeJsonToSheet()`, `openAttachmentDialog()`, and crypto helpers (using a `cCryptoGS` library for AES decrypt of the save file). The save file is an encrypted blob; the spreadsheet's bound script decrypts it and writes the decoded JSON into a sheet called `newJSON`. From there, the spreadsheet's formulas pull from `newJSON` to populate the various data sheets.
-
-I only modify `uploadFile()` to wrap the import in toast tracking and trigger `processChanges()` after:
-
-```javascript
-function uploadFile(obj) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  const props = PropertiesService.getDocumentProperties()
-  const skipSnapshot = props.getProperty(SKIP_SNAPSHOT_PROPERTY) === 'true'
-  props.deleteProperty(SKIP_SNAPSHOT_PROPERTY)
-
-  OfflineDexLib.resetToastProgress()
-  OfflineDexLib.startStep(ss, 'Importing save data')
-
-  var blob = createBlob(obj)
-  var plaintext = decryptFile(blob)
-  var jsonContent = parseJsonContent(plaintext)
-  writeJsonToSheet(jsonContent)
-  SpreadsheetApp.flush()
-  Utilities.sleep(2000) // give formulas time to recalculate
-
-  OfflineDexLib.finishStep()
-
-  try {
-    if (skipSnapshot) {
-      OfflineDexLib.processChangesWithoutSnapshot()
-    } else {
-      OfflineDexLib.processChanges()
-    }
-  } catch (e) {
-    Logger.log('processChanges failed: ' + e.message)
-  }
-}
-```
-
-The 2-second sleep is important: after `writeJsonToSheet` fills in `newJSON`, formulas pulling from it need a moment to recalculate before the snapshot can read post-update values.
-
-### UploadPlayerData.html
-
-The creator's dialog. I modify `fr.onload` to dispatch `uploadFile` and close the dialog after a 500ms delay so the dialog dismisses while server-side processing continues. Without the delay, closing too fast cancels the request.
-
-```javascript
-google.script.run.uploadFile(obj)
-setTimeout(() => google.script.host.close(), 500)
-```
-
-### Files I don't modify
-
-- `ImportDB.js` (forceUpdate, copyDBList, copyDailyList) - creator's database import logic
-- `Sheet Status Generator.js` (listImportSheetsWithGID) - creator's status helper
+Menu: *Upload Data*, *Upload Data (Keep Baseline)*, *Snapshot Data*, *Highlight Changes*,
+*Clear Highlights*, *Check Layout* (dry run of the layout probe), *Finish Setup (Migrate +
+Upload)*, *Prepare Next Version*.
 
 ## Per-version update workflow
 

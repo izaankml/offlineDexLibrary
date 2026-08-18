@@ -32,7 +32,9 @@ let flow: Flow | null = null
 /** Last completed step, for the toast body. */
 function lastStepText(): string {
   const last = flow?.steps[flow.steps.length - 1]
-  return last ? `${last.label} completed in ${(last.ms / 1000).toFixed(1)}s` : ''
+  return last
+    ? `${last.label} completed in ${(last.ms / 1000).toFixed(1)}s`
+    : ''
 }
 
 /**
@@ -106,7 +108,11 @@ export function finishFlow(
   if (!flow) return
   finishStep()
   const total = Date.now() - flow.start
-  ss.toast(lastStepText(), `${title} in ${(total / 1000).toFixed(1)}s`, timeoutSeconds)
+  ss.toast(
+    lastStepText(),
+    `${title} in ${(total / 1000).toFixed(1)}s`,
+    timeoutSeconds,
+  )
   writeTimings(ss, flow, total, 'ok')
   flow = null
 }
@@ -154,7 +160,12 @@ export function timingRows(
   return rows
 }
 
-function writeTimings(ss: Spreadsheet, f: Flow, totalMs: number, outcome: string): void {
+function writeTimings(
+  ss: Spreadsheet,
+  f: Flow,
+  totalMs: number,
+  outcome: string,
+): void {
   let sheet = ss.getSheetByName(TIMINGS_SHEET)
   if (!sheet) {
     sheet = ss.insertSheet(TIMINGS_SHEET)
@@ -163,7 +174,9 @@ function writeTimings(ss: Spreadsheet, f: Flow, totalMs: number, outcome: string
   }
   const rows = timingRows(f, totalMs, outcome, new Date(), ss.getName())
   const lastRow = sheet.getLastRow()
-  sheet.getRange(lastRow + 1, 1, rows.length, TIMINGS_HEADER.length).setValues(rows)
+  sheet
+    .getRange(lastRow + 1, 1, rows.length, TIMINGS_HEADER.length)
+    .setValues(rows)
   const excess = lastRow + 1 + rows.length - 1 - TIMINGS_MAX_ROWS
   if (excess > 0) sheet.deleteRows(2, excess)
 }

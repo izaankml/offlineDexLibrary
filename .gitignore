@@ -8,6 +8,8 @@ bound/*
 !bound/UploadPlayerData.html
 !bound/appsscript.json
 !bound/.claspignore
+!bound/OfflineDexBound.js
+!bound/OfflineDexUpload.html
 
 # macOS
 .DS_Store

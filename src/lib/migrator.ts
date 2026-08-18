@@ -17,7 +17,12 @@
 
 import { copyName } from '../shared/naming.ts'
 import { shiftFormulaColumns } from './formulaShift.ts'
-import { finishFlow, finishStep, resetToastProgress, startStep } from './progress.ts'
+import {
+  finishFlow,
+  finishStep,
+  resetToastProgress,
+  startStep,
+} from './progress.ts'
 import {
   type BandedRange,
   type CellData,
@@ -62,7 +67,10 @@ export const B16_MERGE = { row1: 16, col1: 2, row2: 131, col2: 13 } // B16:M131
 export const DAILY_INPUTS = { row1: 12, col1: 12, row2: 14, col2: 13 } // L12:M14
 
 // IV conditional formatting on the dex checklists.
-export const DEX_IV_HIGHLIGHT_SHEETS = ['Starter Dex Checklist', 'Full Dex Checklist']
+export const DEX_IV_HIGHLIGHT_SHEETS = [
+  'Starter Dex Checklist',
+  'Full Dex Checklist',
+]
 export const DEX_IV_PERFECT_VALUE = '31'
 export const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
 
@@ -87,11 +95,17 @@ export type StepResult = { label: string; ok: boolean; error?: string }
  * the active spreadsheet (`destVersion`). Nothing is written. Throws when a
  * landmark doesn't fit (the message says which).
  */
-export function planForVersions(sourceVersion: string, destVersion: string, client: SheetsClient = liveSheets): MigrationPlan {
+export function planForVersions(
+  sourceVersion: string,
+  destVersion: string,
+  client: SheetsClient = liveSheets,
+): MigrationPlan {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   const srcId = findFileIdByVersion(sourceVersion)
   const dstId = ss.getId()
-  Logger.log(`Source: ${sourceVersion} -> ${srcId}; dest: ${destVersion} -> ${dstId} (active)`)
+  Logger.log(
+    `Source: ${sourceVersion} -> ${srcId}; dest: ${destVersion} -> ${dstId} (active)`,
+  )
   const src = readSource(client, srcId)
   const dst = readDestination(client, dstId)
   const { ops, notes } = buildPlan(src, dst, destVersion)
@@ -99,7 +113,10 @@ export function planForVersions(sourceVersion: string, destVersion: string, clie
 }
 
 /** Apply a plan in one atomic batchUpdate. */
-export function applyPlan(plan: MigrationPlan, client: SheetsClient = liveSheets): void {
+export function applyPlan(
+  plan: MigrationPlan,
+  client: SheetsClient = liveSheets,
+): void {
   const requests = plan.ops.flatMap((op) => op.requests)
   if (requests.length === 0) return
   client.batchUpdate(plan.dstId, requests)
@@ -109,7 +126,11 @@ export function applyPlan(plan: MigrationPlan, client: SheetsClient = liveSheets
  * Plan + apply with toast progress and timings; returns per-step results for
  * the caller to surface. Kept for callers that don't preview first.
  */
-export function portAll(sourceVersion: string, destVersion: string, client: SheetsClient = liveSheets): StepResult[] {
+export function portAll(
+  sourceVersion: string,
+  destVersion: string,
+  client: SheetsClient = liveSheets,
+): StepResult[] {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   resetToastProgress('migration')
   let plan: MigrationPlan
@@ -118,7 +139,13 @@ export function portAll(sourceVersion: string, destVersion: string, client: Shee
     plan = planForVersions(sourceVersion, destVersion, client)
   } catch (e) {
     finishFlow(ss, 'Migration not started', 10)
-    return [{ label: 'Planning migration', ok: false, error: e instanceof Error ? e.message : String(e) }]
+    return [
+      {
+        label: 'Planning migration',
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      },
+    ]
   }
   finishStep()
   const results = applyPlanWithProgress(plan, client)
@@ -127,7 +154,10 @@ export function portAll(sourceVersion: string, destVersion: string, client: Shee
 }
 
 /** Apply with a toast step; one result per op (all OK, or all ERR with the same message — the batch is atomic). */
-export function applyPlanWithProgress(plan: MigrationPlan, client: SheetsClient = liveSheets): StepResult[] {
+export function applyPlanWithProgress(
+  plan: MigrationPlan,
+  client: SheetsClient = liveSheets,
+): StepResult[] {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   const requests = plan.ops.reduce((n, op) => n + op.requests.length, 0)
   startStep(ss, `Applying ${plan.ops.length} steps (${requests} changes)`)
@@ -144,12 +174,16 @@ export function applyPlanWithProgress(plan: MigrationPlan, client: SheetsClient 
 
 /** "OK  label" / "ERR label: message" lines. */
 export function formatResults(results: StepResult[]): string {
-  return results.map((r) => (r.ok ? 'OK  ' + r.label : 'ERR ' + r.label + ': ' + r.error)).join('\n')
+  return results
+    .map((r) => (r.ok ? 'OK  ' + r.label : 'ERR ' + r.label + ': ' + r.error))
+    .join('\n')
 }
 
 /** Human-readable plan, for the confirm dialog and the log. */
 export function describePlan(plan: MigrationPlan): string {
-  const lines = plan.ops.map((op) => `• ${op.label}${op.note ? ` — ${op.note}` : ''}`)
+  const lines = plan.ops.map(
+    (op) => `• ${op.label}${op.note ? ` — ${op.note}` : ''}`,
+  )
   const notes = plan.notes.map((n) => `· ${n}`)
   return [...lines, ...notes].join('\n')
 }
@@ -165,7 +199,9 @@ const GRID_FIELDS =
   'sheets(properties(sheetId,title,gridProperties),data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,formattedValue)),rowMetadata,columnMetadata))'
 
 export function readSource(client: SheetsClient, srcId: string): SourceInfo {
-  const meta = client.get(srcId, { fields: 'sheets(properties(sheetId,title,hidden,gridProperties))' })
+  const meta = client.get(srcId, {
+    fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
+  })
   const grid = client.get(srcId, {
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
@@ -181,7 +217,8 @@ export function readSource(client: SheetsClient, srcId: string): SourceInfo {
 
 export function readDestination(client: SheetsClient, dstId: string): DestInfo {
   const meta = client.get(dstId, {
-    fields: 'sheets(properties(sheetId,title,hidden,gridProperties),merges,bandedRanges,conditionalFormats)',
+    fields:
+      'sheets(properties(sheetId,title,hidden,gridProperties),merges,bandedRanges,conditionalFormats)',
   })
   const grid = client.get(dstId, {
     ranges: [
@@ -198,7 +235,11 @@ export function readDestination(client: SheetsClient, dstId: string): DestInfo {
 // Plan (pure)
 // ---------------------------------------------------------------------------
 
-export function buildPlan(src: SourceInfo, dst: DestInfo, destVersion: string): { ops: Op[]; notes: string[] } {
+export function buildPlan(
+  src: SourceInfo,
+  dst: DestInfo,
+  destVersion: string,
+): { ops: Op[]; notes: string[] } {
   const ops: Op[] = []
   const notes: string[] = []
   ops.push(...planQuickChecklist(src, dst, destVersion))
@@ -215,7 +256,10 @@ function need<T>(v: T | null | undefined, what: string): T {
 }
 
 /** First non-blank cell of the locator row right of the fixed columns (1-based col). */
-export function quickChecklistFirstDataColumn(grid: GridData | null, which: string): number {
+export function quickChecklistFirstDataColumn(
+  grid: GridData | null,
+  which: string,
+): number {
   const rowIdx = QUICK_CHECKLIST_LOCATOR_ROW - 1 - (grid?.startRow ?? 0)
   const cells = grid?.rowData?.[rowIdx]?.values ?? []
   for (let c = QUICK_CHECKLIST_FIXED_COLUMNS; c < cells.length; c++) {
@@ -232,10 +276,23 @@ export function quickChecklistFirstDataColumn(grid: GridData | null, which: stri
  * block and all of row 10 (same-sheet references shifted if the destination
  * block starts further right), hide Ribbons, stamp the title.
  */
-export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: string): Op[] {
-  const sSheet = need(sheetByTitle(src.grid, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the source')
-  const dSheet = need(sheetByTitle(dst.grid, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
-  const dMeta = need(sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
+export function planQuickChecklist(
+  src: SourceInfo,
+  dst: DestInfo,
+  destVersion: string,
+): Op[] {
+  const sSheet = need(
+    sheetByTitle(src.grid, QUICK_CHECKLIST_SHEET),
+    'Quick Checklist not found in the source',
+  )
+  const dSheet = need(
+    sheetByTitle(dst.grid, QUICK_CHECKLIST_SHEET),
+    'Quick Checklist not found in the destination',
+  )
+  const dMeta = need(
+    sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET),
+    'Quick Checklist not found in the destination',
+  )
   const sheetId = dSheet.properties.sheetId
   const sGrid = gridAt(sSheet)
   const dGrid = gridAt(dSheet)
@@ -262,7 +319,13 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
   const requests: Request[] = []
 
   if (dstCols < neededCols) {
-    requests.push({ appendDimension: { sheetId, dimension: 'COLUMNS', length: neededCols - dstCols } })
+    requests.push({
+      appendDimension: {
+        sheetId,
+        dimension: 'COLUMNS',
+        length: neededCols - dstCols,
+      },
+    })
   }
 
   // Formats, rows 1-10, in up to two column segments (left of the block, and the shifted block+rest).
@@ -277,7 +340,8 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
       },
       rows: Array.from({ length: QUICK_CHECKLIST_HEADER_ROWS }, (_, r) => ({
         values: Array.from({ length: c1To - c1From + 1 }, (_, i) => ({
-          userEnteredFormat: cellAt(sGrid, r, c1From - 1 + i).userEnteredFormat ?? {},
+          userEnteredFormat:
+            cellAt(sGrid, r, c1From - 1 + i).userEnteredFormat ?? {},
         })),
       })),
       fields: 'userEnteredFormat',
@@ -292,7 +356,10 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
     requests.push({
       updateDimensionProperties: {
         range: { sheetId, dimension: 'ROWS', startIndex: r, endIndex: r + 1 },
-        properties: { pixelSize: m.pixelSize ?? 21, hiddenByUser: !!m.hiddenByUser },
+        properties: {
+          pixelSize: m.pixelSize ?? 21,
+          hiddenByUser: !!m.hiddenByUser,
+        },
         fields: 'pixelSize,hiddenByUser',
       },
     })
@@ -303,7 +370,12 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
     if (!m?.pixelSize) continue
     requests.push({
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'COLUMNS', startIndex: mapCol(c1) - 1, endIndex: mapCol(c1) },
+        range: {
+          sheetId,
+          dimension: 'COLUMNS',
+          startIndex: mapCol(c1) - 1,
+          endIndex: mapCol(c1),
+        },
         properties: { pixelSize: m.pixelSize },
         fields: 'pixelSize',
       },
@@ -326,7 +398,15 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
             const v = cellAt(sGrid, row1 - 1, c1From - 1 + i).userEnteredValue
             if (!v) return {}
             if (v.formulaValue !== undefined) {
-              return { userEnteredValue: { formulaValue: shiftFormulaColumns(v.formulaValue, srcFirst, offset) } }
+              return {
+                userEnteredValue: {
+                  formulaValue: shiftFormulaColumns(
+                    v.formulaValue,
+                    srcFirst,
+                    offset,
+                  ),
+                },
+              }
             }
             return { userEnteredValue: v }
           }),
@@ -335,14 +415,22 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
       fields: 'userEnteredValue',
     },
   })
-  requests.push(valueCells(1, srcFirst, srcFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1))
-  if (srcFirst > 1) requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, 1, srcFirst - 1))
+  requests.push(
+    valueCells(1, srcFirst, srcFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1),
+  )
+  if (srcFirst > 1)
+    requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, 1, srcFirst - 1))
   requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, srcFirst, srcCols))
 
   // Hide Ribbons (last column of the block).
   requests.push({
     updateDimensionProperties: {
-      range: { sheetId, dimension: 'COLUMNS', startIndex: lastData - 1, endIndex: lastData },
+      range: {
+        sheetId,
+        dimension: 'COLUMNS',
+        startIndex: lastData - 1,
+        endIndex: lastData,
+      },
       properties: { hiddenByUser: true },
       fields: 'hiddenByUser',
     },
@@ -360,7 +448,11 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
   // Title stamp unless A1 is a formula.
   const a1cell = cellAt(dGrid, 0, 0)
   if (a1cell.userEnteredValue?.formulaValue !== undefined) {
-    ops.push({ label: 'Quick Checklist title', note: 'A1 is a formula; left alone', requests: [] })
+    ops.push({
+      label: 'Quick Checklist title',
+      note: 'A1 is a formula; left alone',
+      requests: [],
+    })
   } else {
     ops.push({
       label: 'Quick Checklist title',
@@ -368,8 +460,24 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
       requests: [
         {
           updateCells: {
-            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 1 },
-            rows: [{ values: [{ userEnteredValue: { stringValue: QUICK_CHECKLIST_TITLE_PREFIX + destVersion } }] }],
+            range: {
+              sheetId,
+              startRowIndex: 0,
+              endRowIndex: 1,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+            rows: [
+              {
+                values: [
+                  {
+                    userEnteredValue: {
+                      stringValue: QUICK_CHECKLIST_TITLE_PREFIX + destVersion,
+                    },
+                  },
+                ],
+              },
+            ],
             fields: 'userEnteredValue',
           },
         },
@@ -386,28 +494,49 @@ export function planQuickChecklist(src: SourceInfo, dst: DestInfo, destVersion: 
  * banding already spans B, only the fills are cleared. Otherwise row-parity
  * CF rules adjacent to B are widened.
  */
-export function planQuickChecklistBanding(dst: DestInfo, notes: string[]): Op[] {
-  const dMeta = need(sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET), 'Quick Checklist not found in the destination')
+export function planQuickChecklistBanding(
+  dst: DestInfo,
+  notes: string[],
+): Op[] {
+  const dMeta = need(
+    sheetByTitle(dst.meta, QUICK_CHECKLIST_SHEET),
+    'Quick Checklist not found in the destination',
+  )
   const sheetId = dMeta.properties.sheetId
   const IMG0 = QUICK_CHECKLIST_IMAGE_COLUMN - 1 // 0-based
   const bandings = dMeta.bandedRanges ?? []
   const clearFills = (r: GridRange): Request => ({
     repeatCell: {
-      range: { sheetId, startRowIndex: r.startRowIndex, endRowIndex: r.endRowIndex, startColumnIndex: IMG0, endColumnIndex: IMG0 + 1 },
+      range: {
+        sheetId,
+        startRowIndex: r.startRowIndex,
+        endRowIndex: r.endRowIndex,
+        startColumnIndex: IMG0,
+        endColumnIndex: IMG0 + 1,
+      },
       cell: { userEnteredFormat: {} },
-      fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle',
+      fields:
+        'userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle',
     },
   })
 
-  const right = bandings.find((b) => (b.range.startColumnIndex ?? 0) === IMG0 + 1)
+  const right = bandings.find(
+    (b) => (b.range.startColumnIndex ?? 0) === IMG0 + 1,
+  )
   if (right) {
-    const left = bandings.find((b) => b !== right && (b.range.endColumnIndex ?? 0) === IMG0)
+    const left = bandings.find(
+      (b) => b !== right && (b.range.endColumnIndex ?? 0) === IMG0,
+    )
     const startColumnIndex = left ? (left.range.startColumnIndex ?? 0) : IMG0
     const requests: Request[] = []
-    if (left) requests.push({ deleteBanding: { bandedRangeId: left.bandedRangeId } })
+    if (left)
+      requests.push({ deleteBanding: { bandedRangeId: left.bandedRangeId } })
     requests.push({
       updateBanding: {
-        bandedRange: { bandedRangeId: right.bandedRangeId, range: { ...right.range, startColumnIndex } },
+        bandedRange: {
+          bandedRangeId: right.bandedRangeId,
+          range: { ...right.range, startColumnIndex },
+        },
         fields: 'range',
       },
     })
@@ -420,15 +549,30 @@ export function planQuickChecklistBanding(dst: DestInfo, notes: string[]): Op[] 
       },
     ]
   }
-  const spanning = bandings.find((b) => (b.range.startColumnIndex ?? 0) <= IMG0 && (b.range.endColumnIndex ?? 0) > IMG0)
+  const spanning = bandings.find(
+    (b) =>
+      (b.range.startColumnIndex ?? 0) <= IMG0 &&
+      (b.range.endColumnIndex ?? 0) > IMG0,
+  )
   if (spanning) {
-    return [{ label: 'Quick Checklist banding over the image column', note: 'already covers B; clearing B fills', requests: [clearFills(spanning.range)] }]
+    return [
+      {
+        label: 'Quick Checklist banding over the image column',
+        note: 'already covers B; clearing B fills',
+        requests: [clearFills(spanning.range)],
+      },
+    ]
   }
   const parity = /ISEVEN\s*\(\s*ROW|ISODD\s*\(\s*ROW|MOD\s*\(\s*ROW/i
   const requests: Request[] = []
   ;(dMeta.conditionalFormats ?? []).forEach((rule, index) => {
-    const formula = rule.booleanRule?.condition.values?.[0]?.userEnteredValue ?? ''
-    if (rule.booleanRule?.condition.type !== 'CUSTOM_FORMULA' || !parity.test(formula)) return
+    const formula =
+      rule.booleanRule?.condition.values?.[0]?.userEnteredValue ?? ''
+    if (
+      rule.booleanRule?.condition.type !== 'CUSTOM_FORMULA' ||
+      !parity.test(formula)
+    )
+      return
     let touched = false
     const ranges = rule.ranges.map((rg) => {
       const c1 = rg.startColumnIndex ?? 0
@@ -436,31 +580,67 @@ export function planQuickChecklistBanding(dst: DestInfo, notes: string[]): Op[] 
       if (c1 <= IMG0 && c2 >= IMG0) return rg
       if (c2 === IMG0 - 1 || c1 === IMG0 + 1) {
         touched = true
-        return { ...rg, startColumnIndex: Math.min(c1, IMG0), endColumnIndex: Math.max(c2, IMG0) + 1 }
+        return {
+          ...rg,
+          startColumnIndex: Math.min(c1, IMG0),
+          endColumnIndex: Math.max(c2, IMG0) + 1,
+        }
       }
       return rg
     })
-    if (touched) requests.push({ updateConditionalFormatRule: { sheetId, index, rule: { ...rule, ranges } } })
+    if (touched)
+      requests.push({
+        updateConditionalFormatRule: {
+          sheetId,
+          index,
+          rule: { ...rule, ranges },
+        },
+      })
   })
   if (requests.length) {
-    return [{ label: 'Quick Checklist banding over the image column', note: `widened ${requests.length} row-parity CF rule(s)`, requests }]
+    return [
+      {
+        label: 'Quick Checklist banding over the image column',
+        note: `widened ${requests.length} row-parity CF rule(s)`,
+        requests,
+      },
+    ]
   }
-  notes.push('Quick Checklist: no banding or row-parity CF adjacent to column B; nothing to extend')
+  notes.push(
+    'Quick Checklist: no banding or row-parity CF adjacent to column B; nothing to extend',
+  )
   return []
 }
 
 /** Landmark check: true = column L present; false = insert it; throws when neither cell holds the label. */
-export function dailyModeHasCustomColumn(src: SourceInfo, dst: DestInfo): boolean {
-  const sSheet = need(sheetByTitle(src.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the source')
-  const dSheet = need(sheetByTitle(dst.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the destination')
-  const sLandmark = gridAt(sSheet, DAILY_MODE_LANDMARK_ROW - 1, DAILY_MODE_LANDMARK_COL_WITH_L - 1)
+export function dailyModeHasCustomColumn(
+  src: SourceInfo,
+  dst: DestInfo,
+): boolean {
+  const sSheet = need(
+    sheetByTitle(src.grid, DAILY_MODE_SHEET),
+    'Daily Mode not found in the source',
+  )
+  const dSheet = need(
+    sheetByTitle(dst.grid, DAILY_MODE_SHEET),
+    'Daily Mode not found in the destination',
+  )
+  const sLandmark = gridAt(
+    sSheet,
+    DAILY_MODE_LANDMARK_ROW - 1,
+    DAILY_MODE_LANDMARK_COL_WITH_L - 1,
+  )
   const label = displayText(cellAt(sLandmark, 0, 0)).trim()
   if (!label) {
     throw new Error(
       `Daily Mode: landmark cell ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)} is blank in the source; cannot tell whether column L is present`,
     )
   }
-  const dLandmarks = gridAt(dSheet, DAILY_MODE_LANDMARK_ROW - 1, DAILY_MODE_LANDMARK_COL_WITHOUT_L - 1)
+  const dLandmarks = gridAt(
+    dSheet,
+    DAILY_MODE_LANDMARK_ROW - 1,
+    DAILY_MODE_LANDMARK_COL_WITHOUT_L - 1,
+  )
   const withoutL = displayText(cellAt(dLandmarks, 0, 0)).trim()
   const withL = displayText(cellAt(dLandmarks, 0, 1)).trim()
   if (withL === label) return true
@@ -475,9 +655,19 @@ export function dailyModeHasCustomColumn(src: SourceInfo, dst: DestInfo): boolea
  * L12:M14; widths of L and M; merge B16:M131 (unmerging whatever overlaps);
  * B16 formula/value top-aligned; L12:M14 formulas/values.
  */
-export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): Op[] {
-  const sSheet = need(sheetByTitle(src.grid, DAILY_MODE_SHEET), 'Daily Mode not found in the source')
-  const dMeta = need(sheetByTitle(dst.meta, DAILY_MODE_SHEET), 'Daily Mode not found in the destination')
+export function planDailyMode(
+  src: SourceInfo,
+  dst: DestInfo,
+  notes: string[],
+): Op[] {
+  const sSheet = need(
+    sheetByTitle(src.grid, DAILY_MODE_SHEET),
+    'Daily Mode not found in the source',
+  )
+  const dMeta = need(
+    sheetByTitle(dst.meta, DAILY_MODE_SHEET),
+    'Daily Mode not found in the destination',
+  )
   const sheetId = dMeta.properties.sheetId
   const hasL = dailyModeHasCustomColumn(src, dst)
   const ops: Op[] = []
@@ -488,14 +678,30 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
       label: 'Daily Mode: insert custom column L',
       note: 'landmark found at M2 (fresh copy)',
       requests: [
-        { insertDimension: { range: { sheetId, dimension: 'COLUMNS', startIndex: L0, endIndex: L0 + 1 }, inheritFromBefore: false } },
+        {
+          insertDimension: {
+            range: {
+              sheetId,
+              dimension: 'COLUMNS',
+              startIndex: L0,
+              endIndex: L0 + 1,
+            },
+            inheritFromBefore: false,
+          },
+        },
       ],
     })
   } else {
     notes.push('Daily Mode: custom column L already present (landmark at N2)')
   }
 
-  const formatBlock = (row1: number, col1: number, row2: number, col2: number, label: string): Op => {
+  const formatBlock = (
+    row1: number,
+    col1: number,
+    row2: number,
+    col2: number,
+    label: string,
+  ): Op => {
     const grid = gridAt(sSheet, row1 - 1, col1 - 1)
     const nRows = row2 - row1 + 1
     const nCols = col2 - col1 + 1
@@ -504,9 +710,17 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
       requests: [
         {
           updateCells: {
-            range: { sheetId, startRowIndex: row1 - 1, endRowIndex: row2, startColumnIndex: col1 - 1, endColumnIndex: col2 },
+            range: {
+              sheetId,
+              startRowIndex: row1 - 1,
+              endRowIndex: row2,
+              startColumnIndex: col1 - 1,
+              endColumnIndex: col2,
+            },
             rows: Array.from({ length: nRows }, (_, r) => ({
-              values: Array.from({ length: nCols }, (_, c) => ({ userEnteredFormat: cellAt(grid, r, c).userEnteredFormat ?? {} })),
+              values: Array.from({ length: nCols }, (_, c) => ({
+                userEnteredFormat: cellAt(grid, r, c).userEnteredFormat ?? {},
+              })),
             })),
             fields: 'userEnteredFormat',
           },
@@ -514,8 +728,24 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
       ],
     }
   }
-  ops.push(formatBlock(B16_MERGE.row1, B16_MERGE.col1, B16_MERGE.row2, B16_MERGE.col2, 'Daily Mode: formats of B16:M131'))
-  ops.push(formatBlock(DAILY_INPUTS.row1, DAILY_INPUTS.col1, DAILY_INPUTS.row2, DAILY_INPUTS.col2, 'Daily Mode: formats of L12:M14'))
+  ops.push(
+    formatBlock(
+      B16_MERGE.row1,
+      B16_MERGE.col1,
+      B16_MERGE.row2,
+      B16_MERGE.col2,
+      'Daily Mode: formats of B16:M131',
+    ),
+  )
+  ops.push(
+    formatBlock(
+      DAILY_INPUTS.row1,
+      DAILY_INPUTS.col1,
+      DAILY_INPUTS.row2,
+      DAILY_INPUTS.col2,
+      'Daily Mode: formats of L12:M14',
+    ),
+  )
 
   // Column widths L, M from the source (its B16:M131 block carries columnMetadata for B..M).
   const bGrid = gridAt(sSheet, B16_MERGE.row1 - 1, B16_MERGE.col1 - 1)
@@ -525,13 +755,22 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
     if (!m?.pixelSize) continue
     widthReqs.push({
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'COLUMNS', startIndex: col1 - 1, endIndex: col1 },
+        range: {
+          sheetId,
+          dimension: 'COLUMNS',
+          startIndex: col1 - 1,
+          endIndex: col1,
+        },
         properties: { pixelSize: m.pixelSize },
         fields: 'pixelSize',
       },
     })
   }
-  if (widthReqs.length) ops.push({ label: 'Daily Mode: widths of columns L and M', requests: widthReqs })
+  if (widthReqs.length)
+    ops.push({
+      label: 'Daily Mode: widths of columns L and M',
+      requests: widthReqs,
+    })
 
   // Merge B16:M131 — first unmerge anything overlapping it (in post-insert coordinates).
   const target: GridRange = {
@@ -541,13 +780,19 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
     startColumnIndex: B16_MERGE.col1 - 1,
     endColumnIndex: B16_MERGE.col2,
   }
-  const merges = (dMeta.merges ?? []).map((m) => (hasL ? m : shiftMergeForInsert(m, L0)))
+  const merges = (dMeta.merges ?? []).map((m) =>
+    hasL ? m : shiftMergeForInsert(m, L0),
+  )
   const overlapping = merges.filter((m) => rangesOverlap(m, target))
-  const mergeReqs: Request[] = overlapping.map((m) => ({ unmergeCells: { range: { ...m, sheetId } } }))
+  const mergeReqs: Request[] = overlapping.map((m) => ({
+    unmergeCells: { range: { ...m, sheetId } },
+  }))
   mergeReqs.push({ mergeCells: { range: target, mergeType: 'MERGE_ALL' } })
   ops.push({
     label: 'Daily Mode: merge B16:M131',
-    ...(overlapping.length ? { note: `unmerging ${overlapping.length} existing merge(s) first` } : {}),
+    ...(overlapping.length
+      ? { note: `unmerging ${overlapping.length} existing merge(s) first` }
+      : {}),
     requests: mergeReqs,
   })
 
@@ -555,12 +800,29 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
   const b16 = cellAt(bGrid, 0, 0)
   ops.push({
     label: 'Daily Mode: B16 formula',
-    note: b16.userEnteredValue?.formulaValue ? 'formula copied from the source' : 'value copied from the source',
+    note: b16.userEnteredValue?.formulaValue
+      ? 'formula copied from the source'
+      : 'value copied from the source',
     requests: [
       {
         updateCells: {
-          range: { sheetId, startRowIndex: B16_MERGE.row1 - 1, endRowIndex: B16_MERGE.row1, startColumnIndex: B16_MERGE.col1 - 1, endColumnIndex: B16_MERGE.col1 },
-          rows: [{ values: [{ userEnteredValue: b16.userEnteredValue ?? {}, userEnteredFormat: { verticalAlignment: 'TOP' } }] }],
+          range: {
+            sheetId,
+            startRowIndex: B16_MERGE.row1 - 1,
+            endRowIndex: B16_MERGE.row1,
+            startColumnIndex: B16_MERGE.col1 - 1,
+            endColumnIndex: B16_MERGE.col1,
+          },
+          rows: [
+            {
+              values: [
+                {
+                  userEnteredValue: b16.userEnteredValue ?? {},
+                  userEnteredFormat: { verticalAlignment: 'TOP' },
+                },
+              ],
+            },
+          ],
           fields: 'userEnteredValue,userEnteredFormat.verticalAlignment',
         },
       },
@@ -576,7 +838,13 @@ export function planDailyMode(src: SourceInfo, dst: DestInfo, notes: string[]): 
     requests: [
       {
         updateCells: {
-          range: { sheetId, startRowIndex: DAILY_INPUTS.row1 - 1, endRowIndex: DAILY_INPUTS.row2, startColumnIndex: DAILY_INPUTS.col1 - 1, endColumnIndex: DAILY_INPUTS.col2 },
+          range: {
+            sheetId,
+            startRowIndex: DAILY_INPUTS.row1 - 1,
+            endRowIndex: DAILY_INPUTS.row2,
+            startColumnIndex: DAILY_INPUTS.col1 - 1,
+            endColumnIndex: DAILY_INPUTS.col2,
+          },
           rows: Array.from({ length: nRows }, (_, r) => ({
             values: Array.from({ length: nCols }, (_, c) => {
               const v = cellAt(inputs, r, c).userEnteredValue
@@ -610,22 +878,39 @@ export function rangesOverlap(a: GridRange, b: GridRange): boolean {
 }
 
 /** Hide every destination sheet whose same-named source sheet is hidden. */
-export function planHiddenSheets(src: SourceInfo, dst: DestInfo, notes: string[]): Op[] {
-  const dstByTitle = new Map((dst.meta.sheets ?? []).map((s) => [s.properties.title, s]))
+export function planHiddenSheets(
+  src: SourceInfo,
+  dst: DestInfo,
+  notes: string[],
+): Op[] {
+  const dstByTitle = new Map(
+    (dst.meta.sheets ?? []).map((s) => [s.properties.title, s]),
+  )
   const requests: Request[] = []
   const names: string[] = []
   for (const s of src.meta.sheets ?? []) {
     if (!s.properties.hidden) continue
     const d = dstByTitle.get(s.properties.title)
     if (!d || d.properties.hidden) continue
-    requests.push({ updateSheetProperties: { properties: { sheetId: d.properties.sheetId, hidden: true }, fields: 'hidden' } })
+    requests.push({
+      updateSheetProperties: {
+        properties: { sheetId: d.properties.sheetId, hidden: true },
+        fields: 'hidden',
+      },
+    })
     names.push(s.properties.title)
   }
   if (!requests.length) {
     notes.push('Hidden sheets: nothing to hide (already matching)')
     return []
   }
-  return [{ label: `Hide ${names.length} sheet(s)`, note: names.join(', '), requests }]
+  return [
+    {
+      label: `Hide ${names.length} sheet(s)`,
+      note: names.join(', '),
+      requests,
+    },
+  ]
 }
 
 /** Replace the "perfect IV" (= 31 → yellow) rules on the dex checklists with "≠ 31 → red" over the same ranges. */
@@ -639,24 +924,40 @@ export function planDexIvHighlight(dst: DestInfo, notes: string[]): Op[] {
     }
     const sheetId = sheet.properties.sheetId
     const rules = sheet.conditionalFormats ?? []
-    const matches = rules.map((rule, index) => ({ rule, index })).filter(({ rule }) => isPerfectIvRule(rule))
+    const matches = rules
+      .map((rule, index) => ({ rule, index }))
+      .filter(({ rule }) => isPerfectIvRule(rule))
     if (!matches.length) {
-      notes.push(`IV highlight: no "= ${DEX_IV_PERFECT_VALUE}" rule on "${name}" (already replaced?)`)
+      notes.push(
+        `IV highlight: no "= ${DEX_IV_PERFECT_VALUE}" rule on "${name}" (already replaced?)`,
+      )
       continue
     }
     const requests: Request[] = []
     // Highest index first so earlier indices stay valid while we replace.
-    for (const { rule, index } of [...matches].sort((x, y) => y.index - x.index)) {
+    for (const { rule, index } of [...matches].sort(
+      (x, y) => y.index - x.index,
+    )) {
       requests.push({ deleteConditionalFormatRule: { sheetId, index } })
       rule.ranges.forEach((range, k) => {
-        const topLeft = a1((range.startRowIndex ?? 0) + 1, (range.startColumnIndex ?? 0) + 1)
+        const topLeft = a1(
+          (range.startRowIndex ?? 0) + 1,
+          (range.startColumnIndex ?? 0) + 1,
+        )
         requests.push({
           addConditionalFormatRule: {
             index: index + k,
             rule: {
               ranges: [{ ...range, sheetId }],
               booleanRule: {
-                condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: `=TO_TEXT(${topLeft})<>"${DEX_IV_PERFECT_VALUE}"` }] },
+                condition: {
+                  type: 'CUSTOM_FORMULA',
+                  values: [
+                    {
+                      userEnteredValue: `=TO_TEXT(${topLeft})<>"${DEX_IV_PERFECT_VALUE}"`,
+                    },
+                  ],
+                },
                 format: { backgroundColor: hexToColor(DEX_IV_IMPERFECT_COLOR) },
               },
             },
@@ -664,7 +965,11 @@ export function planDexIvHighlight(dst: DestInfo, notes: string[]): Op[] {
         })
       })
     }
-    ops.push({ label: `${name}: IV highlight → red when not 31`, note: `${matches.length} rule(s) replaced`, requests })
+    ops.push({
+      label: `${name}: IV highlight → red when not 31`,
+      note: `${matches.length} rule(s) replaced`,
+      requests,
+    })
   }
   return ops
 }
@@ -673,7 +978,10 @@ export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
   const cond = rule.booleanRule?.condition
   if (!cond) return false
   const value = String(cond.values?.[0]?.userEnteredValue ?? '')
-  return (cond.type === 'TEXT_EQ' || cond.type === 'NUMBER_EQ') && value === DEX_IV_PERFECT_VALUE
+  return (
+    (cond.type === 'TEXT_EQ' || cond.type === 'NUMBER_EQ') &&
+    value === DEX_IV_PERFECT_VALUE
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -681,7 +989,9 @@ export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
 // ---------------------------------------------------------------------------
 
 /** Every non-trashed spreadsheet in Drive with exactly this name. */
-export function findSpreadsheetsNamed(name: string): GoogleAppsScript.Drive.File[] {
+export function findSpreadsheetsNamed(
+  name: string,
+): GoogleAppsScript.Drive.File[] {
   const query =
     "title = '" +
     name.replace(/'/g, "\\'") +
@@ -697,10 +1007,14 @@ export function findFileIdByVersion(version: string): string {
   const targetName = copyName(version)
   const matches = findSpreadsheetsNamed(targetName)
   if (matches.length === 0) {
-    throw new Error(`No file found named "${targetName}". Check the version number, or rename your copy to match.`)
+    throw new Error(
+      `No file found named "${targetName}". Check the version number, or rename your copy to match.`,
+    )
   }
   if (matches.length > 1) {
-    matches.sort((a, b) => b.getLastUpdated().getTime() - a.getLastUpdated().getTime())
+    matches.sort(
+      (a, b) => b.getLastUpdated().getTime() - a.getLastUpdated().getTime(),
+    )
     Logger.log(
       `Multiple files named "${targetName}" found. Using newest: ${matches[0]!.getId()}. Others ignored: ${matches
         .slice(1)

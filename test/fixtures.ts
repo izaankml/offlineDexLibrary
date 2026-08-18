@@ -49,8 +49,20 @@ export const LAYOUT_603 = {
     displayMaxIvsCol: 15,
     displayRibbonsCol: 16,
   },
-  starter: { dataFirstRow: 3, displayFirstRow: 4, dataFoughtFlagCol: 12, displayFoughtFlagCol: 4, dataLastCol: 143 },
-  full: { dataFirstRow: 3, displayFirstRow: 4, dataFoughtFlagCol: 8, displayFoughtFlagCol: 4, dataLastCol: 139 },
+  starter: {
+    dataFirstRow: 3,
+    displayFirstRow: 4,
+    dataFoughtFlagCol: 12,
+    displayFoughtFlagCol: 4,
+    dataLastCol: 143,
+  },
+  full: {
+    dataFirstRow: 3,
+    displayFirstRow: 4,
+    dataFoughtFlagCol: 8,
+    displayFoughtFlagCol: 4,
+    dataLastCol: 139,
+  },
 } as const
 
 export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
@@ -69,11 +81,21 @@ export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
   const qDisp = ss.addSheet('Quick Checklist')
   loadHeaders(
     qDisp,
-    HEADERS[opts.freshQuickChecklist ? 'Quick Checklist (fresh PUBLIC)' : 'Quick Checklist (migrated)']!.slice(0, 11),
+    HEADERS[
+      opts.freshQuickChecklist
+        ? 'Quick Checklist (fresh PUBLIC)'
+        : 'Quick Checklist (migrated)'
+    ]!.slice(0, 11),
   )
   for (let i = 0; i < n; i++) {
     const row = LAYOUT_603.quick.displayFirstRow + i
-    const line: CellValue[] = [i + 1, '', String(i + 1).padStart(4, '0'), 'Mon ' + (i + 1), '#REF!']
+    const line: CellValue[] = [
+      i + 1,
+      '',
+      String(i + 1).padStart(4, '0'),
+      'Mon ' + (i + 1),
+      '#REF!',
+    ]
     for (let c = 6; c <= 16; c++) line.push('☑')
     qDisp.load(row, 1, [line])
   }
@@ -82,14 +104,20 @@ export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
   const dex = (
     dataName: string,
     displayName: string,
-    L: { dataFirstRow: number; displayFirstRow: number; dataFoughtFlagCol: number; dataLastCol: number },
+    L: {
+      dataFirstRow: number
+      displayFirstRow: number
+      dataFoughtFlagCol: number
+      dataLastCol: number
+    },
   ): void => {
     const d = ss.addSheet(dataName)
     loadHeaders(d, HEADERS[dataName]!)
     for (let i = 0; i < n; i++) {
       const row = L.dataFirstRow + i
       const line: CellValue[] = []
-      for (let c = L.dataFoughtFlagCol; c <= L.dataLastCol; c++) line.push(synth(row, c))
+      for (let c = L.dataFoughtFlagCol; c <= L.dataLastCol; c++)
+        line.push(synth(row, c))
       d.load(row, L.dataFoughtFlagCol, [line])
     }
     const v = ss.addSheet(displayName)

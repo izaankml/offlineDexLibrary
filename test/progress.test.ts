@@ -18,7 +18,13 @@ beforeEach(() => resetFakes())
 
 test('timingRows: one row per step plus a TOTAL row', () => {
   const rows = timingRows(
-    { name: 'upload', steps: [{ label: 'a', ms: 10 }, { label: 'b', ms: 20 }] },
+    {
+      name: 'upload',
+      steps: [
+        { label: 'a', ms: 10 },
+        { label: 'b', ms: 20 },
+      ],
+    },
     35,
     'ok',
     new Date('2026-08-18T00:00:00Z'),
@@ -27,7 +33,13 @@ test('timingRows: one row per step plus a TOTAL row', () => {
   assert.deepEqual(rows, [
     ['2026-08-18T00:00:00.000Z', 'Offline RogueDex 6.03', 'upload', 'a', 10],
     ['2026-08-18T00:00:00.000Z', 'Offline RogueDex 6.03', 'upload', 'b', 20],
-    ['2026-08-18T00:00:00.000Z', 'Offline RogueDex 6.03', 'upload', 'TOTAL (ok)', 35],
+    [
+      '2026-08-18T00:00:00.000Z',
+      'Offline RogueDex 6.03',
+      'upload',
+      'TOTAL (ok)',
+      35,
+    ],
   ])
 })
 
@@ -44,7 +56,10 @@ test('a flow writes _timings once, hidden, with a header, and closes', () => {
   assert.ok(t.hidden)
   assert.deepEqual(t.grid()[0], ['when', 'sheet', 'flow', 'step', 'ms'])
   assert.equal(t.getLastRow(), 4) // header + 2 steps + TOTAL
-  assert.equal(calls.filter((c) => c.startsWith('_timings.setValues')).length, 2) // header + rows
+  assert.equal(
+    calls.filter((c) => c.startsWith('_timings.setValues')).length,
+    2,
+  ) // header + rows
   assert.equal(toasts.at(-1)!.title.startsWith('Done in'), true)
 })
 

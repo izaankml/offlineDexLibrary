@@ -61,20 +61,32 @@ export const FORM_CHECKLIST_DONE_COLUMN = 3
 export const SNAPSHOT_FORMAT_PROPERTY = 'OFFLINEDEX_SNAPSHOT_FORMAT'
 export const SNAPSHOT_FORMAT_V2 = '2'
 /** v1 header rows per tracker key (how far down the old data started). */
-const V1_HEADER_ROWS: Record<string, number> = { QuickChecklist: 1, StarterDex: 2, FullDex: 2 }
+const V1_HEADER_ROWS: Record<string, number> = {
+  QuickChecklist: 1,
+  StarterDex: 2,
+  FullDex: 2,
+}
 
 /**
  * Columns the old marker workflow wrote `●` into (Quick Checklist Q, dex
  * sheets EF). Cleared once after the upgrade; see clearLegacyMarkers.
  */
 export const LEGACY_MARKERS_PROPERTY = 'OFFLINEDEX_LEGACY_MARKERS_CLEARED'
-const LEGACY_MARKER_COLUMNS: Record<string, number> = { QuickChecklist: 17, StarterDex: 136, FullDex: 136 }
+const LEGACY_MARKER_COLUMNS: Record<string, number> = {
+  QuickChecklist: 17,
+  StarterDex: 136,
+  FullDex: 136,
+}
 
 // ---------------------------------------------------------------------------
 // Tracker specs — header labels, not column numbers. See src/lib/layout.ts.
 // ---------------------------------------------------------------------------
 
-function dexSpec(key: string, dataSheet: string, displaySheet: string): TrackerSpec {
+function dexSpec(
+  key: string,
+  dataSheet: string,
+  displaySheet: string,
+): TrackerSpec {
   return {
     key,
     dataSheet,
@@ -133,13 +145,17 @@ type Sheets = { data: Sheet; display: Sheet }
 function sheetsFor(ss: Spreadsheet, spec: TrackerSpec): Sheets {
   const data = ss.getSheetByName(spec.dataSheet)
   const display = ss.getSheetByName(spec.displaySheet)
-  if (!data) throw new Error(`${spec.dataSheet} not found (needed by ${spec.key})`)
-  if (!display) throw new Error(`${spec.displaySheet} not found (needed by ${spec.key})`)
+  if (!data)
+    throw new Error(`${spec.dataSheet} not found (needed by ${spec.key})`)
+  if (!display)
+    throw new Error(`${spec.displaySheet} not found (needed by ${spec.key})`)
   return { data, display }
 }
 
 /** Resolve every tracker against this workbook; throws with a precise message on layout drift. */
-export function resolveAll(ss: Spreadsheet): { r: ResolvedTracker; sheets: Sheets }[] {
+export function resolveAll(
+  ss: Spreadsheet,
+): { r: ResolvedTracker; sheets: Sheets }[] {
   return TRACKER_SPECS.map((spec) => {
     const sheets = sheetsFor(ss, spec)
     const r = resolveTracker(spec, sheets.data, sheets.display)
@@ -189,7 +205,9 @@ export function processChanges(options?: { skipSnapshot?: boolean }): void {
       sortFormChecklistByDone(ss)
     } catch (e) {
       // Cosmetic; never let it block the snapshot.
-      Logger.log('Form Checklist sort failed: ' + (e instanceof Error ? e.message : e))
+      Logger.log(
+        'Form Checklist sort failed: ' + (e instanceof Error ? e.message : e),
+      )
     }
     if (!skipSnapshot) {
       for (const h of held) writeSnapshot(ss, h)
@@ -199,7 +217,12 @@ export function processChanges(options?: { skipSnapshot?: boolean }): void {
     failFlow(ss, e)
     throw e
   }
-  finishFlow(ss, skipSnapshot ? 'All sheets processed (baseline kept)' : 'All sheets processed')
+  finishFlow(
+    ss,
+    skipSnapshot
+      ? 'All sheets processed (baseline kept)'
+      : 'All sheets processed',
+  )
 }
 
 /** Same as processChanges, but the current snapshot stays the diff baseline. */
@@ -217,7 +240,13 @@ export function snapshot(): void {
       const snap = ss.getSheetByName(snapshotSheetName(r.spec.key))
       finishStep()
       // Standalone: we haven't read the old snapshot, so always clear it.
-      writeSnapshot(ss, { r, snap, current, previousLastRow: Number.MAX_SAFE_INTEGER, previousIsV2: false })
+      writeSnapshot(ss, {
+        r,
+        snap,
+        current,
+        previousLastRow: Number.MAX_SAFE_INTEGER,
+        previousIsV2: false,
+      })
     }
     markSnapshotFormatV2()
   })
@@ -243,7 +272,9 @@ export function clearHighlights(): void {
       const width = r.maxDisplayCol - r.minDisplayCol + 1
       for (let offset = 0; offset < numRows; offset += WRITE_CHUNK_ROWS) {
         const n = Math.min(WRITE_CHUNK_ROWS, numRows - offset)
-        sheets.display.getRange(r.spec.displayFirstRow + offset, r.minDisplayCol, n, width).setBackground(null)
+        sheets.display
+          .getRange(r.spec.displayFirstRow + offset, r.minDisplayCol, n, width)
+          .setBackground(null)
       }
       finishStep()
     }
@@ -264,7 +295,12 @@ export function readDataBlock(r: ResolvedTracker, data: Sheet): CellValue[][] {
   const numRows = lastRow - r.spec.dataFirstRow + 1
   if (numRows <= 0) return []
   return data
-    .getRange(r.spec.dataFirstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1)
+    .getRange(
+      r.spec.dataFirstRow,
+      r.minDataCol,
+      numRows,
+      r.maxDataCol - r.minDataCol + 1,
+    )
     .getValues() as CellValue[][]
 }
 
@@ -273,22 +309,34 @@ export function readDataBlock(r: ResolvedTracker, data: Sheet): CellValue[][] {
  * dataFirstRow + i — regardless of whether the sheet holds a v1 or v2 layout.
  * Returns null when there is no usable snapshot yet.
  */
-export function readSnapshotBlock(r: ResolvedTracker, snap: Sheet | null): { rows: CellValue[][]; lastRow: number; isV2: boolean } | null {
+export function readSnapshotBlock(
+  r: ResolvedTracker,
+  snap: Sheet | null,
+): { rows: CellValue[][]; lastRow: number; isV2: boolean } | null {
   if (!snap) return null
   const isV2 = snapshotFormatOnDisk() === SNAPSHOT_FORMAT_V2
-  const firstRow = isV2 ? r.spec.dataFirstRow : (V1_HEADER_ROWS[r.spec.key] ?? 1) + 1
+  const firstRow = isV2
+    ? r.spec.dataFirstRow
+    : (V1_HEADER_ROWS[r.spec.key] ?? 1) + 1
   const lastRow = snap.getLastRow()
   const numRows = lastRow - firstRow + 1
   if (numRows <= 0) return null
-  const rows = snap.getRange(firstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1).getValues() as CellValue[][]
+  const rows = snap
+    .getRange(firstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1)
+    .getValues() as CellValue[][]
   return { rows, lastRow, isV2 }
 }
 
 function snapshotFormatOnDisk(): string | null {
-  return PropertiesService.getDocumentProperties().getProperty(SNAPSHOT_FORMAT_PROPERTY)
+  return PropertiesService.getDocumentProperties().getProperty(
+    SNAPSHOT_FORMAT_PROPERTY,
+  )
 }
 function markSnapshotFormatV2(): void {
-  PropertiesService.getDocumentProperties().setProperty(SNAPSHOT_FORMAT_PROPERTY, SNAPSHOT_FORMAT_V2)
+  PropertiesService.getDocumentProperties().setProperty(
+    SNAPSHOT_FORMAT_PROPERTY,
+    SNAPSHOT_FORMAT_V2,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +406,10 @@ function compareKeys(a: CellValue, b: CellValue): number {
  * actually out of order (a slicer or manual sort moved them). Painting is by
  * row offset, so the display must be in the data sheet's canonical order.
  */
-export function ensureDisplayOrder(display: Sheet, r: ResolvedTracker): boolean {
+export function ensureDisplayOrder(
+  display: Sheet,
+  r: ResolvedTracker,
+): boolean {
   const numRows = displayRowCount(display, r)
   if (numRows <= 1) return false
   const keys = display
@@ -370,7 +421,9 @@ export function ensureDisplayOrder(display: Sheet, r: ResolvedTracker): boolean 
   display
     .getRange(r.spec.displayFirstRow, 1, numRows, lastCol)
     .sort({ column: r.spec.sortDisplayColumn, ascending: true })
-  Logger.log(`${r.spec.key}: display was out of order; re-sorted by column ${r.spec.sortDisplayColumn}`)
+  Logger.log(
+    `${r.spec.key}: display was out of order; re-sorted by column ${r.spec.sortDisplayColumn}`,
+  )
   return true
 }
 
@@ -388,12 +441,22 @@ export type Held = {
   previousIsV2: boolean
 }
 
-export function highlightTracker(ss: Spreadsheet, r: ResolvedTracker, sheets: Sheets): Held {
+export function highlightTracker(
+  ss: Spreadsheet,
+  r: ResolvedTracker,
+  sheets: Sheets,
+): Held {
   startStep(ss, 'Highlighting ' + r.spec.displaySheet)
   const snap = ss.getSheetByName(snapshotSheetName(r.spec.key))
   const current = readDataBlock(r, sheets.data)
   const previous = readSnapshotBlock(r, snap)
-  const held = { r, snap, current, previousLastRow: previous?.lastRow ?? 0, previousIsV2: previous?.isV2 ?? true }
+  const held = {
+    r,
+    snap,
+    current,
+    previousLastRow: previous?.lastRow ?? 0,
+    previousIsV2: previous?.isV2 ?? true,
+  }
 
   if (!previous) {
     Logger.log(`${r.spec.key}: no snapshot yet, nothing to highlight`)
@@ -405,14 +468,25 @@ export function highlightTracker(ss: Spreadsheet, r: ResolvedTracker, sheets: Sh
 
   const { backgrounds, changed } = diffBlocks(r, previous.rows, current)
   const width = r.maxDisplayCol - r.minDisplayCol + 1
-  for (let offset = 0; offset < backgrounds.length; offset += WRITE_CHUNK_ROWS) {
+  for (
+    let offset = 0;
+    offset < backgrounds.length;
+    offset += WRITE_CHUNK_ROWS
+  ) {
     const chunk = backgrounds.slice(offset, offset + WRITE_CHUNK_ROWS)
     sheets.display
-      .getRange(r.spec.displayFirstRow + offset, r.minDisplayCol, chunk.length, width)
+      .getRange(
+        r.spec.displayFirstRow + offset,
+        r.minDisplayCol,
+        chunk.length,
+        width,
+      )
       .setBackgrounds(chunk)
   }
   finishStep()
-  Logger.log(`${r.spec.key}: highlighted ${changed} changed cells over ${current.length} rows`)
+  Logger.log(
+    `${r.spec.key}: highlighted ${changed} changed cells over ${current.length} rows`,
+  )
   return held
 }
 
@@ -443,14 +517,17 @@ export function writeSnapshot(ss: Spreadsheet, h: Held): void {
   if (headerRows > 0) {
     const band = r.dataBand.slice(0, headerRows).map((row) => {
       const out: CellValue[] = []
-      for (let c = r.minDataCol; c <= r.maxDataCol; c++) out.push((row[c - 1] as CellValue) ?? '')
+      for (let c = r.minDataCol; c <= r.maxDataCol; c++)
+        out.push((row[c - 1] as CellValue) ?? '')
       return out
     })
     snap.getRange(1, r.minDataCol, headerRows, width).setValues(band)
   }
   for (let offset = 0; offset < current.length; offset += WRITE_CHUNK_ROWS) {
     const chunk = current.slice(offset, offset + WRITE_CHUNK_ROWS)
-    snap.getRange(r.spec.dataFirstRow + offset, r.minDataCol, chunk.length, width).setValues(chunk)
+    snap
+      .getRange(r.spec.dataFirstRow + offset, r.minDataCol, chunk.length, width)
+      .setValues(chunk)
   }
   finishStep()
   Logger.log(`${r.spec.key}: snapshot written, ${current.length} rows`)
@@ -474,7 +551,9 @@ export function sortFormChecklistByDone(ss: Spreadsheet): void {
   const lastRow = sheet.getLastRow()
   const lastCol = sheet.getLastColumn()
   if (lastRow > 2) {
-    sheet.getRange(2, 1, lastRow - 1, lastCol).sort({ column: FORM_CHECKLIST_DONE_COLUMN, ascending: true })
+    sheet
+      .getRange(2, 1, lastRow - 1, lastCol)
+      .sort({ column: FORM_CHECKLIST_DONE_COLUMN, ascending: true })
   }
   finishStep()
 }

@@ -132,10 +132,12 @@ pulled bound files with the repo's `.prettierrc.json` (`semi: false`,
 bytes and a creator edit only conflicts when it touches code you customized *in
 substance*.
 
-Only the files git tracks in `bound/` take part — `onOpen.js`, `LoadPlayerData.js`,
-`UploadPlayerData.html`, `appsscript.json`. Creator files you never touch
-(`ImportDB.js`, `Sheet Status Generator.js`) are gitignored; `clasp pull` just
-refreshes them.
+Only the creator files git tracks in `bound/` take part — `onOpen.js`,
+`LoadPlayerData.js`, `UploadPlayerData.html`, `appsscript.json`. Of these only
+`onOpen.js` carries an edit (one `offlineDexOnOpen()` call); all of our code is in
+`OfflineDexBound.js` / `OfflineDexUpload.html`, which the creator's copy never contains,
+so they can't conflict. Creator files you never touch (`ImportDB.js`,
+`Sheet Status Generator.js`) are gitignored; `clasp pull` just refreshes them.
 
 ### First-run bootstrap (fresh clone only)
 

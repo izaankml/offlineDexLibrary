@@ -18,7 +18,11 @@ test('newestVersionBelow ignores PUBLIC_, test copies and newer versions', () =>
 })
 
 test('prepare dialog escapes and embeds the copy link', () => {
-  const html = prepareDialogHtml({ copyName: 'A & B', copyUrl: 'https://x/"y"', version: '6.03' })
+  const html = prepareDialogHtml({
+    copyName: 'A & B',
+    copyUrl: 'https://x/"y"',
+    version: '6.03',
+  })
   assert.ok(html.includes('Copy ready: A &amp; B'))
   assert.ok(html.includes('href="https://x/&quot;y&quot;"'))
 })

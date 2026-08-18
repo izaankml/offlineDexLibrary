@@ -11,13 +11,15 @@
     "build": "node scripts/build.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build",
-    "update": "node scripts/update.ts"
+    "check": "npm run typecheck && npm test && npm run build && prettier --check src test scripts",
+    "update": "node scripts/update.ts",
+    "format": "prettier --write src test scripts bound/OfflineDexBound.js bound/OfflineDexUpload.html"
   },
   "devDependencies": {
     "@types/google-apps-script": "^2.0.12",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.0"
   },
   "allowScripts": {

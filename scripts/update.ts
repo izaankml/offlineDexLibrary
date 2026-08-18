@@ -53,11 +53,21 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BOUND_DIR = join(REPO_ROOT, 'bound')
 const CLASP_JSON = join(BOUND_DIR, '.clasp.json')
 const PRETTIER_CONFIG = join(REPO_ROOT, '.prettierrc.json')
+/** The repo's own Prettier (devDependency) when installed, else whatever is on PATH. */
+const PRETTIER_BIN = existsSync(
+  join(REPO_ROOT, 'node_modules', '.bin', 'prettier'),
+)
+  ? join(REPO_ROOT, 'node_modules', '.bin', 'prettier')
+  : 'prettier'
 
 const MAIN_BRANCH = 'main'
 const CREATOR_BRANCH = 'creator'
 
-/** The bound files git tracks — the only ones that take part in the merge. */
+/**
+ * The creator's bound files git tracks — the only ones that take part in the
+ * merge. Our own files (OfflineDexBound.js, OfflineDexUpload.html) never
+ * exist in the creator's copy, so they never conflict.
+ */
 const TRACKED_BOUND_FILES = [
   'onOpen.js',
   'LoadPlayerData.js',
@@ -402,7 +412,7 @@ function checkPreconditions(): void {
     )
   }
   run('clasp', ['--version'])
-  run('prettier', ['--version'])
+  run(PRETTIER_BIN, ['--version'])
   if (!existsSync(PRETTIER_CONFIG)) fail(`Missing ${PRETTIER_CONFIG}`)
   step('on main, tree clean, clasp + prettier available')
 }
@@ -459,7 +469,7 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
       existsSync(join(wtBound, f)),
     )
     run(
-      'prettier',
+      PRETTIER_BIN,
       [
         '--write',
         '--config',

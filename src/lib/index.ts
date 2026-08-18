@@ -20,7 +20,6 @@ export { finishStep, resetToastProgress, startStep } from './progress.ts'
 
 export { portAll } from './migrator.ts'
 
-
 export {
   detectPreviousVersion,
   finishSetup,

@@ -32,7 +32,11 @@ const isWordChar = (ch: string): boolean => /[A-Za-z0-9_.]/.test(ch)
  * @param fromCol  1-based column; references to columns >= fromCol shift
  * @param offset   columns to shift by (0 returns the formula unchanged)
  */
-export function shiftFormulaColumns(formula: string, fromCol: number, offset: number): string {
+export function shiftFormulaColumns(
+  formula: string,
+  fromCol: number,
+  offset: number,
+): string {
   if (!formula || offset === 0 || !formula.startsWith('=')) return formula
   let out = ''
   let i = 0
@@ -83,7 +87,11 @@ export function shiftFormulaColumns(formula: string, fromCol: number, offset: nu
     // Word: could be a bare sheet name (followed by '!'), a function name, or a cell/range ref.
     if (/[A-Za-z_$]/.test(ch)) {
       let j = i
-      while (j < n && (isWordChar(formula[j]!) || formula[j] === '$' || formula[j] === ':')) j++
+      while (
+        j < n &&
+        (isWordChar(formula[j]!) || formula[j] === '$' || formula[j] === ':')
+      )
+        j++
       // Bare sheet qualifier: SheetName!A1
       if (formula[j] === '!') {
         out += formula.slice(i, j + 1)
@@ -118,7 +126,9 @@ export function shiftFormulaColumns(formula: string, fromCol: number, offset: nu
 /** A1-style reference (cell, range, column range, row range) starting at `pos`, or ''. */
 function readRef(formula: string, pos: number): { text: string } {
   const rest = formula.slice(pos)
-  const m = rest.match(/^(\$?[A-Z]{1,3}\$?\d*|\$?\d+)(:(\$?[A-Z]{1,3}\$?\d*|\$?\d+))?(?![A-Za-z0-9_(])/)
+  const m = rest.match(
+    /^(\$?[A-Z]{1,3}\$?\d*|\$?\d+)(:(\$?[A-Z]{1,3}\$?\d*|\$?\d+))?(?![A-Za-z0-9_(])/,
+  )
   if (!m) return { text: '' }
   // Reject things like "TRUE" (4 letters get split) — the regex caps at 3 letters
   // and the negative lookahead refuses a following letter, so "TRUE" never matches.

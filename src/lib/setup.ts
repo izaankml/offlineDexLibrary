@@ -20,7 +20,13 @@ import {
   copyName,
   versionFromName,
 } from '../shared/naming.ts'
-import { applyPlanWithProgress, describePlan, findSpreadsheetsNamed, formatResults, planForVersions } from './migrator.ts'
+import {
+  applyPlanWithProgress,
+  describePlan,
+  findSpreadsheetsNamed,
+  formatResults,
+  planForVersions,
+} from './migrator.ts'
 import { finishFlow, resetToastProgress, startStep } from './progress.ts'
 import { TRACKER_SPECS, snapshotSheetName } from './saveTracker.ts'
 
@@ -84,15 +90,23 @@ export function prepareNextVersion(): void {
   if (!copy) {
     ss.toast(`Copying "${publicName}"…`, 'Prepare Next Version', -1)
     const folder = firstParentFolder(ss.getId())
-    copy = folder ? publicFile.makeCopy(newCopyName, folder) : publicFile.makeCopy(newCopyName)
+    copy = folder
+      ? publicFile.makeCopy(newCopyName, folder)
+      : publicFile.makeCopy(newCopyName)
   }
 
   ss.toast('', 'Ready', 3)
-  showPrepareDialog(ui, { copyName: newCopyName, copyUrl: copy.getUrl(), version: newVersion })
+  showPrepareDialog(ui, {
+    copyName: newCopyName,
+    copyUrl: copy.getUrl(),
+    version: newVersion,
+  })
 }
 
 /** The first Drive folder containing a file, or null if it's in root only. */
-function firstParentFolder(fileId: string): GoogleAppsScript.Drive.Folder | null {
+function firstParentFolder(
+  fileId: string,
+): GoogleAppsScript.Drive.Folder | null {
   try {
     const parents = DriveApp.getFileById(fileId).getParents()
     return parents.hasNext() ? parents.next() : null
@@ -105,14 +119,23 @@ function firstParentFolder(fileId: string): GoogleAppsScript.Drive.Folder | null
 /** Non-trashed spreadsheets with exactly this name (newest-created first). */
 function findExistingCopies(name: string): GoogleAppsScript.Drive.File[] {
   const out = findSpreadsheetsNamed(name)
-  out.sort((a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime())
+  out.sort(
+    (a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime(),
+  )
   return out
 }
 
 /** HTML for the hand-off dialog (pure; tested for the Script-ID extraction). */
-export function prepareDialogHtml(info: { copyName: string; copyUrl: string; version: string }): string {
+export function prepareDialogHtml(info: {
+  copyName: string
+  copyUrl: string
+  version: string
+}): string {
   const esc = (s: string): string =>
-    String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/"/g, '&quot;')
   return (
     '<style>' +
     'body{font:14px/1.5 Roboto,Arial,sans-serif;margin:16px;color:#202124}' +
@@ -146,8 +169,16 @@ export function prepareDialogHtml(info: { copyName: string; copyUrl: string; ver
   )
 }
 
-function showPrepareDialog(ui: GoogleAppsScript.Base.Ui, info: { copyName: string; copyUrl: string; version: string }): void {
-  ui.showModalDialog(HtmlService.createHtmlOutput(prepareDialogHtml(info)).setWidth(560).setHeight(330), 'Prepare Next Version')
+function showPrepareDialog(
+  ui: GoogleAppsScript.Base.Ui,
+  info: { copyName: string; copyUrl: string; version: string },
+): void {
+  ui.showModalDialog(
+    HtmlService.createHtmlOutput(prepareDialogHtml(info))
+      .setWidth(560)
+      .setHeight(330),
+    'Prepare Next Version',
+  )
 }
 
 /**
@@ -166,7 +197,9 @@ export function nudgeFinishSetupIfFresh(): void {
       15,
     )
   } catch (e) {
-    Logger.log('nudgeFinishSetupIfFresh: ' + (e instanceof Error ? e.message : e))
+    Logger.log(
+      'nudgeFinishSetupIfFresh: ' + (e instanceof Error ? e.message : e),
+    )
   }
 }
 
@@ -183,14 +216,20 @@ export function finishSetup(): boolean {
 
   const destVersion = versionFromName(ss.getName())
   if (!destVersion) {
-    ui.alert(`Could not determine this sheet's version from its name "${ss.getName()}". Expected "${copyName('X.YY')}".`)
+    ui.alert(
+      `Could not determine this sheet's version from its name "${ss.getName()}". Expected "${copyName('X.YY')}".`,
+    )
     return false
   }
 
   const props = PropertiesService.getDocumentProperties()
   const already = props.getProperty(MIGRATED_FROM_PROPERTY)
   if (already) {
-    const again = ui.alert('Finish Setup', `This sheet was already migrated from ${already}. Run the migration again?`, ui.ButtonSet.YES_NO)
+    const again = ui.alert(
+      'Finish Setup',
+      `This sheet was already migrated from ${already}. Run the migration again?`,
+      ui.ButtonSet.YES_NO,
+    )
     if (again !== ui.Button.YES) return false
   }
 
@@ -207,11 +246,17 @@ export function finishSetup(): boolean {
   }
 
   if (!sourceVersion) {
-    const response = ui.prompt('Finish Setup', 'Version you are migrating from (e.g. 6.01):', ui.ButtonSet.OK_CANCEL)
+    const response = ui.prompt(
+      'Finish Setup',
+      'Version you are migrating from (e.g. 6.01):',
+      ui.ButtonSet.OK_CANCEL,
+    )
     if (response.getSelectedButton() !== ui.Button.OK) return false
     sourceVersion = response.getResponseText().trim()
     if (!/^\d+\.\d+$/.test(sourceVersion)) {
-      ui.alert(`"${sourceVersion}" doesn't look like a version number. Expected format: X.YY`)
+      ui.alert(
+        `"${sourceVersion}" doesn't look like a version number. Expected format: X.YY`,
+      )
       return false
     }
   }
@@ -256,7 +301,10 @@ export function finishSetup(): boolean {
 }
 
 /** Dry run for the menu: the plan as text, or the reason it can't be built. */
-export function previewMigration(sourceVersion: string, destVersion: string): string {
+export function previewMigration(
+  sourceVersion: string,
+  destVersion: string,
+): string {
   try {
     return describePlan(planForVersions(sourceVersion, destVersion))
   } catch (e) {
@@ -278,7 +326,10 @@ export function detectPreviousVersion(destVersion: string): string | null {
 }
 
 /** Pure core of detectPreviousVersion (tested). */
-export function newestVersionBelow(names: string[], destVersion: string): string | null {
+export function newestVersionBelow(
+  names: string[],
+  destVersion: string,
+): string | null {
   let best: string | null = null
   for (const name of names) {
     const m = name.match(COPY_NAME_RE)
