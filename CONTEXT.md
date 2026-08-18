@@ -26,7 +26,7 @@ offlinedex-scripts/
 │   └── update.ts                # the terminal half of a version update (TypeScript, Node 24)
 ├── library/                     # OfflineDex Library project (standalone Apps Script)
 │   ├── .clasp.json              # has the library's Script ID (gitignored)
-│   ├── appsscript.json          # Sheets v4 + Drive v3 advanced services
+│   ├── appsscript.json          # Sheets v4 advanced service
 │   ├── SaveTracker.js
 │   ├── Migrator.js
 │   └── Setup.js                 # Prepare Next Version + previous-version detection
@@ -185,9 +185,9 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   `npm run update -- <scriptId>` with a Copy button.
   **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
   with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
-  nothing even with full Drive scope inside Apps Script), so `findBoundScriptId` is kept
-  as a best-effort probe that prefills the command if Google ever exposes them, and the
-  URL paste is the normal path.
+  nothing even with full Drive scope inside Apps Script), so no lookup is attempted —
+  it was removed to keep the library's permissions to `DriveApp` only (no Drive advanced
+  service, no `UrlFetchApp`).
 - `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
   lower than `dest`; used by Finish Setup so you never type the source version.
 
@@ -329,4 +329,4 @@ checks out `creator` in the working tree.
 
 - Make `INSERT_COLUMN_L_IN_DAILY_MODE` a parameter to `portAll()` instead of a top-level constant, so different version transitions can opt in/out without redeploying the library
 - Track timing per migration in the version history at the top of Migrator.js
-- If Google ever exposes bound scripts via Drive, `findBoundScriptId` will start prefilling the Prepare dialog automatically — nothing else to change
+- If Google ever exposes bound scripts via Drive, Prepare Next Version could look up the copy's Script ID itself (a `Drive.Files.list` `'<sheetId>' in parents` query) and prefill the command

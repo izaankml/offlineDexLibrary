@@ -4,9 +4,9 @@
 // The Google-side half of a version update:
 //
 //   prepareNextVersion()   — from your CURRENT sheet: copy the creator's
-//                            public sheet into Drive under the right name,
-//                            find the copy's bound Script ID, and hand back
-//                            the one terminal command that finishes the job.
+//                            public sheet into Drive under the right name and
+//                            walk you to the one terminal command that
+//                            finishes the job.
 //   detectPreviousVersion  — from the NEW sheet: which of your copies is the
 //                            newest one older than this, so Finish Setup can
 //                            migrate from it without asking you to type it.
@@ -28,8 +28,8 @@ const VERSION_IN_NAME_RE = /\d+\.\d+/
 
 /**
  * Menu (run from your CURRENT sheet). Copies the creator's public sheet into
- * your Drive as "Offline RogueDex <new>", looks up the copy's bound Script ID,
- * and shows a dialog with the exact terminal command to run next.
+ * your Drive as "Offline RogueDex <new>" and shows a dialog that turns the
+ * copy's Apps Script editor URL into the exact terminal command to run next.
  */
 function prepareNextVersion() {
   const ui = SpreadsheetApp.getUi()
@@ -110,14 +110,11 @@ function prepareNextVersion() {
       : publicFile.makeCopy(copyName)
   }
 
-  ss.toast("Finding the copy's script…", 'Prepare Next Version', -1)
-  const lookup = findBoundScriptId(copy.getId())
   ss.toast('', 'Ready', 3)
 
   showPrepareDialog(ui, {
     copyName: copyName,
     copyUrl: copy.getUrl(),
-    scriptId: lookup.id,
     version: newVersion,
   })
 }
@@ -147,113 +144,12 @@ function findExistingCopies(name) {
 }
 
 /**
- * The Script ID of the container-bound script inside a spreadsheet. Bound
- * scripts are hidden Drive files whose parent is the container; which Drive
- * API surface exposes them has changed over the years, so try several:
- *   1. Drive v3 files.list, `'<sheetId>' in parents`
- *   2. Drive v2 files.list, same query (REST via UrlFetch)
- *   3. Drive v2 children.list on the sheet
- * Returns {id, diag} — id null if nothing worked; diag is a short log of what
- * each attempt returned, shown in the dialog fallback so the failure is
- * self-explaining.
- * @param {string} sheetId
- * @return {{id: (string|null), diag: string}}
- */
-function findBoundScriptId(sheetId) {
-  const SCRIPT_MIME = 'application/vnd.google-apps.script'
-  const q = "'" + sheetId + "' in parents and mimeType = '" + SCRIPT_MIME + "'"
-  const diag = []
-  const pick = (files, label) => {
-    if (!files || files.length === 0) {
-      diag.push(label + ': 0 results')
-      return null
-    }
-    diag.push(
-      label + ': ' + files.length + ' → ' + files.map((f) => f.id).join(','),
-    )
-    return files[0].id
-  }
-
-  // 1. Advanced Drive service (v3)
-  try {
-    const res = Drive.Files.list({
-      q: q,
-      fields: 'files(id,name)',
-      pageSize: 10,
-    })
-    const id = pick(res && res.files, 'v3 files.list')
-    if (id) return { id: id, diag: diag.join('; ') }
-  } catch (e) {
-    diag.push('v3 files.list: ERR ' + e.message)
-  }
-
-  // 2 + 3. Drive v2 via REST with this script's OAuth token
-  const token = ScriptApp.getOAuthToken()
-  const restGet = (url, label) => {
-    try {
-      const resp = UrlFetchApp.fetch(url, {
-        headers: { Authorization: 'Bearer ' + token },
-        muteHttpExceptions: true,
-      })
-      const code = resp.getResponseCode()
-      if (code !== 200) {
-        diag.push(label + ': HTTP ' + code)
-        return null
-      }
-      return JSON.parse(resp.getContentText())
-    } catch (e) {
-      diag.push(label + ': ERR ' + e.message)
-      return null
-    }
-  }
-
-  const v2 = restGet(
-    'https://www.googleapis.com/drive/v2/files?q=' +
-      encodeURIComponent(q) +
-      '&fields=items(id,title)&maxResults=10',
-    'v2 files.list',
-  )
-  if (v2) {
-    const id = pick(v2.items, 'v2 files.list')
-    if (id) return { id: id, diag: diag.join('; ') }
-  }
-
-  const children = restGet(
-    'https://www.googleapis.com/drive/v2/files/' +
-      encodeURIComponent(sheetId) +
-      '/children?maxResults=100&fields=items(id)',
-    'v2 children.list',
-  )
-  if (children && children.items && children.items.length) {
-    // children.list gives bare IDs; check each one's mimeType.
-    const scripts = []
-    children.items.forEach((c) => {
-      const meta = restGet(
-        'https://www.googleapis.com/drive/v2/files/' +
-          encodeURIComponent(c.id) +
-          '?fields=id,title,mimeType',
-        'v2 files.get ' + c.id,
-      )
-      if (meta && meta.mimeType === SCRIPT_MIME) scripts.push(meta)
-    })
-    const id = pick(scripts, 'v2 children.list')
-    if (id) return { id: id, diag: diag.join('; ') }
-  } else if (children) {
-    diag.push('v2 children.list: 0 results')
-  }
-
-  // Expected as of 2026: Drive does not expose container-bound scripts on any
-  // of these surfaces. Logged so it's visible if that ever changes.
-  Logger.log('findBoundScriptId(' + sheetId + '): ' + diag.join('; '))
-  return { id: null, diag: diag.join('; ') }
-}
-
-/**
- * The dialog that hands off to the terminal. Bound scripts are not
- * enumerable through Drive (all lookups return nothing as of 2026), so the
- * normal path is: open the copy → Extensions → Apps Script → paste the
- * editor URL here; the dialog turns it into the exact command and copies it.
- * If a lookup ever does return an ID, the command is prefilled instead.
+ * The dialog that hands off to the terminal. Container-bound scripts are not
+ * enumerable through the Drive API (verified 2026: v3/v2 files.list and
+ * children.list all return nothing even with full Drive scope), so the copy's
+ * Script ID has to come from you: open the copy → Extensions → Apps Script →
+ * paste the editor URL here; the dialog turns it into the exact command and
+ * copies it.
  */
 function showPrepareDialog(ui, info) {
   const esc = (s) =>
@@ -261,7 +157,6 @@ function showPrepareDialog(ui, info) {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/"/g, '&quot;')
-  const prefilled = info.scriptId ? 'npm run update -- ' + info.scriptId : ''
 
   const html =
     '<style>' +
@@ -289,16 +184,8 @@ function showPrepareDialog(ui, info) {
     '<li>Copy the command and run it in the repo. When it finishes, open the new sheet and run <b>RogueDex Functions → Finish Setup</b>.</li>' +
     '</ol>' +
     '<div class="row"><input id="url" placeholder="https://script.google.com/…/projects/…/edit" oninput="build()"></div>' +
-    '<div class="row"><input id="cmd" readonly value="' +
-    esc(prefilled) +
-    '" placeholder="npm run update -- <script id>"><button class="primary" id="copy" onclick="copyCmd()"' +
-    (prefilled ? '' : ' disabled') +
-    '>Copy</button></div>' +
-    '<p class="muted" id="status">' +
-    (prefilled
-      ? 'Script ID found automatically — just copy the command.'
-      : '&nbsp;') +
-    '</p>' +
+    '<div class="row"><input id="cmd" readonly placeholder="npm run update -- <script id>"><button class="primary" id="copy" onclick="copyCmd()" disabled>Copy</button></div>' +
+    '<p class="muted" id="status">&nbsp;</p>' +
     '<script>' +
     'function build(){var u=document.getElementById("url").value.trim();' +
     'var m=u.match(/\\/projects\\/([A-Za-z0-9_-]{20,})/)||u.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)||u.match(/^([A-Za-z0-9_-]{20,})$/);' +

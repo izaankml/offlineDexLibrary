@@ -32,7 +32,7 @@ In the sheet you're currently using: **RogueDex Functions → Prepare Next Versi
   dialog. It turns that into `npm run update -- <scriptId>`; click **Copy**.
 - If a sheet with that name already exists it asks whether to reuse it (only say yes if
   you have *not* pushed your code to it) or make a fresh copy.
-- First run only: Google will ask you to re-authorize (Drive + external requests).
+- First run only: Google may ask you to re-authorize (Drive access for the copy).
   Accept and re-run the menu item.
 
 ### 2. Terminal → paste the command
@@ -155,9 +155,8 @@ brings it along.)
 
 - **Why do I have to paste the editor URL?** Google's Drive API doesn't return
   container-bound scripts (v3, v2, children — all empty, even with full Drive scope),
-  so no script or CLI can discover the copy's Script ID. The dialog still tries, and
-  prefills the command if that ever starts working. `npm run update -- <editor URL>`
-  works directly too.
+  so no script or CLI can discover the copy's Script ID. `npm run update -- <editor URL>`
+  works directly too, without the dialog.
 - **"This copy already has your code pushed to it"** — the CLI found `OfflineDexLib`
   in the pulled code, so it isn't a pristine copy and can't become the baseline. Run
   Prepare Next Version again and choose NO to make a fresh copy.
