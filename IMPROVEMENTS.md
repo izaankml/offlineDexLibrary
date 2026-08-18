@@ -12,6 +12,16 @@ models, not measurements — see "Measure first" at the end.
 
 ---
 
+## Status (2026-08-18, end of day)
+
+Implemented and pushed (library + bound + GitHub): items 0–7 of §8 — timing log, error
+surfacing, TypeScript library with tests, header-keyed layout probe with preflight,
+single-read SaveTracker without marker column or clear pass, Sheets-API migration with
+preview + atomic apply, bound-surface shrink. Not started: §3.5 CF live diff prototype and
+§4.2 spec-driven customizations (both gated on the first measured timings).
+
+---
+
 ## 1. Headline findings
 
 1. **`clearHighlights` is redundant inside the upload flow.** `applyHighlightsForTracker`
