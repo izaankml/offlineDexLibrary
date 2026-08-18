@@ -1,17 +1,23 @@
 function onOpen() {
   ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL)
 
-  //SpreadsheetApp.getUi()
-  //  .createMenu('Update Database')
-  //  .addItem('Update static pokemon information', 'forceUpdate')
-  //  .addToUi();
+  SpreadsheetApp.getUi()
+    .createMenu('Manually Update Database')
+    .addItem('Update the sheet manually', 'forceUpdate')
+    .addToUi()
 
   SpreadsheetApp.getUi()
     .createMenu('Upload PokeRogue Data')
     .addItem('Upload Data', 'openAttachmentDialog')
     .addToUi()
 
-  forceUpdate(true)
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const directions = ss.getSheetByName('DIRECTIONS')
+  const autoupdate = directions.getRange('D51').getValue()
+
+  if (autoupdate) {
+    forceUpdate(true)
+  }
 }
 
 function checkVersion() {
