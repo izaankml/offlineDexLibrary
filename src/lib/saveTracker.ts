@@ -712,7 +712,7 @@ export function ensureDisplayOrder(ss: Spreadsheet, l: Loaded): boolean {
 
 /**
  * Full save-upload flow: read everything, diff, paint the changed rows (and
- * clear last time's), re-sort the Form Checklist, write the new snapshots.
+ * clear last time's), write the new snapshots.
  * Assumes the caller (uploadFileTracked) already reset toast state. On
  * failure the user gets an error toast and the error is rethrown.
  */
