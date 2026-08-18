@@ -102,7 +102,12 @@ function prepareNextVersion() {
 
   if (!copy) {
     ss.toast('Copying "' + publicName + '"…', 'Prepare Next Version', -1)
-    copy = publicFile.makeCopy(copyName)
+    // Land the copy next to the sheet this runs from (e.g. your PokeRogue
+    // folder) rather than in My Drive root.
+    const folder = firstParentFolder(ss.getId())
+    copy = folder
+      ? publicFile.makeCopy(copyName, folder)
+      : publicFile.makeCopy(copyName)
   }
 
   ss.toast("Finding the copy's script…", 'Prepare Next Version', -1)
@@ -116,6 +121,17 @@ function prepareNextVersion() {
     diag: lookup.diag,
     version: newVersion,
   })
+}
+
+/** The first Drive folder containing a file, or null if it's in root only. */
+function firstParentFolder(fileId) {
+  try {
+    const parents = DriveApp.getFileById(fileId).getParents()
+    return parents.hasNext() ? parents.next() : null
+  } catch (e) {
+    Logger.log('firstParentFolder: ' + e.message)
+    return null
+  }
 }
 
 /** Non-trashed spreadsheets with exactly this name (newest first). */
