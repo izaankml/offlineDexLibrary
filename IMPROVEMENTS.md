@@ -14,11 +14,15 @@ models, not measurements — see "Measure first" at the end.
 
 ## Status (2026-08-18, end of day)
 
-Implemented and pushed (library + bound + GitHub): items 0–7 of §8 — timing log, error
-surfacing, TypeScript library with tests, header-keyed layout probe with preflight,
-single-read SaveTracker without marker column or clear pass, Sheets-API migration with
-preview + atomic apply, bound-surface shrink. Not started: §3.5 CF live diff prototype and
-§4.2 spec-driven customizations (both gated on the first measured timings).
+Implemented, pushed (library + bound + GitHub) and **verified on the live 6.03 sheet**:
+items 0–7 of §8, plus one step further than planned — after the first measurement showed
+that *cell volume through SpreadsheetApp* (≈1 s per call, 15–25 s per 145k-cell read/write)
+was the real cost, the SaveTracker moved all bulk I/O to the Sheets API (1 get +
+1 `values.batchGet` + 1 `batchUpdate` painting only changed rows + 1 `values.batchUpdate`
+writing JSON snapshots). Measured: upload 92–117 s → ~16 s, of which ~6 s is ours and ~10 s
+the creator's save import. The Form Checklist sort was removed entirely (one click by hand).
+Not started: §3.5 CF live diff (no longer worth it at 6 s) and §4.2 spec-driven
+customizations. Migration test on a throwaway copy still to run.
 
 ---
 
