@@ -116,9 +116,9 @@ API instead:
    upload realign the baseline by header label if the creator inserts a column between
    uploads (k-th occurrence ↔ k-th occurrence, since "SHINY"/"Friendship" repeat).
 
-That is 4 API calls per upload (was ≈100 SpreadsheetApp calls, 4 sorts). The Form Checklist
-"unchecked first" sort is a migration op now (one `sortRange` in the batchUpdate), not a
-per-upload step.
+That is 4 API calls per upload (was ≈100 SpreadsheetApp calls, 4 sorts). The old Form
+Checklist "unchecked first" sort was dropped altogether (2026-08-18): it's one click by hand
+and barely needed.
 **Upload Data (Keep Baseline)** paints and stores the painted rows but leaves the baseline.
 
 **Standalone menu items:** *Snapshot Data* (baseline ← current, highlights untouched),
@@ -165,8 +165,7 @@ is a **plan → preview → apply** pipeline on the Sheets advanced service (She
   existing merge overlapping B16:M131 (in post-insert coordinates) then `mergeCells`;
   B16 formula/value top-aligned; L12:M14 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
-  checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first;
-  *Form Checklist*: `sortRange` by "Done" ascending (unchecked forms first).
+  checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
 
 Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
 notes what was already done), and `previewMigration()` returns the plan as text.
