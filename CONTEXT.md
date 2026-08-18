@@ -178,13 +178,16 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
 
 - `prepareNextVersion()` — run from the *current* sheet's menu. The creator publishes
   every version as **the same Drive file**, renamed per release
-  (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`). It reads the version from that title, `makeCopy()`s it as
-  `Offline RogueDex <new>` (reusing an existing same-named copy if you say so), finds the
-  copy's bound Script ID with the Drive advanced service
-  (`Drive.Files.list({q: "'<sheetId>' in parents and mimeType='application/vnd.google-apps.script'"})`),
-  and shows a dialog with `npm run update -- <scriptId>` and a Copy button. If the lookup
-  returns nothing, the dialog tells you to paste the copy's Apps Script editor URL into the
-  same command instead.
+  (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`). It reads the version
+  from that title, `makeCopy()`s it as `Offline RogueDex <new>` into the current sheet's
+  folder (reusing an existing same-named copy if you say so), and shows a dialog: open the
+  copy → Extensions → Apps Script → paste the editor URL → the dialog builds
+  `npm run update -- <scriptId>` with a Copy button.
+  **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
+  with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
+  nothing even with full Drive scope inside Apps Script), so `findBoundScriptId` is kept
+  as a best-effort probe that prefills the command if Google ever exposes them, and the
+  URL paste is the normal path.
 - `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
   lower than `dest`; used by Finish Setup so you never type the source version.
 
@@ -326,4 +329,4 @@ checks out `creator` in the working tree.
 
 - Make `INSERT_COLUMN_L_IN_DAILY_MODE` a parameter to `portAll()` instead of a top-level constant, so different version transitions can opt in/out without redeploying the library
 - Track timing per migration in the version history at the top of Migrator.js
-- If `findBoundScriptId` proves reliable, drop the editor-URL fallback text from the Prepare dialog
+- If Google ever exposes bound scripts via Drive, `findBoundScriptId` will start prefilling the Prepare dialog automatically — nothing else to change

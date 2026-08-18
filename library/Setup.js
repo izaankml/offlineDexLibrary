@@ -118,7 +118,6 @@ function prepareNextVersion() {
     copyName: copyName,
     copyUrl: copy.getUrl(),
     scriptId: lookup.id,
-    diag: lookup.diag,
     version: newVersion,
   })
 }
@@ -243,14 +242,18 @@ function findBoundScriptId(sheetId) {
     diag.push('v2 children.list: 0 results')
   }
 
+  // Expected as of 2026: Drive does not expose container-bound scripts on any
+  // of these surfaces. Logged so it's visible if that ever changes.
   Logger.log('findBoundScriptId(' + sheetId + '): ' + diag.join('; '))
   return { id: null, diag: diag.join('; ') }
 }
 
 /**
- * The dialog that hands off to the terminal. Shows the command with a copy
- * button when the Script ID was found; otherwise links the copy and explains
- * how to get the ID (paste the editor URL — the CLI extracts it).
+ * The dialog that hands off to the terminal. Bound scripts are not
+ * enumerable through Drive (all lookups return nothing as of 2026), so the
+ * normal path is: open the copy → Extensions → Apps Script → paste the
+ * editor URL here; the dialog turns it into the exact command and copies it.
+ * If a lookup ever does return an ID, the command is prefilled instead.
  */
 function showPrepareDialog(ui, info) {
   const esc = (s) =>
@@ -258,54 +261,58 @@ function showPrepareDialog(ui, info) {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/"/g, '&quot;')
-  const command = info.scriptId
-    ? 'npm run update -- ' + info.scriptId
-    : 'npm run update -- <paste the Apps Script editor URL here>'
+  const prefilled = info.scriptId ? 'npm run update -- ' + info.scriptId : ''
 
   const html =
     '<style>' +
     'body{font:14px/1.5 Roboto,Arial,sans-serif;margin:16px;color:#202124}' +
     'h3{margin:0 0 6px;font-size:15px}' +
     'p{margin:6px 0}' +
-    '.cmd{display:flex;gap:6px;margin:10px 0}' +
-    '.cmd input{flex:1;font:13px Menlo,Consolas,monospace;padding:6px 8px;border:1px solid #dadce0;border-radius:4px}' +
-    'button{font:13px Roboto,Arial,sans-serif;padding:6px 12px;border-radius:4px;border:1px solid #dadce0;background:#fff;cursor:pointer}' +
-    'button.primary{background:#1a73e8;color:#fff;border-color:#1a73e8}' +
-    '.warn{background:#fef7e0;border-left:3px solid #f9ab00;padding:8px 10px;margin:10px 0}' +
     'ol{padding-left:20px;margin:6px 0}' +
+    'li{margin:3px 0}' +
+    'input{width:100%;box-sizing:border-box;font:13px Menlo,Consolas,monospace;padding:6px 8px;border:1px solid #dadce0;border-radius:4px}' +
+    '.row{display:flex;gap:6px;align-items:center;margin:8px 0}' +
+    '.row input{flex:1}' +
+    'button{font:13px Roboto,Arial,sans-serif;padding:6px 12px;border-radius:4px;border:1px solid #dadce0;background:#fff;cursor:pointer;white-space:nowrap}' +
+    'button.primary{background:#1a73e8;color:#fff;border-color:#1a73e8}' +
+    'button:disabled{opacity:.5;cursor:default}' +
     '.muted{color:#5f6368;font-size:12px}' +
     '</style>' +
-    '<h3>Copy made: ' +
+    '<h3>Copy ready: ' +
     esc(info.copyName) +
     '</h3>' +
-    '<p><a href="' +
+    '<ol>' +
+    '<li><a href="' +
     esc(info.copyUrl) +
-    '" target="_blank">Open the new sheet</a> · version ' +
-    esc(info.version) +
+    '" target="_blank">Open the new sheet</a>, then <b>Extensions → Apps Script</b>.</li>' +
+    '<li>Copy the browser URL of the script editor and paste it below.</li>' +
+    '<li>Copy the command and run it in the repo. When it finishes, open the new sheet and run <b>RogueDex Functions → Finish Setup</b>.</li>' +
+    '</ol>' +
+    '<div class="row"><input id="url" placeholder="https://script.google.com/…/projects/…/edit" oninput="build()"></div>' +
+    '<div class="row"><input id="cmd" readonly value="' +
+    esc(prefilled) +
+    '" placeholder="npm run update -- <script id>"><button class="primary" id="copy" onclick="copyCmd()"' +
+    (prefilled ? '' : ' disabled') +
+    '>Copy</button></div>' +
+    '<p class="muted" id="status">' +
+    (prefilled
+      ? 'Script ID found automatically — just copy the command.'
+      : '&nbsp;') +
     '</p>' +
-    (info.scriptId
-      ? '<p>Now run this in the repo:</p>'
-      : '<div class="warn">Couldn\'t look up the copy\'s Script ID automatically. ' +
-        'Open the new sheet → <b>Extensions → Apps Script</b>, copy the browser URL of the editor, ' +
-        'and paste it in place of the placeholder — the command extracts the ID from it.' +
-        '<div class="muted" style="margin-top:6px">Lookup details: ' +
-        esc(info.diag || '(none)') +
-        '</div></div>') +
-    '<div class="cmd"><input id="cmd" readonly value="' +
-    esc(command) +
-    '"><button class="primary" onclick="copyCmd()">Copy</button></div>' +
-    '<p class="muted" id="status">&nbsp;</p>' +
-    "<p>That command merges the creator's new code with yours and pushes it to the copy. " +
-    'When it finishes, open the new sheet and run <b>RogueDex Functions → Finish Setup</b>.</p>' +
     '<script>' +
+    'function build(){var u=document.getElementById("url").value.trim();' +
+    'var m=u.match(/\\/projects\\/([A-Za-z0-9_-]{20,})/)||u.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)||u.match(/^([A-Za-z0-9_-]{20,})$/);' +
+    'var cmd=document.getElementById("cmd"),btn=document.getElementById("copy"),st=document.getElementById("status");' +
+    'if(m){cmd.value="npm run update -- "+m[1];btn.disabled=false;st.textContent="Ready to copy.";}' +
+    'else{cmd.value="";btn.disabled=true;st.textContent=u?"That doesn\'t contain a Script ID yet.":"";}}' +
     'function copyCmd(){var i=document.getElementById("cmd");i.select();i.setSelectionRange(0,99999);' +
     'var ok=false;try{ok=document.execCommand("copy")}catch(e){}' +
     'if(navigator.clipboard){navigator.clipboard.writeText(i.value).then(function(){done(true)},function(){done(ok)})}else{done(ok)}}' +
-    'function done(ok){document.getElementById("status").textContent=ok?"Copied — paste it into your terminal.":"Select the text and copy it manually."}' +
+    'function done(ok){document.getElementById("status").textContent=ok?"Copied — paste it into your terminal.":"Select the command and copy it manually."}' +
     '</script>'
 
   ui.showModalDialog(
-    HtmlService.createHtmlOutput(html).setWidth(520).setHeight(320),
+    HtmlService.createHtmlOutput(html).setWidth(560).setHeight(330),
     'Prepare Next Version',
   )
 }
