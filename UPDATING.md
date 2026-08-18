@@ -1,224 +1,146 @@
 # Updating to a New OfflineDex Version
 
-The end-to-end runbook for moving your customizations to a newly released
-spreadsheet version (e.g. `<old> → <new>`). Assumes the one-time setup in
-[README.md](README.md) is already done (clasp installed + logged in, the
-`OfflineDex Library` project deployed, your committed `bound/appsscript.json`
-in place).
+The runbook for moving your customizations to a newly released spreadsheet
+version. Assumes the one-time setup in [README.md](README.md) is done (clasp
+logged in, `npm install`, the `OfflineDex Library` project pushed, your
+`bound/appsscript.json` committed).
 
 ---
 
-## Mental model: what changes vs. what doesn't
+## The three touches
 
-- **The library** (`library/` — `SaveTracker.js`, `Migrator.js`) is **version-independent**.
-  The bound manifest references it with `developmentMode: true`, so every spreadsheet
-  copy automatically runs the latest code you've pushed. You do **not** redeploy or
-  bump a library version when adopting a new spreadsheet version.
-- **The bound script** (`bound/` — `onOpen.js`, `LoadPlayerData.js`,
-  `UploadPlayerData.html`, `appsscript.json`) lives **inside each spreadsheet copy**.
-  Each new version is a fresh copy with the creator's code. `update.py` **3-way merges**
-  the creator's fresh code with your edits, so the creator's updated functions *and*
-  your customizations both survive (see [How `update.py` merges](#how-updatepy-merges)).
-- **Your data/customizations** (formatting, hidden sheets, Daily Mode column, cell
-  formulas, dex IV highlighting) get carried over by the in-sheet **migration**, which
-  reads them out of your previous version's spreadsheet.
+```
+ ┌── old sheet ──────────────┐   ┌── terminal ───────────────────┐   ┌── new sheet ─────────────┐
+ │ RogueDex Functions →      │   │ npm run update -- <scriptId>  │   │ RogueDex Functions →     │
+ │   Prepare Next Version    │ → │   (paste from the dialog)     │ → │   Finish Setup           │
+ │ copies the public sheet,  │   │ merges creator code w/ yours, │   │ migrates from previous   │
+ │ hands you the command     │   │ pushes it to the copy         │   │ version, opens upload    │
+ └───────────────────────────┘   └───────────────────────────────┘   └──────────────────────────┘
+```
 
-So a version update has two distinct halves:
-1. **Code reconciliation** (terminal) — get your bound code into the new copy.
-2. **Migration** (in the sheet) — port your customizations from the old copy.
+### 1. Old sheet → **Prepare Next Version**
+
+In the sheet you're currently using: **RogueDex Functions → Prepare Next Version**.
+
+- It reads the creator's public sheet (a single Drive file the creator renames each
+  release, e.g. `PUBLIC_Offline RogueDex 6.03`), copies it into your Drive as
+  **`Offline RogueDex 6.03`**, looks up the copy's bound Script ID, and shows a dialog
+  with the exact command to run next. Click **Copy**.
+- If a sheet with that name already exists it asks whether to reuse it (only say yes if
+  you have *not* pushed your code to it) or make a fresh copy.
+- First run only: Google will ask you to re-authorize (the library now uses the Drive
+  advanced service to find the Script ID). Accept and re-run the menu item.
+
+### 2. Terminal → paste the command
+
+```bash
+npm run update -- 1AbC…ScriptId
+```
+
+What it does (from `main`, clean tree — it checks):
+
+1. Resolves the Script ID → its parent spreadsheet → the sheet's name → the version,
+   using your existing clasp login. Refuses if the sheet isn't named
+   `Offline RogueDex X.YY`, if that version's baseline is already recorded, or if the
+   pulled code already contains your customizations (i.e. not a fresh copy).
+2. Writes `bound/.clasp.json` for you.
+3. Pulls the creator's pristine code into a **temporary git worktree** of the
+   `creator` branch (your checkout never leaves `main`), Prettier-normalizes it, and
+   commits it as `creator 6.03`.
+4. `git merge creator` into `main`.
+5. On a clean merge, runs `clasp push -f` so the copy has your code.
+
+If you and the creator edited the **same lines**, it stops and lists the files:
+
+```bash
+# resolve each file keeping BOTH sides, then
+git add <files>
+npm run update -- --continue     # commits the merge and pushes
+# or throw it away:
+npm run update -- --abort
+```
+
+Useful variants:
+
+```bash
+npm run update                              # is a new version out? (reads the public sheet's title)
+npm run update -- <editor URL>              # paste the Apps Script editor URL instead of the ID
+npm run update -- <id> --version 6.03       # skip the Google lookup (offline / fallback)
+npm run update -- <id> --no-push            # everything except clasp push
+```
+
+### 3. New sheet → **Finish Setup**
+
+Open the new copy (the CLI prints the link), reload once so the menu rebuilds — a
+toast will point you at Finish Setup — then **RogueDex Functions → Finish Setup**.
+
+- It auto-detects your previous version (newest `Offline RogueDex X.YY` in Drive
+  below this one) and asks one confirm: *Migrate from 6.01 → 6.03?* (NO lets you
+  type a different source.)
+- Runs the migration (~2 min, toast tracks each step), records that this copy has
+  been migrated, then opens the **Upload Data** dialog so you can load your save
+  straight away.
+
+That's it. The merge commit on `main` is your record of this version's reconciled
+bound code; `bound/.clasp.json` is gitignored.
 
 ---
 
 ## Prerequisites for each update
 
-- Your previous version's spreadsheet (e.g. `Offline RogueDex <old>`) still exists in
-  Drive, untrashed. The migrator reads your customizations out of it.
-- You are on the `main` branch with a **clean working tree** (everything committed).
-  `update.py` switches branches and merges, both of which require a clean tree.
+- Your previous version's spreadsheet still exists in Drive, untrashed (Finish Setup
+  reads your customizations out of it).
+- On `main` with a clean working tree (the CLI refuses otherwise).
+- `clasp login` still valid (the CLI reuses it for the Google lookups).
 
 ---
 
-## Step-by-step (example: `<old> → <new>`)
+## How the merge works
 
-### 1. Make your copy of the new version
-
-- Open the creator's public spreadsheet for the **new version** → **File → Make a copy** into your Drive.
-- Rename the copy to **exactly** `Offline RogueDex <new>` — no `PUBLIC_` prefix.
-  The migrator finds both the source and destination files by this exact name.
-
-### 2. Point clasp at the new copy
-
-> **Important:** `update.py` reads the creator's *pristine* code from whatever
-> `.clasp.json` points at. Point it at the **fresh, just-made copy** *before* you push
-> any of your own edits to it — otherwise the `creator` branch records your customized
-> code as the "creator baseline" and future merges will be wrong.
-
-- In the new copy: **Extensions → Apps Script → Project Settings** → copy the **Script ID**.
-- Edit [bound/.clasp.json](bound/.clasp.json) (gitignored; create if missing):
-
-  ```json
-  {
-    "scriptId": "NEW_SHEET_SCRIPT_ID",
-    "rootDir": "."
-  }
-  ```
-
-### 3. Reconcile the bound code
-
-```bash
-cd bound
-python3 update.py <new>      # the version label is used in the creator commit message
-```
-
-This pulls the creator's fresh code onto the `creator` branch, commits it, then
-**3-way merges** it into `main`. Creator changes to functions you never touched merge
-in silently; your custom functions the creator never touched are preserved. If you and
-the creator edited the **same lines**, the merge stops with a conflict — resolve it
-keeping *both* sides, then `git add` + `git commit` to finish (the script prints the
-exact commands). See [How `update.py` merges](#how-updatepy-merges) for the model.
-
-**First time only:** there is no `creator` branch yet, so `update.py` bootstraps one
-(orphan branch + a single reconciling merge). That first merge conflicts on the whole
-of each file you customize — combine the creator's current code with your edits once,
-commit, and every future update is a clean line-level merge. See
-[First-run bootstrap](#first-run-bootstrap).
-
-### 4. Push the reconciled bound code
-
-```bash
-clasp push -f
-```
-
-(Run this only after the merge is complete — i.e. no unresolved conflicts.)
-
-### 5. Run the migration (in the sheet)
-
-- Reload the new spreadsheet tab so the menu rebuilds.
-- **RogueDex Functions → Migrate from Previous Version**.
-- At the prompt *"Version you are migrating from:"*, enter `<old>`.
-  (The destination `<new>` is auto-derived from the filename.)
-- Wait ~2 minutes. A toast tracks each step and ends with *"Migration complete in Ns"*.
-
-### 6. Load your latest save
-
-- **RogueDex Functions → Upload Data** → upload your latest save file.
-- The save tracker highlights cells that changed versus the migrated state.
-
-### 7. Commit the merge
-
-The merge commit on `main` *is* your record of this version's reconciled bound code —
-nothing extra to commit. (`bound/.clasp.json` is gitignored and never committed.) If
-the merge had conflicts, the commit you make to finish the merge covers it.
-
----
-
-## How `update.py` merges
-
-The repo keeps a **`creator` branch** that holds the creator's *pristine* bound code —
-one commit per version, exactly as `clasp pull` delivers it, with none of your edits.
-`main` holds your customized code. Each update is a 3-way merge:
+The repo keeps a **`creator` branch** holding the creator's *pristine* bound code —
+one commit per version, exactly as `clasp pull` delivers it (after Prettier), with
+none of your edits. `main` holds your customized code. Each update is a 3-way merge:
 
 ```
-creator:  v<old>-pristine ──► v<new>-pristine      (clasp pull, committed by update.py)
+creator:  v<old>-pristine ──► v<new>-pristine      (clasp pull, committed by the CLI)
                 │                  │
 main:    ...your <old> edits ─────► merge ─────►   (git merge creator)
 ```
 
-Git's 3-way merge compares the **previous** creator commit (the merge base), the **new**
-creator commit (theirs), and **your** code (ours):
+Git compares the **previous** creator commit (merge base), the **new** creator commit
+(theirs), and **your** code (ours):
 
 - Creator changed a function, you didn't → creator's version is taken automatically.
 - You customized a function, creator didn't → your version is kept automatically.
 - You **both** changed the same lines → conflict; you resolve it keeping both intents.
 
-This is why the stale-`checkVersion` problem can't recur: a creator change to
-`checkVersion` is now a real diff against the baseline and merges in, instead of being
-silently discarded.
+**Prettier normalization.** Right after `clasp pull`, the CLI runs Prettier over the
+pulled bound files with the repo's `.prettierrc.json` (`semi: false`,
+`singleQuote: true`, `trailingComma: all`) *before* committing the baseline. Your
+`main` files use the same config, so formatting-only differences collapse to identical
+bytes and a creator edit only conflicts when it touches code you customized *in
+substance*.
 
-**Prettier normalization.** Right after `clasp pull`, `update.py` runs Prettier over the
-pulled bound files (`.prettierrc` at the repo root: `semi: false`, `singleQuote: true`,
-`trailingComma: all`) *before* committing the creator baseline. Your `main` files use the
-same Prettier config, so both sides share identical formatting — collapsing whitespace,
-quote, and semicolon differences to identical bytes. The result: a creator edit only
-conflicts when it touches the same code you customized *in substance*, not merely because
-you reformatted the line. Without this, every line you restyled would conflict the moment
-the creator touched it. (Requires Prettier on your PATH; `update.py` warns and continues
-if it's missing, but merges will be noisier.)
+Only the files git tracks in `bound/` take part — `onOpen.js`, `LoadPlayerData.js`,
+`UploadPlayerData.html`, `appsscript.json`. Creator files you never touch
+(`ImportDB.js`, `Sheet Status Generator.js`) are gitignored; `clasp pull` just
+refreshes them.
 
-Only the files git tracks in `bound/` participate — `onOpen.js`, `LoadPlayerData.js`,
-`UploadPlayerData.html`, `appsscript.json`. The creator files you never touch
-(`ImportDB.js`, `Sheet Status Generator.js`) are gitignored, so `clasp pull` just
-refreshes them in place on each new copy; they need no merge.
+### First-run bootstrap (fresh clone only)
 
-### First-run bootstrap
-
-No commit in this repo's history was ever pristine creator code, so the first run has
-nothing to use as a merge base. `update.py` handles this by creating the `creator`
-branch as an **orphan** (unrelated history) and doing one
-`git merge --allow-unrelated-histories`. With no common ancestor, git conflicts on the
-*entire* contents of each customized file — you reconcile once by hand (combine the
-creator's current functions with your customizations). After that commit, the `creator`
-branch is a shared ancestor and all later merges are clean line-level 3-way merges.
-
-The bootstrap run **must** have `.clasp.json` pointing at a fresh, unmodified copy of
-the creator's current version — `update.py` asks you to confirm this before it records
-the baseline.
-
-### Subsequent updates (every version after the first)
-
-Once the `creator` branch exists, the same command does a real line-level merge — no
-more whole-file reconcile. Example: the creator releases **6.02** and changes some of
-their functions.
-
-```bash
-# point bound/.clasp.json at a fresh copy of the creator's 6.02 sheet
-python3 update.py 6.02
-```
-
-`update.py` skips the bootstrap and:
-
-1. `git checkout creator` → `clasp pull` → commits the pristine 6.02 code as a new
-   commit on `creator` (parent = the 6.01 baseline).
-2. `git checkout main` → `git merge creator`.
-
-Now there *is* a common ancestor (the previous version's pristine commit), so git
-extracts exactly what the creator changed between 6.01 and 6.02 and replays that delta
-onto your code:
-
-- Creator changed a function you never touched → **applied automatically**.
-- Creator added a new helper → **added automatically**.
-- Creator changed lines you *also* changed → **conflict** (resolve, keeping both).
-- Your custom functions the creator never touched (`runMigration`, the menu, the
-  `uploadFile` wrapper) → **preserved automatically**.
-
-Resolve any conflicts, `git commit` to finish the merge, `clasp push -f`. That 6.02
-commit on `creator` then becomes the baseline for 6.03, and so on indefinitely.
-
-### Why formatting differences don't cause conflicts
-
-You reformat the bound files heavily (single quotes, no semicolons, comments stripped,
-trailing commas), while the creator ships their own style. Left alone, that divergence
-would make *every* line you restyled conflict the moment the creator touched it — a
-creator edit and your reformat both "change" the same line relative to the baseline.
-
-The **Prettier normalization** step (above) removes this: because `update.py` formats the
-creator's pulled code with the same `.prettierrc` your `main` uses, the baseline and your
-code share identical formatting. Git then only sees conflicts where you and the creator
-changed the *same code in substance* — formatting-only differences resolve to identical
-bytes and merge silently. So restyled files like `onOpen.js` and `LoadPlayerData.js` merge
-just as cleanly as any other.
-
-If Prettier ever isn't on your PATH, `update.py` warns and continues without formatting —
-merges still work but go back to being noisy with formatting-only conflicts. Reinstall
-Prettier (`npm i -g prettier`) to get clean merges back.
+If there is no `creator` branch (a fresh clone that never fetched it), the CLI
+creates it as an **orphan** from the pulled code and merges with
+`--allow-unrelated-histories`. With no common ancestor git conflicts on the whole of
+each customized file — reconcile once by hand, `--continue`, and every later update
+is a clean line-level merge. (This repo's `creator` branch already exists; `git fetch`
+brings it along.)
 
 ---
 
 ## Verify it worked
 
 - **Execution log**: Extensions → Apps Script → Executions. Each migration step is
-  wrapped in `safeRun`, so failures are non-fatal — check the `OK/ERR` summary in the
-  log for any `ERR` lines.
+  wrapped in `safeRun`; check the `OK/ERR` summary for any `ERR` lines.
 - **Daily Mode sheet**: confirm your custom column L looks right (see caveat below).
 - **Highlights**: after the save upload, changed Pokemon should be filled with the
   highlight colors.
@@ -227,47 +149,42 @@ Prettier (`npm i -g prettier`) to get clean merges back.
 
 ## Caveats & troubleshooting
 
+- **The dialog says it couldn't find the Script ID** — the Drive lookup came back
+  empty. Open the new sheet → Extensions → Apps Script, copy the browser URL of the
+  editor, and run `npm run update -- <that URL>`; the CLI extracts the ID.
+- **"This copy already has your code pushed to it"** — the CLI found `OfflineDexLib`
+  in the pulled code, so it isn't a pristine copy and can't become the baseline. Run
+  Prepare Next Version again and choose NO to make a fresh copy.
+- **"A creator baseline for X is already recorded"** — you already ran the update for
+  this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
+  baseline deliberately: `git branch -f creator creator~1` and re-run.
 - **Daily Mode column L** — porting the custom column is gated on the library constant
-  `INSERT_COLUMN_L_IN_DAILY_MODE` (`true`) plus a width check
-  (`dest max columns < source max columns`). A major version jump that reshuffles Daily
-  Mode can make this misfire — eyeball that sheet after migrating.
+  `INSERT_COLUMN_L_IN_DAILY_MODE` (`true`) plus a width check. A major version jump
+  that reshuffles Daily Mode can make this misfire — eyeball that sheet after migrating.
 - **"No file found named ..."** — the source/destination filenames don't match
   `Offline RogueDex {v}` exactly, or the file is trashed. Rename to match.
-- **Multiple matches** — if several files share the name, the migrator uses the most
-  recently updated and logs the rest. Trash stale duplicates to avoid surprises.
+- **Finish Setup picked the wrong previous version** — it takes the newest copy older
+  than this one; answer NO to the confirm and type the version you want. Trash stale
+  duplicates to avoid surprises.
 - **Merge conflict on a file I customized** — expected when you and the creator edited
-  the same lines. Open the file, keep *both* the creator's change and your edit, remove
-  the `<<<<<<< ======= >>>>>>>` markers, then `git add <file>` and `git commit`.
-  To start the merge over: `git merge --abort`.
-- **`update.py` left me on the `creator` branch** — only if it errored mid-run. Get
-  back with `git checkout main`; the pristine pull is safely committed on `creator`.
-- **The whole file conflicted, not just a few lines** — that's the one-time first-run
-  bootstrap (orphan branch, no merge base). Normal after the `creator` branch exists.
-- **Suddenly lots of formatting-only conflicts** — Prettier didn't run (not on PATH), so
-  the creator baseline wasn't normalized to your style. Install it (`npm i -g prettier`)
-  and re-run; see [Why formatting differences don't cause conflicts](#why-formatting-differences-dont-cause-conflicts).
-- **`creator` branch recorded my edits as the baseline** — you pointed `.clasp.json` at
-  a copy you'd already pushed to. Delete the bad baseline commit and re-run pointed at a
-  truly fresh copy: `git checkout main && git branch -D creator` (first-run only).
-- **Library changes not taking effect** — because the bound manifest uses
-  `developmentMode: true`, pushing `library/` (via `clasp push` from `library/`, or
-  automatically on `git push` thanks to the pre-push hook) is enough; no redeploy needed.
+  the same lines. Keep both, remove the `<<<<<<< ======= >>>>>>>` markers,
+  `git add`, `npm run update -- --continue`.
+- **Suddenly lots of formatting-only conflicts** — Prettier didn't run. The CLI
+  refuses to start without it; `npm i -g prettier` (or add it locally) and re-run.
+- **The creator moved the public sheet** — RogueDex Functions → Change Public
+  Sheet… and paste the new URL (stored per user; the CLI's no-arg check uses the
+  built-in ID, update `PUBLIC_SHEET_FILE_ID` in `scripts/update.ts` and
+  `library/Setup.js` when that happens for good).
+- **Library changes not taking effect** — the bound manifest uses
+  `developmentMode: true`, so pushing `library/` (`clasp push` from `library/`, or
+  automatically on `git push` via the pre-push hook) is enough; no redeploy needed.
 
 ---
 
 ## Quick reference
 
-```bash
-# 0. Old version's sheet still in Drive; new copy renamed "Offline RogueDex <new>"
-# 0. New copy's Script ID set in bound/.clasp.json (point at the FRESH copy)
-# 0. On main, working tree clean
-
-cd bound
-python3 update.py <new>   # pull creator code onto `creator`, 3-way merge into main
-# resolve any conflicts (keep both sides), then git add + git commit
-clasp push -f            # upload reconciled bound code
-
-# Then in the sheet:
-#   RogueDex Functions → Migrate from Previous Version → enter old version (`<old>`)
-#   RogueDex Functions → Upload Data → upload latest save
+```
+old sheet:  RogueDex Functions → Prepare Next Version   → Copy
+terminal:   npm run update -- <scriptId>                 (resolve conflicts → --continue)
+new sheet:  reload → RogueDex Functions → Finish Setup   → confirm → upload save
 ```

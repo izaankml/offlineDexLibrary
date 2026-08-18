@@ -20,13 +20,18 @@ offlinedex-scripts/
 ├── README.md
 ├── CONTEXT.md                   # this file
 ├── .gitignore
+├── UPDATING.md                  # per-version runbook
+├── package.json                 # `npm run update` / `typecheck` / `setup`
+├── scripts/
+│   └── update.ts                # the terminal half of a version update (TypeScript, Node 24)
 ├── library/                     # OfflineDex Library project (standalone Apps Script)
 │   ├── .clasp.json              # has the library's Script ID (gitignored)
-│   ├── appsscript.json
+│   ├── appsscript.json          # Sheets v4 + Drive v3 advanced services
 │   ├── SaveTracker.js
-│   └── Migrator.js
+│   ├── Migrator.js
+│   └── Setup.js                 # Prepare Next Version + previous-version detection
 └── bound/                       # bound script for the spreadsheet (per-version)
-    ├── .clasp.json              # has the current spreadsheet's Script ID (gitignored)
+    ├── .clasp.json              # has the current spreadsheet's Script ID (gitignored, written by the CLI)
     ├── appsscript.json
     ├── onOpen.js
     ├── LoadPlayerData.js
@@ -167,6 +172,30 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 **Conditional formatting is intentionally left alone:** the Migrator no longer copies CF rules across sheets. For Daily Mode, inserting column L auto-shifts the destination's existing CF ranges, so the new version's rules stay correct without any remap. For the dex checklists, the IV step (step 6) edits the *existing* destination rules in place rather than importing the old sheet's.
 
+### Setup.js
+
+The Google-side half of a version update (the terminal half is `scripts/update.ts`).
+
+- `prepareNextVersion()` — run from the *current* sheet's menu. The creator publishes
+  every version as **the same Drive file**, renamed per release
+  (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`, overridable per user via
+  **Change Public Sheet…**). It reads the version from that title, `makeCopy()`s it as
+  `Offline RogueDex <new>` (reusing an existing same-named copy if you say so), finds the
+  copy's bound Script ID with the Drive advanced service
+  (`Drive.Files.list({q: "'<sheetId>' in parents and mimeType='application/vnd.google-apps.script'"})`),
+  and shows a dialog with `npm run update -- <scriptId>` and a Copy button. If the lookup
+  returns nothing, the dialog tells you to paste the copy's Apps Script editor URL into the
+  same command instead.
+- `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
+  lower than `dest`; used by Finish Setup so you never type the source version.
+
+Why the copy/lookup happen in Apps Script and not the CLI: `drive` / `drive.readonly` are
+Google-*restricted* scopes and clasp's built-in OAuth client isn't verified for them, so
+a local tool reusing clasp's login can't copy sheets or list bound scripts (they're
+invisible under `drive.metadata.readonly`). Inside Apps Script, `DriveApp` / the Drive
+service get full scope with no verification hurdle. The CLI *can* (and does) use clasp's
+login for `projects.get` (script → parent sheet) and Drive metadata (sheet name → version).
+
 ## The bound script (per-version)
 
 Lives inside each spreadsheet copy. Has the creator's original code plus my modifications. Three files I modify:
@@ -175,16 +204,16 @@ Lives inside each spreadsheet copy. Has the creator's original code plus my modi
 
 The creator provides `onOpen()`, `checkVersion()`, and `htmlmodalDialog()`. I:
 
-- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Migrate from previous version
-- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `runMigration()`
+- Add menu items: Upload Data (Keep Baseline), Snapshot Data, Highlight Changes, Clear Highlights, Finish Setup (migrate + upload), Prepare Next Version, Change Public Sheet…
+- Add wrapper functions that delegate to the library: `snapshot()`, `highlightChanges()`, `clearHighlights()`, `prepareNextVersion()`, `changePublicSheet()`, and `finishSetup()`
 - Point the two Upload Data items at my own `openUploadDialog()` / `openUploadDialogKeepBaseline()` wrappers instead of the creator's `openAttachmentDialog()` directly
-- The `PREVIOUS_VERSION` constant gets updated each time I migrate to a new version
+- `nudgeFinishSetupIfFresh()` runs in `onOpen`: if the `OFFLINEDEX_MIGRATED_FROM` document property is unset *and* no `_snapshot_*` sheet exists (a fresh copy that just received the code), it toasts a pointer to Finish Setup
 
 **How the "keep baseline" choice reaches `uploadFile`:** the creator's dialog (`UploadPlayerData.html`) always dispatches `google.script.run.uploadFile(obj)`, and it's a separate server execution, so module state can't carry the choice across. Instead each menu wrapper writes (or deletes) the `OFFLINEDEX_SKIP_SNAPSHOT` document property before opening the dialog, and `uploadFile` reads and clears it. Both entry points always set it, so it can't go stale. This keeps `openAttachmentDialog()` and the dialog HTML unmodified — one less thing to reconcile on each version merge.
 
 The wrapper functions are needed because Apps Script menu items can't directly call library functions. They have to call top-level functions in the bound script that then forward to the library.
 
-`runMigration()` extracts the destination version from the spreadsheet's filename via regex match `\d+\.\d+`, then calls `OfflineDexLib.portAll(PREVIOUS_VERSION, destVersion)`.
+`finishSetup()` extracts the destination version from the spreadsheet's filename via regex match `\d+\.\d+`, asks the library for the previous version (`detectPreviousVersion`), shows one YES/NO/CANCEL confirm (NO falls back to a typed prompt), calls `OfflineDexLib.portAll(source, dest)`, records `OFFLINEDEX_MIGRATED_FROM` in document properties, and then opens the upload dialog.
 
 ### LoadPlayerData.js
 
@@ -239,38 +268,34 @@ setTimeout(() => google.script.host.close(), 500)
 - `ImportDB.js` (forceUpdate, copyDBList, copyDailyList) - creator's database import logic
 - `StatusSheetGenerator.js` (listImportSheetsWithGID) - creator's status helper
 
-## Per-version setup workflow
+## Per-version update workflow
 
-The full runbook lives in [UPDATING.md](UPDATING.md). The short version when the creator
-releases a new version:
+The full runbook lives in [UPDATING.md](UPDATING.md). Three touches:
 
-1. Make a fresh copy of the new public spreadsheet to my Drive, renamed exactly
-   `Offline RogueDex <version>` (this gives me a fresh bound script with the creator's code).
-2. From the local repo, point clasp at the **fresh** copy and reconcile the bound code:
-   ```bash
-   cd bound
-   # Update .clasp.json with the new spreadsheet's Script ID (point at the fresh copy)
-   python3 update.py <new>   # 3-way merge creator's fresh code with my edits
-   # resolve any conflicts (keep both sides), then git add + git commit
-   clasp push -f
-   ```
+1. **Old sheet** → RogueDex Functions → **Prepare Next Version**: copies the creator's
+   public sheet into Drive as `Offline RogueDex <new>`, finds the copy's bound Script ID,
+   hands me `npm run update -- <scriptId>` with a Copy button.
+2. **Terminal** → `npm run update -- <scriptId>` (`scripts/update.ts`, TypeScript on Node
+   24, no dependencies): resolves the ID → sheet → version via clasp's stored login,
+   writes `bound/.clasp.json`, pulls the pristine code into a temporary git *worktree* of
+   the `creator` branch (my checkout stays on `main`), Prettier-normalizes with the repo's
+   `.prettierrc.json`, commits `creator <new>`, `git merge`s into `main`, and on a clean
+   merge runs `clasp push -f`. Conflicts → resolve → `npm run update -- --continue`.
+   Guards: refuses a non-`main`/dirty tree, an in-progress merge, a sheet not named
+   `Offline RogueDex X.YY`, an already-recorded baseline for that version, and pulled code
+   containing `OfflineDexLib` (= not a pristine copy). `npm run update` with no args reads
+   the public sheet's title and says whether a new version is out.
+3. **New sheet** → reload → RogueDex Functions → **Finish Setup**: confirms the
+   auto-detected previous version, runs `portAll`, marks the copy migrated, opens the
+   upload dialog.
 
-   **How the reconcile works (changed in 2026):** a `creator` branch holds the creator's
-   *pristine* bound code, one commit per version. `update.py` pulls the fresh code,
-   normalizes it through Prettier (`.prettierrc` at the repo root — matching my own
-   formatting), commits it on that branch, and `git merge`s it into `main`, so the
-   creator's updated functions *and* my customizations both survive — only genuine
-   same-line *content* edits conflict (formatting differences are normalized away, so my
-   reformatting doesn't manufacture conflicts). This replaced the old `git restore bound/`
-   approach, which silently discarded every creator code change (it was a stale
-   `checkVersion` from that loss that exposed the problem). Full model and the one-time
-   first-run bootstrap are in [UPDATING.md](UPDATING.md).
-3. Open the new spreadsheet, reload, click **RogueDex Functions → Migrate from Previous Version**,
-   and enter the version I'm migrating FROM when prompted (the destination version is read from
-   the filename). The source version is no longer a hardcoded constant.
-4. Wait for migration to finish (~2 minutes for the formatting/hidden sheets work).
-5. Upload my latest save file via **RogueDex Functions → Upload Data**.
-6. The save tracker should highlight cells that changed compared to the migrated state.
+**How the reconcile works:** a `creator` branch holds the creator's *pristine* bound code,
+one commit per version, Prettier-normalized to my style. Each update is a 3-way merge of
+the creator's delta onto my customizations, so only genuine same-line *content* edits
+conflict. This replaced (in 2026) an older `git restore bound/` approach that silently
+discarded creator changes; the Python `update.py` that first implemented the branch model
+was in turn replaced by `scripts/update.ts` so the whole flow is one command and never
+checks out `creator` in the working tree.
 
 ## Things to know about the spreadsheet
 
@@ -292,7 +317,8 @@ releases a new version:
 
 ## Setup requirements
 
-- Node.js (via Homebrew or direct download), v20+
+- Node.js (via Homebrew or direct download), v24+ (the update CLI relies on native TypeScript type stripping)
+- Prettier on PATH (`npm i -g prettier`)
 - clasp: `npm install -g @google/clasp`
 - `clasp login` once for OAuth
 - Apps Script API enabled in Google account settings (https://script.google.com/home/usersettings)
@@ -300,5 +326,5 @@ releases a new version:
 ## Future enhancements that have come up
 
 - Make `INSERT_COLUMN_L_IN_DAILY_MODE` a parameter to `portAll()` instead of a top-level constant, so different version transitions can opt in/out without redeploying the library
-- Maybe add a `clasp push` automation via git pre-push hook
 - Track timing per migration in the version history at the top of Migrator.js
+- If `findBoundScriptId` proves reliable, drop the editor-URL fallback text from the Prepare dialog

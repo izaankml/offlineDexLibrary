@@ -1,0 +1,18 @@
+{
+  "name": "offlinedex-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Automation on top of the OfflineDex spreadsheet: save-change highlighting, per-version migration, and the update CLI.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "setup": "git config core.hooksPath hooks && echo 'Git hooks installed.'",
+    "update": "node scripts/update.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -10,10 +10,136 @@ function onOpen() {
     .addItem('Highlight Changes', 'highlightChanges')
     .addItem('Clear Highlights', 'clearHighlights')
     .addSeparator()
-    .addItem('Migrate from Previous Version', 'runMigration')
+    .addItem('Finish Setup (migrate + upload)', 'finishSetup')
+    .addItem('Prepare Next Version', 'prepareNextVersion')
+    .addItem('Change Public Sheet…', 'changePublicSheet')
     .addToUi()
 
+  nudgeFinishSetupIfFresh()
   forceUpdate(true)
+}
+
+// ============================================================
+// VERSION UPDATE ENTRY POINTS
+//
+// A version update is three touches — see UPDATING.md:
+//   1. old sheet:  Prepare Next Version  → copies the public sheet, hands you
+//                  the `npm run update -- <scriptId>` command
+//   2. terminal:   that command merges creator code with yours and pushes it
+//   3. new sheet:  Finish Setup → migrates from the previous version, then
+//                  opens the upload dialog
+// ============================================================
+
+/** Set once Finish Setup has run in this copy; keyed to the source version. */
+const MIGRATED_FROM_PROPERTY = 'OFFLINEDEX_MIGRATED_FROM'
+
+/**
+ * On open: if this copy has never been migrated and has no snapshot sheets
+ * yet (i.e. it's a fresh copy that just received the code), point at Finish
+ * Setup. Silent on sheets that are already set up.
+ */
+function nudgeFinishSetupIfFresh() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet()
+    const props = PropertiesService.getDocumentProperties()
+    if (props.getProperty(MIGRATED_FROM_PROPERTY)) return
+    if (ss.getSheetByName('_snapshot_QuickChecklist')) return
+    ss.toast(
+      'This looks like a fresh copy. Run RogueDex Functions → Finish Setup ' +
+        'to bring over your customizations and load your save.',
+      'New version',
+      15,
+    )
+  } catch (e) {
+    Logger.log('nudgeFinishSetupIfFresh: ' + e.message)
+  }
+}
+
+/** Menu (run in the OLD sheet): copy the public sheet + hand off to the CLI. */
+function prepareNextVersion() {
+  OfflineDexLib.prepareNextVersion()
+}
+
+/** Menu: override which Drive file is the creator's public sheet. */
+function changePublicSheet() {
+  OfflineDexLib.changePublicSheet()
+}
+
+/**
+ * Menu (run in the NEW sheet): migrate customizations from the previous
+ * version — auto-detected from your Drive, one confirm — then open the
+ * upload dialog so the save load happens in the same sitting.
+ */
+function finishSetup() {
+  const ui = SpreadsheetApp.getUi()
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+
+  const destMatch = ss.getName().match(/\d+\.\d+/)
+  if (!destMatch) {
+    ui.alert(
+      'Could not determine this sheet\'s version from its name "' +
+        ss.getName() +
+        '". Expected "Offline RogueDex X.YY".',
+    )
+    return
+  }
+  const destVersion = destMatch[0]
+
+  const already = PropertiesService.getDocumentProperties().getProperty(
+    MIGRATED_FROM_PROPERTY,
+  )
+  if (already) {
+    const again = ui.alert(
+      'Finish Setup',
+      'This sheet was already migrated from ' +
+        already +
+        '. Run the migration again?',
+      ui.ButtonSet.YES_NO,
+    )
+    if (again !== ui.Button.YES) return
+  }
+
+  let sourceVersion = OfflineDexLib.detectPreviousVersion(destVersion)
+  if (sourceVersion) {
+    const choice = ui.alert(
+      'Finish Setup',
+      'Migrate your customizations from Offline RogueDex ' +
+        sourceVersion +
+        ' into this ' +
+        destVersion +
+        ' sheet?\n\n' +
+        "Takes a couple of minutes; the upload dialog opens when it's done.\n" +
+        '(NO to type a different source version.)',
+      ui.ButtonSet.YES_NO_CANCEL,
+    )
+    if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return
+    if (choice === ui.Button.NO) sourceVersion = null
+  }
+
+  if (!sourceVersion) {
+    const response = ui.prompt(
+      'Finish Setup',
+      'Version you are migrating from (e.g. 6.01):',
+      ui.ButtonSet.OK_CANCEL,
+    )
+    if (response.getSelectedButton() !== ui.Button.OK) return
+    sourceVersion = response.getResponseText().trim()
+    if (!sourceVersion.match(/^\d+\.\d+$/)) {
+      ui.alert(
+        '"' +
+          sourceVersion +
+          '" doesn\'t look like a version number. Expected format: X.YY',
+      )
+      return
+    }
+  }
+
+  OfflineDexLib.portAll(sourceVersion, destVersion)
+  PropertiesService.getDocumentProperties().setProperty(
+    MIGRATED_FROM_PROPERTY,
+    sourceVersion,
+  )
+  openUploadDialog()
 }
 
 // ============================================================
@@ -58,41 +184,6 @@ function highlightChanges() {
 }
 function clearHighlights() {
   OfflineDexLib.clearHighlights()
-}
-
-function runMigration() {
-  const ui = SpreadsheetApp.getUi()
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-
-  const destMatch = ss.getName().match(/\d+\.\d+/)
-  if (!destMatch) {
-    ui.alert(
-      'Could not determine current version from spreadsheet name "' +
-        ss.getName() +
-        '". Expected format: "Offline RogueDex X.YY".',
-    )
-    return
-  }
-  const destVersion = destMatch[0]
-
-  const response = ui.prompt(
-    'Migrate from Previous Version',
-    'Version you are migrating from:',
-    ui.ButtonSet.OK_CANCEL,
-  )
-  if (response.getSelectedButton() !== ui.Button.OK) return
-
-  const sourceVersion = response.getResponseText().trim()
-  if (!sourceVersion.match(/^\d+\.\d+$/)) {
-    ui.alert(
-      '"' +
-        sourceVersion +
-        '" doesn\'t look like a version number. Expected format: X.YY',
-    )
-    return
-  }
-
-  OfflineDexLib.portAll(sourceVersion, destVersion)
 }
 
 // ============================================================

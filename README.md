@@ -1,6 +1,6 @@
 # OfflineDex Scripts
 
-Automation on top of the OfflineDex spreadsheet: save-change highlighting and per-version migration. See `CONTEXT.md` for full design notes.
+Automation on top of the OfflineDex spreadsheet: save-change highlighting, per-version migration, and a three-touch update flow for new creator releases. See `CONTEXT.md` for full design notes and `UPDATING.md` for the update runbook.
 
 ## Repo layout
 
@@ -8,12 +8,17 @@ Automation on top of the OfflineDex spreadsheet: save-change highlighting and pe
 ├── library/          OfflineDex Library — standalone Apps Script project
 │   ├── appsscript.json
 │   ├── SaveTracker.js
-│   └── Migrator.js
+│   ├── Migrator.js
+│   └── Setup.js          Prepare Next Version / previous-version detection
 ├── bound/            Bound script — per-version, lives inside each spreadsheet copy
 │   ├── appsscript.json
 │   ├── onOpen.js
 │   ├── LoadPlayerData.js
 │   └── UploadPlayerData.html
+├── scripts/
+│   └── update.ts     `npm run update` — the terminal half of a version update
+├── hooks/pre-push    clasp push on git push
+├── UPDATING.md       Per-version runbook
 ├── CONTEXT.md        Full design and decision log
 └── README.md         This file
 ```
@@ -25,18 +30,18 @@ Automation on top of the OfflineDex spreadsheet: save-change highlighting and pe
 ## First-time setup (after cloning)
 
 ```bash
-./install.sh
+npm install        # typescript + @types/node for `npm run typecheck`
+npm run setup      # wires up the git hooks (git push → clasp push)
 ```
-
-Wires up the git hooks so `git push` auto-runs `clasp push` for whichever project changed.
 
 ---
 
 ## Prerequisites
 
-- Node.js v20+
-- clasp: `npm install -g @google/clasp`
-- `clasp login` (one-time OAuth flow)
+- Node.js v24+ (the update CLI is TypeScript run directly via Node's type stripping)
+- clasp: `npm install -g @google/clasp`, then `clasp login` (one-time OAuth flow)
+- Prettier on your PATH: `npm install -g prettier` (the update CLI normalizes the
+  creator's code with it before merging)
 - Apps Script API enabled: https://script.google.com/home/usersettings
 
 ---
@@ -119,17 +124,20 @@ Fill both into `bound/appsscript.json`:
 ```
 
 Commit this filled-in `appsscript.json` to git. You only need to do this once — on each
-subsequent version setup, `update.py` 3-way merges the creator's manifest into yours, so
-your library dependencies are preserved automatically.
+subsequent version update, `npm run update` 3-way merges the creator's manifest into
+yours, so your library dependencies are preserved automatically.
 
 ---
 
-## Per-version setup (e.g., `<old> → <new>`)
+## Per-version update (e.g., `<old> → <new>`)
 
-See **[UPDATING.md](UPDATING.md)** for the full per-version runbook (copy the new
-spreadsheet, point clasp at it, `python3 update.py <version>` to 3-way merge the
-creator's code with yours, `clasp push -f`, then run **RogueDex Functions → Migrate
-from Previous Version** in the sheet).
+Three touches — see **[UPDATING.md](UPDATING.md)**:
+
+1. Old sheet: **RogueDex Functions → Prepare Next Version** (copies the public sheet,
+   hands you a command).
+2. Terminal: `npm run update -- <scriptId>` (merges creator code with yours, pushes).
+3. New sheet: **RogueDex Functions → Finish Setup** (migrates, then opens the upload
+   dialog).
 
 ---
 
