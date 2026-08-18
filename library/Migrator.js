@@ -19,6 +19,13 @@ const QUICK_CHECKLIST_FIRST_LABEL_COL = 5 // E, once any extra columns are gone
 // layout: O = the creator's Ribbons column. (The SaveTracker marker column
 // sits at P, one past it, and is hidden by the highlighter itself.)
 const QUICK_CHECKLIST_HIDDEN_COLUMNS = [15]
+// Title cell + prefix ("POKEROGUE DEX 6.03"); the creator's copy can lag a
+// version behind, so the migrator stamps the destination's own version.
+const QUICK_CHECKLIST_TITLE_CELL = 'A1'
+const QUICK_CHECKLIST_TITLE_PREFIX = 'POKEROGUE DEX '
+// The Pokemon image column, which the alternating-colour banding is extended
+// to cover (see portQuickChecklistImageBanding).
+const QUICK_CHECKLIST_IMAGE_COLUMN = 2
 
 // Daily Mode has a custom column L (map-size inputs in L12:M14 feed the
 // IMAGE formula in B16). A fresh creator copy lacks it, so we insert one.
@@ -47,7 +54,8 @@ const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
  * spreadsheets, swallowing per-step errors so one failure doesn't block the
  * rest. Logs an OK/ERR summary at the end and shows a completion toast.
  * @param {string} sourceVersion - e.g. 'X.YY'
- * @param {string} destVersion - e.g. 'X.YY' (label only; the destination is the active spreadsheet)
+ * @param {string} destVersion - e.g. 'X.YY' (the destination is always the active
+ *   spreadsheet; the version is stamped into the Quick Checklist title)
  */
 function portAll(sourceVersion, destVersion) {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
@@ -77,7 +85,10 @@ function portAll(sourceVersion, destVersion) {
   }
 
   safeRun('Formatting Quick Checklist', () =>
-    portQuickChecklistHeader(src, dst),
+    portQuickChecklistHeader(src, dst, destVersion),
+  )
+  safeRun('Banding Quick Checklist images', () =>
+    portQuickChecklistImageBanding(dst),
   )
   // The Form Checklist "unchecked first" sort is applied by the SaveTracker
   // after each save upload (see sortFormChecklistByDone), not here: on a
@@ -104,11 +115,13 @@ function portAll(sourceVersion, destVersion) {
  * `QUICK_CHECKLIST_FIRST_LABEL`), so the layout matches the source — and the
  * SaveTracker column map — before the formatting/formula port. Idempotent:
  * once row 1 has been overwritten with the ported formulas the label is gone
- * and nothing is deleted on a re-run.
+ * and nothing is deleted on a re-run. Finally stamps `destVersion` into the
+ * A1 title (see setQuickChecklistTitle).
  * @param {Spreadsheet} src
  * @param {Spreadsheet} dst
+ * @param {string} destVersion - e.g. '6.03'
  */
-function portQuickChecklistHeader(src, dst) {
+function portQuickChecklistHeader(src, dst, destVersion) {
   const sName = 'Quick Checklist'
   const sSheet = src.getSheetByName(sName)
   const dSheet = dst.getSheetByName(sName)
@@ -118,7 +131,13 @@ function portQuickChecklistHeader(src, dst) {
 
   const tempSheet = sSheet.copyTo(dst)
   try {
-    const cols = Math.max(tempSheet.getMaxColumns(), dSheet.getMaxColumns())
+    // Work in the source's width. Every read below is on the temp copy and
+    // every write on the destination, so the destination must be at least as
+    // wide (deleting column E can leave it one short); pad it if needed and
+    // never read past the temp sheet's own last column.
+    const cols = tempSheet.getMaxColumns()
+    const dCols = dSheet.getMaxColumns()
+    if (dCols < cols) dSheet.insertColumnsAfter(dCols, cols - dCols)
 
     const srcRange = tempSheet.getRange(1, 1, 10, cols)
     const dstRange = dSheet.getRange(1, 1, 10, cols)
@@ -153,6 +172,135 @@ function portQuickChecklistHeader(src, dst) {
   }
 
   QUICK_CHECKLIST_HIDDEN_COLUMNS.forEach((c) => dSheet.hideColumns(c))
+  setQuickChecklistTitle(dSheet, destVersion)
+}
+
+/**
+ * Stamp the destination's own version into the Quick Checklist title cell
+ * (A1, "POKEROGUE DEX X.YY"). The creator's copy sometimes still carries the
+ * previous version's label. Skipped (with a log line) if A1 holds a formula,
+ * since then the creator drives it and we shouldn't sever that.
+ * @param {Sheet} dSheet - destination Quick Checklist
+ * @param {string} destVersion - e.g. '6.03'
+ */
+function setQuickChecklistTitle(dSheet, destVersion) {
+  const cell = dSheet.getRange(QUICK_CHECKLIST_TITLE_CELL)
+  if (cell.getFormula()) {
+    Logger.log(
+      'Quick Checklist: ' +
+        QUICK_CHECKLIST_TITLE_CELL +
+        ' is a formula (' +
+        cell.getFormula() +
+        '); title left alone',
+    )
+    return
+  }
+  cell.setValue(QUICK_CHECKLIST_TITLE_PREFIX + destVersion)
+}
+
+/**
+ * Extend the Quick Checklist's alternating-colour banding to cover the
+ * Pokemon image column B, which the creator leaves out. Handles the two
+ * layouts we expect: one banding starting at C (extend it left to B), or a
+ * separate A-only banding plus one from C (drop the A-only one and stretch
+ * the other to A). B's own cell fills are cleared over the banded rows so the
+ * banding shows through. If no banding starts at C, falls back to widening
+ * any row-parity conditional-format rules (ISEVEN/ISODD/MOD(ROW()...)) whose
+ * ranges skip B. Logs which path it took.
+ * @param {Spreadsheet} dst
+ */
+function portQuickChecklistImageBanding(dst) {
+  const sheet = dst.getSheetByName('Quick Checklist')
+  if (!sheet) throw new Error('Quick Checklist not found in destination')
+  const IMG = QUICK_CHECKLIST_IMAGE_COLUMN
+
+  const bandings = sheet.getBandings()
+  const right = bandings.find((b) => b.getRange().getColumn() === IMG + 1)
+  if (right) {
+    const r = right.getRange()
+    const left = bandings.find(
+      (b) => b !== right && b.getRange().getLastColumn() === IMG - 1,
+    )
+    const startCol = left ? left.getRange().getColumn() : IMG
+    if (left) left.remove()
+    right.setRange(
+      sheet.getRange(
+        r.getRow(),
+        startCol,
+        r.getNumRows(),
+        r.getLastColumn() - startCol + 1,
+      ),
+    )
+    sheet.getRange(r.getRow(), IMG, r.getNumRows(), 1).setBackground(null)
+    Logger.log(
+      'Quick Checklist: banding extended to column ' +
+        IMG +
+        (left ? ' (merged with the A-only banding)' : ''),
+    )
+    return
+  }
+  if (
+    bandings.some(
+      (b) =>
+        b.getRange().getColumn() <= IMG && b.getRange().getLastColumn() >= IMG,
+    )
+  ) {
+    // Banding already spans B; only a cell fill can be hiding it.
+    const b = bandings
+      .find(
+        (b) =>
+          b.getRange().getColumn() <= IMG &&
+          b.getRange().getLastColumn() >= IMG,
+      )
+      .getRange()
+    sheet.getRange(b.getRow(), IMG, b.getNumRows(), 1).setBackground(null)
+    Logger.log(
+      'Quick Checklist: banding already covers column ' +
+        IMG +
+        '; cleared its cell fills',
+    )
+    return
+  }
+
+  // No banding object: maybe the stripes are conditional formatting.
+  const parity = /ISEVEN\s*\(\s*ROW|ISODD\s*\(\s*ROW|MOD\s*\(\s*ROW/i
+  let widened = 0
+  const rules = sheet.getConditionalFormatRules().map((rule) => {
+    const cond = rule.getBooleanCondition()
+    const vals = cond ? cond.getCriteriaValues() : []
+    if (!vals.length || !parity.test(String(vals[0]))) return rule
+    let touched = false
+    const ranges = rule.getRanges().map((rg) => {
+      const c1 = rg.getColumn()
+      const c2 = rg.getLastColumn()
+      if (c1 <= IMG && c2 >= IMG) return rg
+      if (c2 === IMG - 1 || c1 === IMG + 1) {
+        touched = true
+        const s = Math.min(c1, IMG)
+        const e = Math.max(c2, IMG)
+        return sheet.getRange(rg.getRow(), s, rg.getNumRows(), e - s + 1)
+      }
+      return rg
+    })
+    if (!touched) return rule
+    widened++
+    return rule.copy().setRanges(ranges).build()
+  })
+  if (widened) {
+    sheet.setConditionalFormatRules(rules)
+    Logger.log(
+      'Quick Checklist: widened ' +
+        widened +
+        ' row-parity CF rule(s) to include column ' +
+        IMG,
+    )
+  } else {
+    Logger.log(
+      'Quick Checklist: no banding or row-parity CF adjacent to column ' +
+        IMG +
+        '; nothing changed',
+    )
+  }
 }
 
 /**
