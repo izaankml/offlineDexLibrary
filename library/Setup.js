@@ -106,13 +106,14 @@ function prepareNextVersion() {
   }
 
   ss.toast("Finding the copy's script…", 'Prepare Next Version', -1)
-  const scriptId = findBoundScriptId(copy.getId())
+  const lookup = findBoundScriptId(copy.getId())
   ss.toast('', 'Ready', 3)
 
   showPrepareDialog(ui, {
     copyName: copyName,
     copyUrl: copy.getUrl(),
-    scriptId: scriptId,
+    scriptId: lookup.id,
+    diag: lookup.diag,
     version: newVersion,
   })
 }
@@ -131,42 +132,103 @@ function findExistingCopies(name) {
 }
 
 /**
- * The Script ID of the container-bound script inside a spreadsheet, via the
- * Drive advanced service (bound scripts are hidden Drive files whose parent is
- * the container). Returns null if none is visible, in which case the dialog
- * falls back to asking for the editor URL.
+ * The Script ID of the container-bound script inside a spreadsheet. Bound
+ * scripts are hidden Drive files whose parent is the container; which Drive
+ * API surface exposes them has changed over the years, so try several:
+ *   1. Drive v3 files.list, `'<sheetId>' in parents`
+ *   2. Drive v2 files.list, same query (REST via UrlFetch)
+ *   3. Drive v2 children.list on the sheet
+ * Returns {id, diag} — id null if nothing worked; diag is a short log of what
+ * each attempt returned, shown in the dialog fallback so the failure is
+ * self-explaining.
  * @param {string} sheetId
- * @return {string|null}
+ * @return {{id: (string|null), diag: string}}
  */
 function findBoundScriptId(sheetId) {
-  try {
-    const res = Drive.Files.list({
-      q:
-        "'" +
-        sheetId +
-        "' in parents and mimeType = 'application/vnd.google-apps.script' and trashed = false",
-      fields: 'files(id,name,createdTime)',
-      pageSize: 10,
-    })
-    const files = (res && res.files) || []
-    if (files.length === 0) {
-      Logger.log('findBoundScriptId: no bound script visible for ' + sheetId)
+  const SCRIPT_MIME = 'application/vnd.google-apps.script'
+  const q = "'" + sheetId + "' in parents and mimeType = '" + SCRIPT_MIME + "'"
+  const diag = []
+  const pick = (files, label) => {
+    if (!files || files.length === 0) {
+      diag.push(label + ': 0 results')
       return null
     }
-    if (files.length > 1) {
-      Logger.log(
-        'findBoundScriptId: several scripts on ' +
-          sheetId +
-          ': ' +
-          files.map((f) => f.id + ' (' + f.name + ')').join(', ') +
-          ' — using the first',
-      )
-    }
+    diag.push(
+      label + ': ' + files.length + ' → ' + files.map((f) => f.id).join(','),
+    )
     return files[0].id
-  } catch (e) {
-    Logger.log('findBoundScriptId failed: ' + e.message)
-    return null
   }
+
+  // 1. Advanced Drive service (v3)
+  try {
+    const res = Drive.Files.list({
+      q: q,
+      fields: 'files(id,name)',
+      pageSize: 10,
+    })
+    const id = pick(res && res.files, 'v3 files.list')
+    if (id) return { id: id, diag: diag.join('; ') }
+  } catch (e) {
+    diag.push('v3 files.list: ERR ' + e.message)
+  }
+
+  // 2 + 3. Drive v2 via REST with this script's OAuth token
+  const token = ScriptApp.getOAuthToken()
+  const restGet = (url, label) => {
+    try {
+      const resp = UrlFetchApp.fetch(url, {
+        headers: { Authorization: 'Bearer ' + token },
+        muteHttpExceptions: true,
+      })
+      const code = resp.getResponseCode()
+      if (code !== 200) {
+        diag.push(label + ': HTTP ' + code)
+        return null
+      }
+      return JSON.parse(resp.getContentText())
+    } catch (e) {
+      diag.push(label + ': ERR ' + e.message)
+      return null
+    }
+  }
+
+  const v2 = restGet(
+    'https://www.googleapis.com/drive/v2/files?q=' +
+      encodeURIComponent(q) +
+      '&fields=items(id,title)&maxResults=10',
+    'v2 files.list',
+  )
+  if (v2) {
+    const id = pick(v2.items, 'v2 files.list')
+    if (id) return { id: id, diag: diag.join('; ') }
+  }
+
+  const children = restGet(
+    'https://www.googleapis.com/drive/v2/files/' +
+      encodeURIComponent(sheetId) +
+      '/children?maxResults=100&fields=items(id)',
+    'v2 children.list',
+  )
+  if (children && children.items && children.items.length) {
+    // children.list gives bare IDs; check each one's mimeType.
+    const scripts = []
+    children.items.forEach((c) => {
+      const meta = restGet(
+        'https://www.googleapis.com/drive/v2/files/' +
+          encodeURIComponent(c.id) +
+          '?fields=id,title,mimeType',
+        'v2 files.get ' + c.id,
+      )
+      if (meta && meta.mimeType === SCRIPT_MIME) scripts.push(meta)
+    })
+    const id = pick(scripts, 'v2 children.list')
+    if (id) return { id: id, diag: diag.join('; ') }
+  } else if (children) {
+    diag.push('v2 children.list: 0 results')
+  }
+
+  Logger.log('findBoundScriptId(' + sheetId + '): ' + diag.join('; '))
+  return { id: null, diag: diag.join('; ') }
 }
 
 /**
@@ -209,7 +271,10 @@ function showPrepareDialog(ui, info) {
       ? '<p>Now run this in the repo:</p>'
       : '<div class="warn">Couldn\'t look up the copy\'s Script ID automatically. ' +
         'Open the new sheet → <b>Extensions → Apps Script</b>, copy the browser URL of the editor, ' +
-        'and paste it in place of the placeholder — the command extracts the ID from it.</div>') +
+        'and paste it in place of the placeholder — the command extracts the ID from it.' +
+        '<div class="muted" style="margin-top:6px">Lookup details: ' +
+        esc(info.diag || '(none)') +
+        '</div></div>') +
     '<div class="cmd"><input id="cmd" readonly value="' +
     esc(command) +
     '"><button class="primary" onclick="copyCmd()">Copy</button></div>' +
@@ -224,7 +289,7 @@ function showPrepareDialog(ui, info) {
     '</script>'
 
   ui.showModalDialog(
-    HtmlService.createHtmlOutput(html).setWidth(520).setHeight(280),
+    HtmlService.createHtmlOutput(html).setWidth(520).setHeight(320),
     'Prepare Next Version',
   )
 }
