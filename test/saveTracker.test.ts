@@ -363,6 +363,26 @@ test('upgrade from a v2 grid snapshot: diffs once, converts to v3, clears the wh
   assert.equal(q.backgroundAt(14, 8), null)
 })
 
+test('a display title the API spells differently is still found (via SpreadsheetApp + sheetId)', () => {
+  const ss = buildWorkbook({ rows: 3 })
+  setActiveSpreadsheet(ss)
+  // Give the tab a trailing non-breaking space: SpreadsheetApp finds it by the plain name in
+  // the fake only if names match, so emulate by renaming and registering an alias lookup.
+  const disp = ss.getSheetByName('Starter Dex Checklist')!
+  const original = ss.getSheetByName.bind(ss)
+  disp.name = 'Starter Dex Checklist\u00a0'
+  ;(
+    ss as unknown as { getSheetByName: (n: string) => unknown }
+  ).getSheetByName = (n: string) =>
+    original(n) ?? (n === 'Starter Dex Checklist' ? disp : null)
+  assert.match(describeLayout(), /StarterDex: data L–EM/)
+  assert.ok(
+    logs.some((l) =>
+      l.includes('is titled "Starter Dex Checklist\u00a0" in the API'),
+    ),
+  )
+})
+
 test('a missing sheet fails the flow visibly instead of leaving a sticky toast', () => {
   const ss = buildWorkbook({ rows: 5 })
   ss.deleteSheet(ss.getSheetByName('FULL_DEX.data')!)

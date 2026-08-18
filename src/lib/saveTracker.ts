@@ -288,19 +288,77 @@ export type Loaded = {
 
 export type Workbook = { info: SpreadsheetInfo; loaded: Loaded[] }
 
-function sheetIdByTitle(info: SpreadsheetInfo, title: string): number {
-  const s = info.sheets?.find((x) => x.properties.title === title)
-  if (!s) throw new Error(`Sheet "${title}" not found`)
-  return s.properties.sheetId
+/**
+ * Sheet lookup by title. Exact match first, then a whitespace/case-tolerant
+ * match, then — because SpreadsheetApp and the API can spell a title
+ * differently (non-breaking spaces etc.) — the sheet SpreadsheetApp finds
+ * under that name, matched back to the API list by sheetId.
+ */
+function findSheet(
+  info: SpreadsheetInfo,
+  title: string,
+  ss?: Spreadsheet,
+): SheetInfoLite | null {
+  const sheets = info.sheets ?? []
+  const exact = sheets.find((x) => x.properties.title === title)
+  if (exact) return exact
+  const want = normalize(title)
+  const loose = sheets.find((x) => normalize(x.properties.title) === want)
+  if (loose) return loose
+  const viaApp = ss?.getSheetByName(title)
+  if (viaApp) {
+    const id = viaApp.getSheetId()
+    return sheets.find((x) => x.properties.sheetId === id) ?? null
+  }
+  return null
 }
-function sheetExists(info: SpreadsheetInfo, title: string): boolean {
-  return !!info.sheets?.find((x) => x.properties.title === title)
+type SheetInfoLite = NonNullable<SpreadsheetInfo['sheets']>[number]
+
+function requireSheet(
+  info: SpreadsheetInfo,
+  title: string,
+  why: string,
+  ss?: Spreadsheet,
+): SheetInfoLite {
+  const s = findSheet(info, title, ss)
+  if (!s) {
+    const titles = (info.sheets ?? [])
+      .map((x) => JSON.stringify(x.properties.title))
+      .join(', ')
+    throw new Error(
+      `${title} not found (${why}). Sheets reported by the API: ${titles}`,
+    )
+  }
+  return s
 }
-function rowCountOf(info: SpreadsheetInfo, title: string): number {
-  return (
-    info.sheets?.find((x) => x.properties.title === title)?.properties
-      .gridProperties?.rowCount ?? 1000
-  )
+function sheetIdByTitle(
+  info: SpreadsheetInfo,
+  title: string,
+  ss?: Spreadsheet,
+): number {
+  return requireSheet(info, title, 'display sheet', ss).properties.sheetId
+}
+function sheetExists(
+  info: SpreadsheetInfo,
+  title: string,
+  ss?: Spreadsheet,
+): boolean {
+  return findSheet(info, title, ss) !== null
+}
+/** The title as the API spells it (used to build A1 ranges that the API will accept). */
+function apiTitle(
+  info: SpreadsheetInfo,
+  title: string,
+  ss?: Spreadsheet,
+): string {
+  return findSheet(info, title, ss)?.properties.title ?? title
+}
+function rowCountOf(
+  info: SpreadsheetInfo,
+  title: string,
+  ss?: Spreadsheet,
+): number {
+  return findSheet(info, title, ss)?.properties.gridProperties?.rowCount ?? 1000
 }
 
 /**
@@ -313,11 +371,17 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
   const info = client.get(ss.getId(), {
     fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
   })
+  // Resolve every sheet up front (with the SpreadsheetApp fallback) and pin
+  // the API's own spelling of each title into the info list for later lookups.
   for (const spec of TRACKER_SPECS) {
-    if (!sheetExists(info, spec.dataSheet))
-      throw new Error(`${spec.dataSheet} not found (needed by ${spec.key})`)
-    if (!sheetExists(info, spec.displaySheet))
-      throw new Error(`${spec.displaySheet} not found (needed by ${spec.key})`)
+    for (const title of [spec.dataSheet, spec.displaySheet]) {
+      const found = requireSheet(info, title, `needed by ${spec.key}`, ss)
+      if (found.properties.title !== title) {
+        Logger.log(
+          `Note: "${title}" is titled ${JSON.stringify(found.properties.title)} in the API; using that`,
+        )
+      }
+    }
   }
   const v3 =
     PropertiesService.getDocumentProperties().getProperty(
@@ -326,14 +390,16 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
 
   const ranges: string[] = []
   for (const spec of TRACKER_SPECS) {
+    const dataTitle = apiTitle(info, spec.dataSheet, ss)
+    const displayTitle = apiTitle(info, spec.displaySheet, ss)
     ranges.push(
-      sheetRange(spec.dataSheet, `1:${rowCountOf(info, spec.dataSheet)}`),
+      sheetRange(dataTitle, `1:${rowCountOf(info, spec.dataSheet, ss)}`),
     )
-    ranges.push(sheetRange(spec.displaySheet, `1:${HEADER_BAND_ROWS}`))
+    ranges.push(sheetRange(displayTitle, `1:${HEADER_BAND_ROWS}`))
     ranges.push(
       sheetRange(
-        spec.displaySheet,
-        `${a1(spec.displayFirstRow, spec.sortDisplayColumn)}:${a1(rowCountOf(info, spec.displaySheet), spec.sortDisplayColumn)}`,
+        displayTitle,
+        `${a1(spec.displayFirstRow, spec.sortDisplayColumn)}:${a1(rowCountOf(info, spec.displaySheet, ss), spec.sortDisplayColumn)}`,
       ),
     )
     const snapName = snapshotSheetName(spec.key)
@@ -406,7 +472,7 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
     }
     loaded.push({
       r,
-      sheetId: sheetIdByTitle(info, spec.displaySheet),
+      sheetId: sheetIdByTitle(info, spec.displaySheet, ss),
       keys,
       current,
       previous,
