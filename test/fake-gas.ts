@@ -11,10 +11,21 @@
 export type CellValue = string | number | boolean | null
 
 export const calls: string[] = []
+/**
+ * SpreadsheetApp mutations are applied lazily in real Apps Script; the fake
+ * counts them and the fake Sheets API refuses to run while any are pending
+ * (i.e. until SpreadsheetApp.flush() was called) — the bug class that painted
+ * the wrong rows on 2026-08-18.
+ */
+export let pendingMutations = 0
+export function noteMutation(): void {
+  pendingMutations++
+}
 export const logs: string[] = []
 export const toasts: { title: string; body: string; timeout: number }[] = []
 
 export function resetFakes(): void {
+  pendingMutations = 0
   calls.length = 0
   logs.length = 0
   toasts.length = 0
@@ -125,6 +136,7 @@ export class FakeRange {
     return this.getDisplayValues()[0]![0]!
   }
   setValues(values: CellValue[][]): FakeRange {
+    noteMutation()
     this.call('setValues')
     if (
       values.length !== this.numRows ||
@@ -162,6 +174,7 @@ export class FakeRange {
     )
   }
   setBackgrounds(bg: (string | null)[][]): FakeRange {
+    noteMutation()
     this.call('setBackgrounds')
     if (
       bg.length !== this.numRows ||
@@ -173,6 +186,7 @@ export class FakeRange {
     return this
   }
   setBackground(color: string | null): FakeRange {
+    noteMutation()
     this.call('setBackground')
     const bg = Array.from({ length: this.numRows }, () =>
       new Array<string | null>(this.numCols).fill(color),
@@ -181,6 +195,7 @@ export class FakeRange {
     return this
   }
   clearContent(): FakeRange {
+    noteMutation()
     this.call('clearContent')
     const blank = Array.from({ length: this.numRows }, () =>
       new Array<CellValue>(this.numCols).fill(''),
@@ -189,6 +204,7 @@ export class FakeRange {
     return this
   }
   sort(spec: { column: number; ascending: boolean }): FakeRange {
+    noteMutation()
     this.call('sort')
     this.sheet.sortRows(
       this.row,
@@ -376,6 +392,7 @@ export class FakeSheet {
     return this.maxCols
   }
   hideColumns(col: number, n = 1): void {
+    noteMutation()
     calls.push(`${this.name}.hideColumns(${col},${n})`)
     for (let c = col; c < col + n; c++) this.hiddenColumns.add(c)
   }
@@ -392,6 +409,7 @@ export class FakeSheet {
     return this.hiddenColumns.has(col)
   }
   hideSheet(): void {
+    noteMutation()
     calls.push(`${this.name}.hideSheet`)
     this.hidden = true
   }
@@ -402,10 +420,12 @@ export class FakeSheet {
     return this.hidden
   }
   clear(): void {
+    noteMutation()
     calls.push(`${this.name}.clear`)
     this.cells.clear()
   }
   insertRowsBefore(row: number, n: number): void {
+    noteMutation()
     calls.push(`${this.name}.insertRowsBefore(${row},${n})`)
     const next = new Map<string, Cell>()
     for (const [k, cell] of this.cells) {
@@ -419,6 +439,7 @@ export class FakeSheet {
     calls.push(`${this.name}.setColumnWidth(${col},${width})`)
   }
   deleteRows(row: number, n: number): void {
+    noteMutation()
     calls.push(`${this.name}.deleteRows(${row},${n})`)
     const next = new Map<string, Cell>()
     for (const [k, cell] of this.cells) {
@@ -458,10 +479,12 @@ export class FakeSpreadsheet {
     return [...this.sheets]
   }
   insertSheet(name: string): FakeSheet {
+    noteMutation()
     calls.push(`insertSheet(${name})`)
     return this.addSheet(name)
   }
   deleteSheet(sheet: FakeSheet): void {
+    noteMutation()
     calls.push(`deleteSheet(${sheet.name})`)
     this.sheets = this.sheets.filter((s) => s !== sheet)
   }
@@ -486,6 +509,7 @@ g['SpreadsheetApp'] = {
   },
   flush(): void {
     calls.push('flush')
+    pendingMutations = 0
   },
 }
 g['Logger'] = {
@@ -664,9 +688,18 @@ function applyRequest(ss: FakeSpreadsheet, req: Record<string, unknown>): void {
   // Other request kinds are recorded only.
 }
 
+function requireFlushed(method: string): void {
+  if (pendingMutations > 0) {
+    throw new Error(
+      `fake Sheets: ${method} called with ${pendingMutations} unflushed SpreadsheetApp mutation(s) — call SpreadsheetApp.flush() first (real Apps Script applies them lazily, after the API call)`,
+    )
+  }
+}
+
 g['Sheets'] = {
   Spreadsheets: {
     get(_id: string, params: { fields?: string; ranges?: string[] }) {
+      requireFlushed('spreadsheets.get')
       apiCalls.push({ method: 'spreadsheets.get', detail: params })
       const ss = (
         g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
@@ -687,6 +720,7 @@ g['Sheets'] = {
       }
     },
     batchUpdate(body: { requests: Record<string, unknown>[] }, id: string) {
+      requireFlushed('spreadsheets.batchUpdate')
       apiCalls.push({
         method: 'spreadsheets.batchUpdate',
         detail: body.requests.length,
@@ -700,6 +734,7 @@ g['Sheets'] = {
     },
     Values: {
       batchGet(_id: string, params: { ranges: string[] }) {
+        requireFlushed('values.batchGet')
         apiCalls.push({ method: 'values.batchGet', detail: params.ranges })
         const ss = (
           g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
@@ -718,6 +753,7 @@ g['Sheets'] = {
         body: { data: { range: string; values: CellValue[][] }[] },
         _id: string,
       ) {
+        requireFlushed('values.batchUpdate')
         apiCalls.push({
           method: 'values.batchUpdate',
           detail: body.data.map((d) => d.range),

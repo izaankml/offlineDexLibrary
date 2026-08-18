@@ -133,8 +133,8 @@ export const TRACKER_SPECS: TrackerSpec[] = [
     crossCheck: null,
     sortDisplayColumn: 1,
   },
-  dexSpec('StarterDex', 'STARTER_DEX.data', 'Starter Dex Checklist'),
-  dexSpec('FullDex', 'FULL_DEX.data', 'Full Dex Checklist'),
+  dexSpec('StarterDex', 'STARTER_DEX.data', 'Starter DEX Checklist'),
+  dexSpec('FullDex', 'FULL_DEX.data', 'Full DEX Checklist'),
 ]
 
 export function snapshotSheetName(key: string): string {
@@ -735,6 +735,9 @@ export function processChanges(
     for (const l of wb.loaded) {
       if (!l.previous) {
         Logger.log(`${l.r.spec.key}: no snapshot yet, nothing to highlight`)
+        // Unknown highlight state (no metadata): clear the block once so
+        // nothing stale survives into the new baseline.
+        if (!l.meta) paint.push(...paintRequests(l, new Map()).requests)
         painted.push([])
         continue
       }

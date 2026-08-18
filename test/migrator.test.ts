@@ -206,7 +206,7 @@ function freshDest(): DestInfo {
         }),
         sheet('newJSON', 13),
         sheet('IMPORT:data.SPECIES', 14, { hidden: true }),
-        sheet('Starter Dex Checklist', 15, {
+        sheet('Starter DEX Checklist', 15, {
           conditionalFormats: [
             {
               ranges: [
@@ -247,7 +247,7 @@ function freshDest(): DestInfo {
             },
           ],
         }),
-        sheet('Full Dex Checklist', 16, {
+        sheet('Full DEX Checklist', 16, {
           conditionalFormats: [
             {
               ranges: [
@@ -339,8 +339,8 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     'Daily Mode: B16 formula',
     'Daily Mode: L12:M14 inputs',
     'Hide 1 sheet(s)',
-    'Starter Dex Checklist: IV highlight → red when not 31',
-    'Full Dex Checklist: IV highlight → red when not 31',
+    'Starter DEX Checklist: IV highlight → red when not 31',
+    'Full DEX Checklist: IV highlight → red when not 31',
   ])
   assert.deepEqual(notes, [])
 
@@ -567,7 +567,7 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
     ),
   )
   assert.ok(
-    notes.some((n) => n.includes('no "= 31" rule on "Starter Dex Checklist"')),
+    notes.some((n) => n.includes('no "= 31" rule on "Starter DEX Checklist"')),
   )
   assert.ok(notes.some((n) => n.startsWith('Hidden sheets: nothing to hide')))
 })

@@ -226,7 +226,7 @@ What the sheets actually contain (6.03):
 | `STARTER_CHECKLIST.data` | 1 | Dex #, Caught flag, Classic Wins, **SHINY**, VARIANT_2, VARIANT_3, Hidden Ability, Passive Attribute, Value Reduction, Egg flag, **Max IVs**, Ribbons |
 | `Quick Checklist` | 1 | …, (junk E), **Caught?**, Classic Ribbon, Shiny Tier 1 … Max IVs, **Ribbons** |
 | `STARTER_DEX.data` / `FULL_DEX.data` | 2 | **Fought Flag**, Fought Count, NON SHINY, SHINY, …, Caught flag, **Caught Count**, …, **Hatched Count**, …, Candy Count, Friendship, …, **Classic Wins**, Total Natures, HARDY … |
-| `Starter Dex Checklist` / `Full Dex Checklist` | 2 | DEX #, Starter, Starter Cost, **Fought Flag**, Fought Count, … *(identical sub-header text from here on)* |
+| `Starter DEX Checklist` / `Full DEX Checklist` | 2 | DEX #, Starter, Starter Cost, **Fought Flag**, Fought Count, … *(identical sub-header text from here on)* |
 
 So a single `Layout.js` can replace every index constant:
 

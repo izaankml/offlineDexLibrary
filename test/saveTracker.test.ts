@@ -177,12 +177,12 @@ test('snapshot → change → highlight paints the right display cells and nothi
   )
   assert.equal(qDisp.valueAt(12, 17), '', 'no marker column any more')
 
-  const sDisp = ss.getSheetByName('Starter Dex Checklist')!
+  const sDisp = ss.getSheetByName('Starter DEX Checklist')!
   assert.equal(sDisp.backgroundAt(4, 14), INCREMENT_HIGHLIGHT_COLOR)
   assert.equal(sDisp.backgroundAt(4, 5), null, 'Fought Count is excluded')
   assert.equal(sDisp.backgroundAt(5, 14), null)
   assert.equal(
-    ss.getSheetByName('Full Dex Checklist')!.backgroundAt(5, 4),
+    ss.getSheetByName('Full DEX Checklist')!.backgroundAt(5, 4),
     DEX_HIGHLIGHT_COLOR,
   )
 
@@ -201,8 +201,14 @@ test('snapshot → change → highlight paints the right display cells and nothi
 test('processChanges: full flow; a no-change upload clears old highlights in 4 API calls', () => {
   const ss = buildWorkbook({ rows: 20 })
   setActiveSpreadsheet(ss)
+  ss.getSheetByName('Quick Checklist')!.writeBackgrounds(13, 8, [['#ff0000']]) // stale, unknown origin
   resetToastProgress('upload')
   processChanges()
+  assert.equal(
+    ss.getSheetByName('Quick Checklist')!.backgroundAt(13, 8),
+    null,
+    'first baseline clears the block once',
+  )
   assert.ok(ss.getSheetByName(snapshotSheetName('QuickChecklist')))
   const form = ss.getSheetByName('Form Checklist')!
   assert.deepEqual(
@@ -368,17 +374,17 @@ test('a display title the API spells differently is still found (via Spreadsheet
   setActiveSpreadsheet(ss)
   // Give the tab a trailing non-breaking space: SpreadsheetApp finds it by the plain name in
   // the fake only if names match, so emulate by renaming and registering an alias lookup.
-  const disp = ss.getSheetByName('Starter Dex Checklist')!
+  const disp = ss.getSheetByName('Starter DEX Checklist')!
   const original = ss.getSheetByName.bind(ss)
-  disp.name = 'Starter Dex Checklist\u00a0'
+  disp.name = 'Starter DEX Checklist\u00a0'
   ;(
     ss as unknown as { getSheetByName: (n: string) => unknown }
   ).getSheetByName = (n: string) =>
-    original(n) ?? (n === 'Starter Dex Checklist' ? disp : null)
+    original(n) ?? (n === 'Starter DEX Checklist' ? disp : null)
   assert.match(describeLayout(), /StarterDex: data L–EM/)
   assert.ok(
     logs.some((l) =>
-      l.includes('is titled "Starter Dex Checklist\u00a0" in the API'),
+      l.includes('is titled "Starter DEX Checklist\u00a0" in the API'),
     ),
   )
 })
@@ -398,12 +404,12 @@ test('a creator layout change stops the paint with a precise message', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
   snapshot()
-  const disp = ss.getSheetByName('Starter Dex Checklist')!
+  const disp = ss.getSheetByName('Starter DEX Checklist')!
   disp.load(2, 4, [['Seen Flag']]) // creator renamed the anchor in the display
   resetToastProgress('upload')
   assert.throws(
     () => processChanges(),
-    /could not find the header "Fought Flag" .* "Starter Dex Checklist"/,
+    /could not find the header "Fought Flag" .* "Starter DEX Checklist"/,
   )
   assert.equal(disp.backgroundAt(4, 4), null)
 })
@@ -421,7 +427,7 @@ test('a creator column insert between uploads is absorbed: the v3 snapshot is re
     1,
     grid.map((row) => [...row.slice(0, 11), '', ...row.slice(11)]),
   )
-  const v = ss.getSheetByName('Starter Dex Checklist')!
+  const v = ss.getSheetByName('Starter DEX Checklist')!
   const vgrid = v.readValues(1, 1, v.getLastRow(), v.getLastColumn())
   v.clear()
   v.load(

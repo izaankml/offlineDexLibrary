@@ -129,8 +129,8 @@ export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
       v.load(row, 1, [line])
     }
   }
-  dex('STARTER_DEX.data', 'Starter Dex Checklist', LAYOUT_603.starter)
-  dex('FULL_DEX.data', 'Full Dex Checklist', LAYOUT_603.full)
+  dex('STARTER_DEX.data', 'Starter DEX Checklist', LAYOUT_603.starter)
+  dex('FULL_DEX.data', 'Full DEX Checklist', LAYOUT_603.full)
 
   // --- Form Checklist ----------------------------------------------------------
   const form = ss.addSheet('Form Checklist')

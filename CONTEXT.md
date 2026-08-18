@@ -69,7 +69,7 @@ Since 2026-08 a tracker is a **spec of header labels, not column numbers**
 (`TRACKER_SPECS` in `saveTracker.ts`, resolved by `layout.ts`):
 
 ```ts
-{ key: 'StarterDex', dataSheet: 'STARTER_DEX.data', displaySheet: 'Starter Dex Checklist',
+{ key: 'StarterDex', dataSheet: 'STARTER_DEX.data', displaySheet: 'Starter DEX Checklist',
   dataFirstRow: 3, displayFirstRow: 4,
   dataBlockAnchor: 'Fought Flag', displayAnchor: { kind: 'label', text: 'Fought Flag' },
   trackFrom: 'Fought Flag', trackTo: null,            // through the last labelled column
@@ -82,7 +82,7 @@ Since 2026-08 a tracker is a **spec of header labels, not column numbers**
 text (case/space-insensitive; first occurrence — labels like "Friendship" repeat further
 right), derives `shift = displayCol − dataCol`, maps exclude/increment names to columns,
 cross-checks a second label, and **throws a precise message** ("could not find the header
-'Fought Flag' in the first 10 rows of 'Starter Dex Checklist'") if the creator's layout
+'Fought Flag' in the first 10 rows of 'Starter DEX Checklist'") if the creator's layout
 no longer fits — so a reshuffle stops the paint instead of mis-painting. The Quick
 Checklist display block is located the way the Migrator does it (first non-blank cell of
 row 10 right of the fixed A–D columns), because after migration its row-1 labels are

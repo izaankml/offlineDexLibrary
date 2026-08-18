@@ -95,18 +95,27 @@ export interface SheetsClient {
   ): void
 }
 
-/** The real service (requires "Sheets" in appsscript.json enabledAdvancedServices). */
+/**
+ * The real service (requires "Sheets" in appsscript.json enabledAdvancedServices).
+ * Every call flushes SpreadsheetApp first: its mutations (sort, clear, insertSheet…)
+ * are applied lazily at the end of the execution, while API calls run immediately —
+ * without the flush a queued sort would move rows AFTER the API painted them, and
+ * a queued clear() would wipe a snapshot the API had just written.
+ */
 export const liveSheets: SheetsClient = {
   get(spreadsheetId, params) {
+    SpreadsheetApp.flush()
     return service().get(
       spreadsheetId,
       params as never,
     ) as unknown as SpreadsheetInfo
   },
   batchUpdate(spreadsheetId, requests) {
+    SpreadsheetApp.flush()
     service().batchUpdate({ requests: requests as never }, spreadsheetId)
   },
   valuesBatchGet(spreadsheetId, ranges, render) {
+    SpreadsheetApp.flush()
     const res = service().Values!.batchGet(spreadsheetId, {
       ranges,
       valueRenderOption: render,
@@ -115,6 +124,7 @@ export const liveSheets: SheetsClient = {
     return res.valueRanges ?? []
   },
   valuesBatchUpdate(spreadsheetId, data) {
+    SpreadsheetApp.flush()
     service().Values!.batchUpdate(
       { valueInputOption: 'RAW', data } as never,
       spreadsheetId,
@@ -136,11 +146,18 @@ function service(): GoogleAppsScript.Sheets.Collection.SpreadsheetsCollection {
 // Small helpers for reading grid data
 // ---------------------------------------------------------------------------
 
+/** Exact title first, then case/whitespace-insensitive (tab titles differ in case from what you'd type). */
 export function sheetByTitle(
   info: SpreadsheetInfo,
   title: string,
 ): SheetInfo | null {
-  return info.sheets?.find((s) => s.properties.title === title) ?? null
+  const sheets = info.sheets ?? []
+  const exact = sheets.find((s) => s.properties.title === title)
+  if (exact) return exact
+  const norm = (t: string): string =>
+    t.replace(/\s+/g, ' ').trim().toLowerCase()
+  const want = norm(title)
+  return sheets.find((s) => norm(s.properties.title) === want) ?? null
 }
 
 /** The GridData block of a sheet whose top-left is (row0, col0), 0-based; the first block if unspecified. */

@@ -68,8 +68,8 @@ export const DAILY_INPUTS = { row1: 12, col1: 12, row2: 14, col2: 13 } // L12:M1
 
 // IV conditional formatting on the dex checklists.
 export const DEX_IV_HIGHLIGHT_SHEETS = [
-  'Starter Dex Checklist',
-  'Full Dex Checklist',
+  'Starter DEX Checklist',
+  'Full DEX Checklist',
 ]
 export const DEX_IV_PERFECT_VALUE = '31'
 export const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red

@@ -65,7 +65,7 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
   const s = resolveFromBands(
     spec('StarterDex'),
     HEADERS['STARTER_DEX.data']!,
-    HEADERS['Starter Dex Checklist']!,
+    HEADERS['Starter DEX Checklist']!,
   )
   assert.equal(s.shift, -8)
   assert.equal(s.minDataCol, 12)
@@ -86,7 +86,7 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
   const f = resolveFromBands(
     spec('FullDex'),
     HEADERS['FULL_DEX.data']!,
-    HEADERS['Full Dex Checklist']!,
+    HEADERS['Full DEX Checklist']!,
   )
   assert.equal(f.shift, -4)
   assert.equal(f.minDataCol, 8)
@@ -95,7 +95,7 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
 })
 
 test('a creator column insert in the display is absorbed; a renamed anchor fails loudly', () => {
-  const display = HEADERS['Starter Dex Checklist']!.map((row) => [
+  const display = HEADERS['Starter DEX Checklist']!.map((row) => [
     ...row.slice(0, 3),
     'NEW',
     ...row.slice(3),
@@ -115,7 +115,7 @@ test('a creator column insert in the display is absorbed; a renamed anchor fails
       resolveFromBands(
         spec('StarterDex'),
         renamed,
-        HEADERS['Starter Dex Checklist']!,
+        HEADERS['Starter DEX Checklist']!,
       ),
     /could not find the header "Fought Flag"/,
   )
@@ -123,7 +123,7 @@ test('a creator column insert in the display is absorbed; a renamed anchor fails
 
 test('cross-check catches a display that only partly moved', () => {
   // Insert a column in the display AFTER Fought Flag but before Classic Wins: shift no longer uniform.
-  const display = HEADERS['Starter Dex Checklist']!.map((row) => [
+  const display = HEADERS['Starter DEX Checklist']!.map((row) => [
     ...row.slice(0, 10),
     'NEW',
     ...row.slice(10),
