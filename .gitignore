@@ -18,3 +18,5 @@ bound/*
 
 # Node
 node_modules/
+
+.claude/
