@@ -254,19 +254,22 @@ export function outOfOrder(keys: CellValue[]): boolean {
   return false
 }
 
+/**
+ * Sheets' ascending sort order: real numbers first (ascending), then text
+ * (case-insensitive; numeric-looking TEXT sorts as text, e.g. "10" < "2"),
+ * blanks last. Must match what Range.sort() would produce, or we'd re-sort
+ * every upload.
+ */
 function compareKeys(a: CellValue, b: CellValue): number {
-  const an = typeof a === 'number' ? a : Number(a)
-  const bn = typeof b === 'number' ? b : Number(b)
-  const aNum = a !== '' && a !== null && !Number.isNaN(an)
-  const bNum = b !== '' && b !== null && !Number.isNaN(bn)
-  if (aNum && bNum) return an - bn
+  const aBlank = a === '' || a === null
+  const bBlank = b === '' || b === null
+  if (aBlank || bBlank) return aBlank && bBlank ? 0 : aBlank ? 1 : -1
+  const aNum = typeof a === 'number'
+  const bNum = typeof b === 'number'
+  if (aNum && bNum) return (a as number) - (b as number)
   if (aNum) return -1
   if (bNum) return 1
-  const as = a === null ? '' : String(a)
-  const bs = b === null ? '' : String(b)
-  if (as === '' && bs !== '') return 1
-  if (bs === '' && as !== '') return -1
-  return as.localeCompare(bs, undefined, { sensitivity: 'base' })
+  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })
 }
 
 // ---------------------------------------------------------------------------
@@ -834,9 +837,12 @@ export function clearHighlights(client: SheetsClient = liveSheets): void {
     startStep(ss, 'Reading sheets')
     const wb = loadWorkbook(ss, client)
     startStep(ss, 'Clearing highlights')
+    // Manual clear: wipe the WHOLE tracked block of every display (not just
+    // the rows we remember painting), so anything stray goes too.
     const requests: Request[] = []
-    for (const l of wb.loaded)
-      requests.push(...paintRequests(l, new Map()).requests)
+    for (const l of wb.loaded) {
+      requests.push(...paintRequests({ ...l, meta: null }, new Map()).requests)
+    }
     if (requests.length) client.batchUpdate(ss.getId(), requests)
     const writes = wb.loaded
       .filter((l) => l.meta && !l.legacy)

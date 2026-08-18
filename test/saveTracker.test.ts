@@ -135,6 +135,9 @@ test('outOfOrder: numeric ascending is in order; a swap or text-before-number is
   assert.equal(outOfOrder([1, 3, 2]), true)
   assert.equal(outOfOrder(['a', 1]), true)
   assert.equal(outOfOrder([1, 'a', '']), false)
+  // Text numbers sort as text in Sheets ("1","10","2"): that IS Sheets' order.
+  assert.equal(outOfOrder(['1', '10', '2', 'a', '']), false)
+  assert.equal(outOfOrder(['1', '2', '10']), true)
 })
 
 test('snapshot → change → highlight paints the right display cells and nothing else', () => {
@@ -305,7 +308,7 @@ test('keep-baseline: highlights accumulate, and with no baseline nothing is writ
   assert.equal(q.backgroundAt(13, 8), QUICK_CHECKLIST_HIGHLIGHT_COLOR)
 })
 
-test('clearHighlights blanks only the highlighted rows of the tracked block', () => {
+test('clearHighlights blanks the whole tracked block (manual clear), nothing outside it', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
   snapshot()
