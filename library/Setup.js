@@ -130,15 +130,9 @@ function firstParentFolder(fileId) {
   }
 }
 
-/** Non-trashed spreadsheets with exactly this name (newest first). */
+/** Non-trashed spreadsheets with exactly this name (newest-created first). */
 function findExistingCopies(name) {
-  const it = DriveApp.searchFiles(
-    "title = '" +
-      name.replace(/'/g, "\\'") +
-      "' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false",
-  )
-  const out = []
-  while (it.hasNext()) out.push(it.next())
+  const out = findSpreadsheetsNamed(name)
   out.sort((a, b) => b.getDateCreated() - a.getDateCreated())
   return out
 }

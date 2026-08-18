@@ -8,7 +8,6 @@
 //   processChanges()    - full flow used by uploadFile
 //   processChangesWithoutSnapshot()
 //                       - same, but keeps the existing snapshot as the baseline
-//   runProcessChanges() - standalone full flow with reset
 //   snapshot()          - capture current values to snapshots
 //   highlightChanges()  - paint cells that differ from snapshot
 //   clearHighlights()   - clear highlight backgrounds
@@ -84,13 +83,14 @@ function runStandaloneIfNeeded(ss, label, fn) {
  * so the next entry point starts a fresh flow.
  * @param {Spreadsheet} ss
  * @param {string} title - the leading phrase; total elapsed is appended
+ * @param {number} [timeoutSeconds=5] - how long the toast stays up
  */
-function finishFlow(ss, title) {
+function finishFlow(ss, title, timeoutSeconds) {
   const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1)
   const body = LAST_STEP_LABEL
     ? LAST_STEP_LABEL + ' completed in ' + LAST_STEP_ELAPSED + 's'
     : ''
-  ss.toast(body, title + ' in ' + totalElapsed + 's', 5)
+  ss.toast(body, title + ' in ' + totalElapsed + 's', timeoutSeconds || 5)
   FLOW_START = 0
 }
 
@@ -111,55 +111,55 @@ const TRACKERS = [
     // line up. See sortDisplayByColumn.
     sortDisplayColumn: 1,
   },
-  {
-    key: 'StarterDex',
-    dataSheet: 'STARTER_DEX.data',
-    displaySheet: 'Starter Dex Checklist',
-    dataFirstRow: 3,
-    displayFirstRow: 4,
-    columnMap: buildShiftMap(12, 143, -8),
-    includeHeaders: true,
-    headerRows: 2,
-    // E, AH, AI — auto-calculated columns, never highlight
-    excludeDisplayColumns: new Set([5, 34, 35]),
-    // N (caught), AB (hatched), AO (wins) — counts that increment on an
-    // already-unlocked entry, so they get the purple increment highlight
-    columnHighlightColors: {
-      14: INCREMENT_HIGHLIGHT_COLOR,
-      28: INCREMENT_HIGHLIGHT_COLOR,
-      41: INCREMENT_HIGHLIGHT_COLOR,
-    },
-    useFilter: true,
-    // Re-sort the display by column A before painting so its row order matches
-    // the data sheet (highlights paint by row offset) and the column-A slicers
-    // line up. See sortDisplayByColumn.
-    sortDisplayColumn: 1,
-  },
-  {
-    key: 'FullDex',
-    dataSheet: 'FULL_DEX.data',
-    displaySheet: 'Full Dex Checklist',
-    dataFirstRow: 3,
-    displayFirstRow: 4,
-    columnMap: buildShiftMap(8, 139, -4),
-    includeHeaders: true,
-    headerRows: 2,
-    // E, AH, AI — auto-calculated columns, never highlight (display now matches Starter Dex)
-    excludeDisplayColumns: new Set([5, 34, 35]),
-    // N (caught), AB (hatched), AO (wins) — counts that increment on an
-    // already-unlocked entry, so they get the purple increment highlight
-    columnHighlightColors: {
-      14: INCREMENT_HIGHLIGHT_COLOR,
-      28: INCREMENT_HIGHLIGHT_COLOR,
-      41: INCREMENT_HIGHLIGHT_COLOR,
-    },
-    useFilter: true,
-    // Re-sort the display by column A before painting so its row order matches
-    // the data sheet (highlights paint by row offset) and the column-A slicers
-    // line up. See sortDisplayByColumn.
-    sortDisplayColumn: 1,
-  },
+  dexTracker(
+    'StarterDex',
+    'STARTER_DEX.data',
+    'Starter Dex Checklist',
+    buildShiftMap(12, 143, -8),
+  ),
+  dexTracker(
+    'FullDex',
+    'FULL_DEX.data',
+    'Full Dex Checklist',
+    buildShiftMap(8, 139, -4),
+  ),
 ]
+
+/**
+ * The two dex checklists share every setting except their sheet names and
+ * column map: display starts one row below the data (two header rows), the
+ * auto-calculated columns E/AH/AI are never highlighted, and the count columns
+ * N (caught), AB (hatched), AO (wins) get the purple increment highlight since
+ * they change on entries that were already unlocked.
+ * @param {string} key
+ * @param {string} dataSheet
+ * @param {string} displaySheet
+ * @param {Object<number, number>} columnMap
+ * @return {Object} a TRACKERS entry
+ */
+function dexTracker(key, dataSheet, displaySheet, columnMap) {
+  return {
+    key: key,
+    dataSheet: dataSheet,
+    displaySheet: displaySheet,
+    dataFirstRow: 3,
+    displayFirstRow: 4,
+    columnMap: columnMap,
+    includeHeaders: true,
+    headerRows: 2,
+    excludeDisplayColumns: new Set([5, 34, 35]),
+    columnHighlightColors: {
+      14: INCREMENT_HIGHLIGHT_COLOR,
+      28: INCREMENT_HIGHLIGHT_COLOR,
+      41: INCREMENT_HIGHLIGHT_COLOR,
+    },
+    useFilter: true,
+    // Re-sort the display by column A before painting so its row order matches
+    // the data sheet (highlights paint by row offset) and the column-A slicers
+    // line up. See sortDisplayByColumn.
+    sortDisplayColumn: 1,
+  }
+}
 
 /**
  * Build a column map for a contiguous range of data columns shifted to
@@ -177,22 +177,10 @@ function buildShiftMap(dataStart, dataEnd, shift) {
   return map
 }
 
-/** Standalone entry point: resets toast state, then runs the full flow. */
-function runProcessChanges() {
-  resetToastProgress()
-  processChanges()
-}
-
-/** Standalone entry point: full flow, but keeps the current snapshot baseline. */
-function runProcessChangesWithoutSnapshot() {
-  resetToastProgress()
-  processChangesWithoutSnapshot()
-}
-
 /**
  * Full save-upload flow: clear stale highlights, paint cells that changed
  * since the last snapshot, then capture a new snapshot for next time.
- * Assumes the caller (uploadFile or runProcessChanges) already reset toast state.
+ * Assumes the caller (uploadFile) already reset toast state.
  * @param {{skipSnapshot: boolean}} [options] - when skipSnapshot is set, the
  *   existing snapshot is left in place, so it stays the baseline for the next
  *   upload and highlights accumulate against it.

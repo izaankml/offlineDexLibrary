@@ -26,7 +26,7 @@ offlinedex-scripts/
 │   └── update.ts                # the terminal half of a version update (TypeScript, Node 24)
 ├── library/                     # OfflineDex Library project (standalone Apps Script)
 │   ├── .clasp.json              # has the library's Script ID (gitignored)
-│   ├── appsscript.json          # Sheets v4 advanced service
+│   ├── appsscript.json          # no advanced services — DriveApp/SpreadsheetApp only
 │   ├── SaveTracker.js
 │   ├── Migrator.js
 │   └── Setup.js                 # Prepare Next Version + previous-version detection
@@ -268,7 +268,7 @@ setTimeout(() => google.script.host.close(), 500)
 ### Files I don't modify
 
 - `ImportDB.js` (forceUpdate, copyDBList, copyDailyList) - creator's database import logic
-- `StatusSheetGenerator.js` (listImportSheetsWithGID) - creator's status helper
+- `Sheet Status Generator.js` (listImportSheetsWithGID) - creator's status helper
 
 ## Per-version update workflow
 

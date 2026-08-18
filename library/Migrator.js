@@ -60,7 +60,7 @@ function portAll(sourceVersion, destVersion) {
   }
 
   safeRun('Formatting Quick Checklist', () =>
-    portQuickChecklistHeader(src, dst)
+    portQuickChecklistHeader(src, dst),
   )
   safeRun('Formatting Form Checklist', () => sortFormChecklistByDone(dst))
   safeRun('Formatting Daily Mode', () => portDailyModeFormatting(src, dst))
@@ -68,13 +68,7 @@ function portAll(sourceVersion, destVersion) {
   safeRun('Hiding sheets', () => portHiddenSheets(src, dst))
   safeRun('Updating dex IV highlights', () => portDexIvHighlight(dst))
 
-  const totalElapsed = ((Date.now() - FLOW_START) / 1000).toFixed(1)
-  const body = LAST_STEP_LABEL
-    ? LAST_STEP_LABEL + ' completed in ' + LAST_STEP_ELAPSED + 's'
-    : ''
-  ss.toast(body, 'Migration complete in ' + totalElapsed + 's', 10)
-  FLOW_START = 0
-
+  finishFlow(ss, 'Migration complete', 10)
   Logger.log(log.join('\n'))
 }
 
@@ -133,13 +127,10 @@ function portQuickChecklistHeader(src, dst) {
 
     const portRowSlice = (rowNum, startCol, endCol) => {
       const numCols = endCol - startCol + 1
-      const srcRow = tempSheet.getRange(rowNum, startCol, 1, numCols)
-      const formulas = srcRow.getFormulas()
-      const values = srcRow.getValues()
-      const merged = formulas.map((row, i) =>
-        row.map((f, j) => (f ? f : values[i][j]))
+      copyFormulasOrValues(
+        tempSheet.getRange(rowNum, startCol, 1, numCols),
+        dSheet.getRange(rowNum, startCol, 1, numCols),
       )
-      dSheet.getRange(rowNum, startCol, 1, numCols).setValues(merged)
     }
     portRowSlice(1, 5, 15)
     portRowSlice(10, 1, cols)
@@ -199,7 +190,7 @@ function portDailyModeFormatting(src, dst) {
         .copyTo(
           dSheet.getRange(a1),
           SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
-          false
+          false,
         )
     })
 
@@ -229,21 +220,26 @@ function portDailyModeCells(src, dst) {
   mergeRange.merge()
 
   const b16Cell = dSheet.getRange('B16')
-  const b16Formula = sSheet.getRange('B16').getFormula()
-  if (b16Formula) {
-    b16Cell.setFormula(b16Formula)
-  } else {
-    b16Cell.setValue(sSheet.getRange('B16').getValue())
-  }
+  copyFormulasOrValues(sSheet.getRange('B16'), b16Cell)
   b16Cell.setVerticalAlignment('top')
 
-  const srcBlock = sSheet.getRange('L12:M14')
-  const formulas = srcBlock.getFormulas()
-  const values = srcBlock.getValues()
+  copyFormulasOrValues(sSheet.getRange('L12:M14'), dSheet.getRange('L12:M14'))
+}
+
+/**
+ * Copy a range's formulas into another same-sized range, falling back to the
+ * plain value wherever a source cell has no formula. Works across
+ * spreadsheets (unlike Range.copyTo).
+ * @param {Range} srcRange
+ * @param {Range} dstRange
+ */
+function copyFormulasOrValues(srcRange, dstRange) {
+  const formulas = srcRange.getFormulas()
+  const values = srcRange.getValues()
   const merged = formulas.map((row, i) =>
-    row.map((f, j) => (f ? f : values[i][j]))
+    row.map((f, j) => (f ? f : values[i][j])),
   )
-  dSheet.getRange('L12:M14').setValues(merged)
+  dstRange.setValues(merged)
 }
 
 /**
@@ -298,11 +294,11 @@ function portDexIvHighlight(dst) {
         updated.push(
           SpreadsheetApp.newConditionalFormatRule()
             .whenFormulaSatisfied(
-              '=TO_TEXT(' + topLeft + ')<>"' + DEX_IV_PERFECT_VALUE + '"'
+              '=TO_TEXT(' + topLeft + ')<>"' + DEX_IV_PERFECT_VALUE + '"',
             )
             .setBackground(DEX_IV_IMPERFECT_COLOR)
             .setRanges([range])
-            .build()
+            .build(),
         )
         replaced++
       })
@@ -314,12 +310,14 @@ function portDexIvHighlight(dst) {
           DEX_IV_PERFECT_VALUE +
           '" rule found on "' +
           name +
-          '", left unchanged'
+          '", left unchanged',
       )
       return
     }
     sheet.setConditionalFormatRules(updated)
-    Logger.log('IV highlight: replaced ' + replaced + ' rule(s) on "' + name + '"')
+    Logger.log(
+      'IV highlight: replaced ' + replaced + ' rule(s) on "' + name + '"',
+    )
   })
 }
 
@@ -343,36 +341,41 @@ function isPerfectIvRule(rule) {
 }
 
 /**
+ * Every non-trashed spreadsheet in Drive with exactly this name (an exact
+ * `title =` match, so the creator's `PUBLIC_…` file never matches a copy's
+ * name). Unsorted; callers order by whatever date they care about.
+ * @param {string} name
+ * @return {File[]}
+ */
+function findSpreadsheetsNamed(name) {
+  const query =
+    "title = '" +
+    name.replace(/'/g, "\\'") +
+    "' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
+  const it = DriveApp.searchFiles(query)
+  const out = []
+  while (it.hasNext()) out.push(it.next())
+  return out
+}
+
+/**
  * Look up the Drive file ID of an Offline RogueDex spreadsheet by version.
- * Searches by name using FILE_NAME_PATTERN, ignores `PUBLIC_*` copies, and
- * if multiple matches exist returns the most recently updated one (logging
- * the others). Throws if no file matches.
+ * Searches by name using FILE_NAME_PATTERN and, if multiple matches exist,
+ * returns the most recently updated one (logging the others). Throws if no
+ * file matches.
  * @param {string} version - e.g. 'X.YY'
  * @return {string} Drive file ID
  */
 function findFileIdByVersion(version) {
   const targetName = FILE_NAME_PATTERN.replace('{v}', version)
-  const query =
-    "title = '" +
-    targetName.replace(/'/g, "\\'") +
-    "' " +
-    "and mimeType = 'application/vnd.google-apps.spreadsheet' " +
-    'and trashed = false'
-
-  const files = DriveApp.searchFiles(query)
-  const matches = []
-  while (files.hasNext()) {
-    const f = files.next()
-    if (f.getName().indexOf('PUBLIC_') === 0) continue
-    matches.push(f)
-  }
+  const matches = findSpreadsheetsNamed(targetName)
 
   if (matches.length === 0) {
     throw new Error(
       'No file found named "' +
         targetName +
         '". ' +
-        'Check the version number, or rename your copy to match.'
+        'Check the version number, or rename your copy to match.',
     )
   }
   if (matches.length > 1) {
@@ -386,7 +389,7 @@ function findFileIdByVersion(version) {
         matches
           .slice(1)
           .map((f) => f.getId())
-          .join(', ')
+          .join(', '),
     )
   }
   return matches[0].getId()
