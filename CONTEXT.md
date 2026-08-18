@@ -59,105 +59,71 @@ Notes:
 
 A standalone Apps Script project. Deployed as a library and imported into each version's bound script with the identifier `OfflineDexLib`.
 
-### SaveTracker.js
+### saveTracker.ts (+ layout.ts, progress.ts)
 
 Tracks changes between save data uploads and highlights changed cells.
 
-**Key concept: trackers.** A tracker is a config object that pairs a "data sheet" (raw 0/1/empty values) with a "display sheet" (visual checklist with formulas/conditional formatting that pulls from the data sheet). Each tracker has its own column mapping.
+**Key concept: trackers.** A tracker pairs a "data sheet" (raw 0/1/count values the
+creator's formulas derive from the save) with a "display sheet" (the visual checklist).
+Since 2026-08 a tracker is a **spec of header labels, not column numbers**
+(`TRACKER_SPECS` in `saveTracker.ts`, resolved by `layout.ts`):
 
-**The TRACKERS array:**
-
-```javascript
-const TRACKERS = [
-  {
-    key: 'QuickChecklist',
-    dataSheet: 'STARTER_CHECKLIST.data',
-    displaySheet: 'Quick Checklist',
-    dataFirstRow: 12,
-    displayFirstRow: 12,
-    columnMap: buildShiftMap(4, 11, 4), // D-K -> H-O (+4 shift; creator 6.03 layout with hidden junk E)
-    includeHeaders: true,
-    headerRows: 1,
-    highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR, // yellow
-    useFilter: true,
-  },
-  {
-    key: 'StarterDex',
-    dataSheet: 'STARTER_DEX.data',
-    displaySheet: 'Starter Dex Checklist',
-    dataFirstRow: 3,
-    displayFirstRow: 4,
-    columnMap: buildShiftMap(12, 143, -8), // L-EM -> D-EE (-8 shift)
-    includeHeaders: true,
-    headerRows: 2,
-    // E, AH, AI — auto-calculated columns, never highlight
-    excludeDisplayColumns: new Set([5, 34, 35]),
-    // N (caught), AB (hatched), AO (wins) — counts that increment on an
-    // already-unlocked entry, so they get the purple increment highlight
-    columnHighlightColors: {
-      14: INCREMENT_HIGHLIGHT_COLOR,
-      28: INCREMENT_HIGHLIGHT_COLOR,
-      41: INCREMENT_HIGHLIGHT_COLOR,
-    },
-    useFilter: true,
-  },
-  {
-    key: 'FullDex',
-    dataSheet: 'FULL_DEX.data',
-    displaySheet: 'Full Dex Checklist',
-    dataFirstRow: 3,
-    displayFirstRow: 4,
-    columnMap: buildShiftMap(8, 139, -4), // H-EI -> D-EE (-4 shift)
-    includeHeaders: true,
-    headerRows: 2,
-    // E, AH, AI — auto-calculated columns, never highlight (display now matches Starter Dex)
-    excludeDisplayColumns: new Set([5, 34, 35]),
-    // N (caught), AB (hatched), AO (wins) — counts that increment on an
-    // already-unlocked entry, so they get the purple increment highlight
-    columnHighlightColors: {
-      14: INCREMENT_HIGHLIGHT_COLOR,
-      28: INCREMENT_HIGHLIGHT_COLOR,
-      41: INCREMENT_HIGHLIGHT_COLOR,
-    },
-    useFilter: true,
-  },
-]
+```ts
+{ key: 'StarterDex', dataSheet: 'STARTER_DEX.data', displaySheet: 'Starter Dex Checklist',
+  dataFirstRow: 3, displayFirstRow: 4,
+  dataBlockAnchor: 'Fought Flag', displayAnchor: { kind: 'label', text: 'Fought Flag' },
+  trackFrom: 'Fought Flag', trackTo: null,            // through the last labelled column
+  exclude: ['Fought Count', 'Candy Count', 'Friendship'],   // auto-calculated, never painted
+  increment: ['Caught Count', 'Hatched Count', 'Classic Wins'], // purple: counters
+  crossCheck: 'Classic Wins', sortDisplayColumn: 1, ... }
 ```
 
-Why these column shifts: the display sheets have extra leading columns (dex#, name, etc.) that the data sheets don't have. The shift between data column and display column is consistent within a sheet but varies per tracker because each display sheet has a different number of leading columns.
+`resolveTracker()` reads the first 10 rows of both sheets once, finds the anchors by
+text (case/space-insensitive; first occurrence — labels like "Friendship" repeat further
+right), derives `shift = displayCol − dataCol`, maps exclude/increment names to columns,
+cross-checks a second label, and **throws a precise message** ("could not find the header
+'Fought Flag' in the first 10 rows of 'Starter Dex Checklist'") if the creator's layout
+no longer fits — so a reshuffle stops the paint instead of mis-painting. The Quick
+Checklist display block is located the way the Migrator does it (first non-blank cell of
+row 10 right of the fixed A–D columns), because after migration its row-1 labels are
+replaced by your stat formulas. Verified layouts: 6.01 (shift +3), 6.03 (shift +4);
+`test/fixtures/headers-6.03.json` holds the real header rows and `golden-mappings.json`
+pins the exact per-column mapping the old index-based config produced.
+`describeLayout()` returns the resolved layout as text (dry run).
 
-**Highlight colors** (module constants at the top of SaveTracker.js):
+**Highlight colors:** yellow (`#FFFF00`) on the Quick Checklist, light green (`#93c47d`)
+on the dex sheets, light purple (`#b4a7d6`) for the increment counters.
 
-- `QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00'` (yellow) — Quick Checklist
-- `DEX_HIGHLIGHT_COLOR = '#93c47d'` (light green 1) — default for the dex sheets
-- `INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6'` (light purple 2) — counter columns that increment on an already-unlocked entry (caught, hatched, wins) rather than marking a new unlock; applied per-column via `columnHighlightColors`
+**The flow on each save upload (`processChanges`):**
 
-**Per-tracker highlight controls:**
+1. *Checking layout* — resolve every tracker (2 small header reads each); one-time cleanup
+   of the legacy marker columns.
+2. *Highlighting X* — for each tracker: ONE read of the data block, ONE read of the
+   snapshot block, in-memory diff, then `setBackgrounds` over the tracked display block
+   only (500-row chunks). Unchanged cells get `null`, which is what clears the previous
+   upload's highlights — there is no separate clear pass and **no marker column** any
+   more. Before painting, the display's key column (A) is read; only if it is out of
+   order (a slicer sort) is the display physically re-sorted.
+3. *Sorting Form Checklist* — unchecked forms above checked ones.
+4. *Snapshotting X* — the values already in memory are written to the hidden
+   `_snapshot_<key>` sheet at the **same row/column numbers as the data sheet** (v2
+   layout; the header band is copied above for readability). No re-read. The old v1
+   layout (data starting at row headerRows+1) is still read correctly once — the
+   `OFFLINEDEX_SNAPSHOT_FORMAT` document property records which is on disk.
 
-- `highlightColor` — the default fill for changed cells in this tracker; falls back to `DEX_HIGHLIGHT_COLOR` when omitted.
-- `columnHighlightColors` — `{displayCol: color}` overrides for specific columns (the counter columns get the purple increment color instead of the default).
-- `excludeDisplayColumns` — display columns that are auto-calculated (e.g. totals derived from other cells) and must never be highlighted even when their value changes. Note the egg-move total column was removed from these sets so it now *does* highlight.
-- `useFilter` — enables the hidden marker-column workflow used for fast highlight-clearing (see below). (The name is historical: it once also drove "View Changes" filter views, which the Migrator no longer creates.)
-- `sortDisplayColumn` — a 1-based display column to re-sort the display sheet by (ascending) at the start of highlighting, before any cell is painted. Set to `1` (column A) on all three trackers. Highlights are painted onto the display **by row offset**, so the display must be in the same order as the data sheet; if you've re-sorted the display (e.g. via the column-A slicers), the paint would otherwise land on the wrong rows. Sorting back to column A undoes that and also leaves the sheet in the order the slicers expect. Omit the option to skip the sort. **Assumes column-A-ascending reproduces the data sheet's canonical row order** — true because column A is the dex#/name key the data sheets are ordered by.
+Per upload that is ≈ 40 Sheets calls total (was ≈ 100 + one call per run of changed rows,
+plus three full-sheet sorts). **Upload Data (Keep Baseline)** runs steps 1–3 only.
 
-**The flow on each save upload:**
+**Standalone menu items:** *Snapshot Data*, *Highlight Changes*, *Clear Highlights* (null
+backgrounds over the tracked block, chunked) run the same code paths as their own flows.
 
-1. `clearHighlights()` - wipe background fills from the previous run (using the marker column to clear only rows that were actually highlighted, when `useFilter`)
-2. `highlightChanges()` - for each tracker: first re-sort the display by `sortDisplayColumn` (column A) so its rows line up with the data sheet, then compare current data values to snapshot, paint the highlight color as the cell **background** on changed cells, and write a `●` marker in the row's marker column
-2b. `sortFormChecklistByDone()` - re-sort the Form Checklist's data rows by column C ("Done") ascending so unchecked forms stay above checked ones (a ported customization; it lives here rather than in the Migrator because the checkmarks only exist once a save has been loaded)
-3. `snapshot()` - save current data to hidden snapshot sheets so the NEXT upload can diff against it
+**Toast progress + timing log (`progress.ts`):** a single replacing toast shows the current
+step; on finish (or failure — `failFlow` shows a non-sticky error toast) every step's
+duration is appended to the hidden `_timings` sheet in one write.
 
-**Uploading without re-snapshotting:** `processChangesWithoutSnapshot()` runs steps 1-2 and skips step 3, so the existing snapshot stays the baseline. Highlights then keep accumulating against that baseline across uploads instead of each upload resetting what "changed since last time" means — useful for a mid-run save, or a re-upload after a run you don't want to bank yet. It's exposed through the **Upload Data (Keep Baseline)** menu item; the regular **Upload Data** item still snapshots.
-
-**Background colors, not borders:** changed cells are painted with `setBackgrounds()`. (An earlier design used thick green borders to dodge conditional formatting, but the current approach relies on background fills with per-column color overrides; the chosen highlight colors sit alongside, rather than fighting, the sheets' conditional formatting.)
-
-**Marker column:** for trackers with `useFilter: true`, the highlighter writes a `●` into the marker column — by default the first column past the tracked range (`max(columnMap values) + 1`), or `markerColumn` when set (QuickChecklist uses Q/17, because P is the creator's Ribbons column in the 6.03 layout; the default would blank it on every upload) — on every changed row, and hides that column. This drives fast clearing — only marked rows get their backgrounds reset. (It previously also fed a Migrator-created "View Changes" filter view; that filter-view step has since been removed.)
-
-**Snapshot storage:** hidden sheets named `_snapshot_<key>` (e.g., `_snapshot_QuickChecklist`). Each snapshot has the data sheet's tracked column range plus a header row (or two for the dex sheets). Empty leading columns are hidden for readability.
-
-**Chunking:** all the heavy operations (read, write, clear, highlight) chunk in 200-row batches. Without chunking, "Service error: Spreadsheets" hits on the larger sheets (Full Dex tracks 132 columns × ~1100 rows). No explicit `flush()` is needed between chunks — Apps Script handles batching the writes itself, and per-chunk flushes added several round-trips of latency for no correctness benefit.
-
-**Toast progress UI:** a single replacing toast shows what's currently running. Title = current step, body = previous step's elapsed time. State variables: `LAST_STEP_LABEL`, `LAST_STEP_ELAPSED`, `CURRENT_STEP_START`, `FLOW_START`. The `runStandaloneIfNeeded` helper makes individual functions self-managing if called directly, but skips reset/finalize when called as part of a larger flow.
+**Why the data sheets, not the display:** the display cells are formulas resolving through
+`STARTER_CHECKLIST.sorted` etc.; the data sheets hold the raw values in the canonical row
+order the display is painted against.
 
 ### Migrator.js
 
@@ -181,7 +147,7 @@ Ports customizations from an old version of the spreadsheet to a new one. Called
 
 5. **Dex IV highlights:** on the Starter Dex and Full Dex checklists, finds the "perfect IV" conditional-format rule the new version ships with (fills yellow when a cell equals 31) and replaces it in place with a rule that fills red (`#ea9999`) when the cell is NOT 31, over the same range. Detection is by condition (text/number equals `31`), so it auto-adapts to each sheet's range and column layout; all other CF rules are left untouched. If no matching rule is found, the sheet is left unchanged and a note is logged.
 
-(The Migrator no longer creates "View Changes" filter views — that step was removed. The marker column described below still exists for fast highlight-clearing.)
+(The Migrator no longer creates "View Changes" filter views — that step was removed, as was the SaveTracker marker column it once fed.)
 
 **Cross-spreadsheet trick:** Apps Script's `Range.copyTo()` doesn't work across spreadsheets. So the migrator copies the source sheet INTO the destination spreadsheet as a temp sheet, does the local copyTo, then deletes the temp.
 
@@ -337,7 +303,7 @@ checks out `creator` in the working tree.
 
 - **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. Workaround: copy source SHEET into destination spreadsheet as a temp, do local copyTo, delete temp.
 - **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
-- **Marker column for cheap clearing:** because re-reading every display cell's background to find what to clear is slow, the highlighter stamps a `●` into a hidden marker column on changed rows. Clearing then resets only the marked rows.
+- **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; it turned out the paint step already writes `null` into every unchanged tracked cell, so the clear pass and the marker column were redundant — and the marker column collided with creator columns (6.03 Ribbons). `clearLegacyMarkers` blanks the old markers once.
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
 - **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.

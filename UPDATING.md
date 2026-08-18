@@ -168,9 +168,10 @@ brings it along.)
   renames it, the Daily Mode steps fail with an `ERR` in the log (fix the constants,
   redo from a fresh copy) — eyeball that sheet after migrating.
 - **Quick Checklist columns** — the creator's layout is kept; the port finds the data
-  block by row 10 and shifts your header formulas to match. If the creator moves the
-  block again, also update the SaveTracker `QuickChecklist` entry (`buildShiftMap`
-  shift and `markerColumn`) so highlights land on the right columns.
+  block by row 10 and shifts your header formulas to match. The SaveTracker finds its
+  columns the same way (plus header labels — see `TRACKER_SPECS` in
+  `src/lib/saveTracker.ts`), so a moved block is absorbed; a *renamed* header stops the
+  upload with a message naming the label it couldn't find — update the spec then.
 - **Migration ran on the wrong layout** (e.g. Daily Mode column L never inserted):
   the steps aren't undoable in place — trash the copy and start again from Prepare
   Next Version rather than re-running Finish Setup.

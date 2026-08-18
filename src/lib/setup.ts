@@ -21,7 +21,7 @@ import {
   versionFromName,
 } from '../shared/naming.ts'
 import { findSpreadsheetsNamed, formatResults, portAll } from './migrator.ts'
-import { TRACKERS, snapshotSheetName } from './saveTracker.ts'
+import { TRACKER_SPECS, snapshotSheetName } from './saveTracker.ts'
 
 /** Set once Finish Setup has run cleanly in a copy; holds the source version. */
 export const MIGRATED_FROM_PROPERTY = 'OFFLINEDEX_MIGRATED_FROM'
@@ -158,7 +158,7 @@ export function nudgeFinishSetupIfFresh(): void {
     const ss = SpreadsheetApp.getActiveSpreadsheet()
     const props = PropertiesService.getDocumentProperties()
     if (props.getProperty(MIGRATED_FROM_PROPERTY)) return
-    if (ss.getSheetByName(snapshotSheetName(TRACKERS[0]!.key))) return
+    if (ss.getSheetByName(snapshotSheetName(TRACKER_SPECS[0]!.key))) return
     ss.toast(
       'This looks like a fresh copy. Run RogueDex Functions → Finish Setup to bring over your customizations and load your save.',
       'New version',

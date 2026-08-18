@@ -9,6 +9,7 @@
 
 export {
   clearHighlights,
+  describeLayout,
   highlightChanges,
   processChanges,
   processChangesWithoutSnapshot,

@@ -10,8 +10,23 @@
  *   snapshot()                       capture current values to snapshots
  *   highlightChanges()               paint cells that differ from snapshot
  *   clearHighlights()                clear highlight backgrounds
+ *   describeLayout()                 what the layout probe resolves to (dry run)
+ *
+ * Per upload, each tracker costs: 2 header reads (layout probe), 1 read of
+ * the display key column, 1 read of the data block, 1 read of the snapshot,
+ * ⌈rows/WRITE_CHUNK_ROWS⌉ background writes, and ⌈rows/WRITE_CHUNK_ROWS⌉
+ * snapshot writes (from the values already in memory). No marker column, no
+ * separate clear pass (painting writes null into every unchanged tracked cell),
+ * and the display is only re-sorted when its key column is actually out of
+ * order.
  */
 
+import {
+  type ResolvedTracker,
+  type TrackerSpec,
+  describeResolved,
+  resolveTracker,
+} from './layout.ts'
 import {
   failFlow,
   finishFlow,
@@ -22,102 +37,90 @@ import {
 
 type Spreadsheet = GoogleAppsScript.Spreadsheet.Spreadsheet
 type Sheet = GoogleAppsScript.Spreadsheet.Sheet
+type CellValue = string | number | boolean | Date | null
 
 export const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#FFFF00' // yellow
 export const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
 export const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
-export const CHUNK_ROWS = 200
+
+/** Row batch for the heavy writes (setBackgrounds / snapshot setValues). */
+export const WRITE_CHUNK_ROWS = 500
 
 // Form Checklist: kept sorted so unchecked forms (column C "Done" = ☐) sit
 // above checked ones (☑). Re-applied after every upload.
 export const FORM_CHECKLIST_SHEET = 'Form Checklist'
 export const FORM_CHECKLIST_DONE_COLUMN = 3
 
-export type ColumnMap = Record<number, number>
-
-export type Tracker = {
-  key: string
-  dataSheet: string
-  displaySheet: string
-  dataFirstRow: number
-  displayFirstRow: number
-  /** dataCol -> displayCol (both 1-based). */
-  columnMap: ColumnMap
-  includeHeaders: boolean
-  headerRows: number
-  highlightColor?: string
-  /** Display columns that are auto-calculated and must never be highlighted. */
-  excludeDisplayColumns?: Set<number>
-  /** {displayCol: color} overrides (e.g. counters get the increment colour). */
-  columnHighlightColors?: Record<number, string>
-  /** Enables the hidden marker-column workflow used for fast clearing. */
-  useFilter: boolean
-  /** Re-sort the display by this 1-based column before painting. */
-  sortDisplayColumn?: number
-  /** Marker column override (default: first column past the tracked range). */
-  markerColumn?: number
-}
+/**
+ * Snapshot format. v2 stores values at the SAME row/column numbers as the
+ * data sheet (plus the header band above), so a diff is a plain same-index
+ * compare and nothing needs re-mapping. v1 (before 2026-08) stored the data
+ * starting at row headerRows+1. The property records which one is on disk so
+ * the first upload after the upgrade still diffs correctly.
+ */
+export const SNAPSHOT_FORMAT_PROPERTY = 'OFFLINEDEX_SNAPSHOT_FORMAT'
+export const SNAPSHOT_FORMAT_V2 = '2'
+/** v1 header rows per tracker key (how far down the old data started). */
+const V1_HEADER_ROWS: Record<string, number> = { QuickChecklist: 1, StarterDex: 2, FullDex: 2 }
 
 /**
- * Build a column map for a contiguous range of data columns shifted to
- * display columns: `{dataCol: dataCol + shift}` for every col in [start, end].
+ * Columns the old marker workflow wrote `●` into (Quick Checklist Q, dex
+ * sheets EF). Cleared once after the upgrade; see clearLegacyMarkers.
  */
-export function buildShiftMap(dataStart: number, dataEnd: number, shift: number): ColumnMap {
-  const map: ColumnMap = {}
-  for (let c = dataStart; c <= dataEnd; c++) map[c] = c + shift
-  return map
-}
+export const LEGACY_MARKERS_PROPERTY = 'OFFLINEDEX_LEGACY_MARKERS_CLEARED'
+const LEGACY_MARKER_COLUMNS: Record<string, number> = { QuickChecklist: 17, StarterDex: 136, FullDex: 136 }
 
-/**
- * The two dex checklists share every setting except their sheet names and
- * column map: display starts one row below the data (two header rows), the
- * auto-calculated columns E/AH/AI are never highlighted, and the count columns
- * N (caught), AB (hatched), AO (wins) get the purple increment highlight since
- * they change on entries that were already unlocked.
- */
-function dexTracker(key: string, dataSheet: string, displaySheet: string, columnMap: ColumnMap): Tracker {
+// ---------------------------------------------------------------------------
+// Tracker specs — header labels, not column numbers. See src/lib/layout.ts.
+// ---------------------------------------------------------------------------
+
+function dexSpec(key: string, dataSheet: string, displaySheet: string): TrackerSpec {
   return {
     key,
     dataSheet,
     displaySheet,
     dataFirstRow: 3,
     displayFirstRow: 4,
-    columnMap,
-    includeHeaders: true,
-    headerRows: 2,
-    excludeDisplayColumns: new Set([5, 34, 35]),
-    columnHighlightColors: {
-      14: INCREMENT_HIGHLIGHT_COLOR,
-      28: INCREMENT_HIGHLIGHT_COLOR,
-      41: INCREMENT_HIGHLIGHT_COLOR,
-    },
-    useFilter: true,
+    // Both sheets label the first data column "Fought Flag" in their row 2.
+    dataBlockAnchor: 'Fought Flag',
+    displayAnchor: { kind: 'label', text: 'Fought Flag' },
+    trackFrom: 'Fought Flag',
+    trackTo: null, // through the last labelled column (natures)
+    // Auto-calculated columns: never highlight.
+    exclude: ['Fought Count', 'Candy Count', 'Friendship'],
+    // Counters that increment on an already-unlocked entry: purple.
+    increment: ['Caught Count', 'Hatched Count', 'Classic Wins'],
+    color: DEX_HIGHLIGHT_COLOR,
+    incrementColor: INCREMENT_HIGHLIGHT_COLOR,
+    crossCheck: 'Classic Wins',
     sortDisplayColumn: 1,
   }
 }
 
-export const TRACKERS: Tracker[] = [
+export const TRACKER_SPECS: TrackerSpec[] = [
   {
     key: 'QuickChecklist',
     dataSheet: 'STARTER_CHECKLIST.data',
     displaySheet: 'Quick Checklist',
     dataFirstRow: 12,
     displayFirstRow: 12,
-    // Data D-K (SHINY … Max IVs) -> display H-O. Creator 6.03 layout: A-D
-    // fixed, hidden junk E, then Caught? F, Classic G, Shiny H … Max IVs O,
-    // Ribbons P. (6.01 had no column E: shift was 3, D-K -> G-N.)
-    columnMap: buildShiftMap(4, 11, 4),
-    includeHeaders: true,
-    headerRows: 1,
-    highlightColor: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
-    useFilter: true,
+    // Data block "Caught flag … Ribbons" (row 1 of the data sheet) lines up
+    // with the display block that starts at the first non-blank cell of row
+    // 10 right of the fixed A-D columns (the same rule the Migrator uses; the
+    // display's own labels are replaced by stat formulas after migration).
+    dataBlockAnchor: 'Caught flag',
+    displayAnchor: { kind: 'firstNonBlank', locatorRow: 10, fixedColumns: 4 },
+    trackFrom: 'SHINY',
+    trackTo: 'Max IVs',
+    exclude: [],
+    increment: [],
+    color: QUICK_CHECKLIST_HIGHLIGHT_COLOR,
+    incrementColor: INCREMENT_HIGHLIGHT_COLOR,
+    crossCheck: null,
     sortDisplayColumn: 1,
-    // P is the creator's Ribbons column (kept hidden by the Migrator), so the
-    // marker goes one further, to Q.
-    markerColumn: 17,
   },
-  dexTracker('StarterDex', 'STARTER_DEX.data', 'Starter Dex Checklist', buildShiftMap(12, 143, -8)),
-  dexTracker('FullDex', 'FULL_DEX.data', 'Full Dex Checklist', buildShiftMap(8, 139, -4)),
+  dexSpec('StarterDex', 'STARTER_DEX.data', 'Starter Dex Checklist'),
+  dexSpec('FullDex', 'FULL_DEX.data', 'Full Dex Checklist'),
 ]
 
 /** Snapshot sheet name for a tracker key. */
@@ -125,22 +128,37 @@ export function snapshotSheetName(key: string): string {
   return '_snapshot_' + key
 }
 
-/**
- * The display column that receives the per-row `●` marker for a tracker, or
- * null when the tracker doesn't use markers.
- */
-export function markerColumnFor(t: Tracker): number | null {
-  if (!t.useFilter) return null
-  if (t.markerColumn) return t.markerColumn
-  return Math.max(...Object.values(t.columnMap)) + 1
+type Sheets = { data: Sheet; display: Sheet }
+
+function sheetsFor(ss: Spreadsheet, spec: TrackerSpec): Sheets {
+  const data = ss.getSheetByName(spec.dataSheet)
+  const display = ss.getSheetByName(spec.displaySheet)
+  if (!data) throw new Error(`${spec.dataSheet} not found (needed by ${spec.key})`)
+  if (!display) throw new Error(`${spec.displaySheet} not found (needed by ${spec.key})`)
+  return { data, display }
 }
 
-function dataColumnSpan(t: Tracker): { dataCols: number[]; minDataCol: number; maxDataCol: number; count: number } {
-  const dataCols = Object.keys(t.columnMap).map((n) => parseInt(n, 10))
-  if (dataCols.length === 0) throw new Error('Empty columnMap for ' + t.key)
-  const minDataCol = Math.min(...dataCols)
-  const maxDataCol = Math.max(...dataCols)
-  return { dataCols, minDataCol, maxDataCol, count: maxDataCol - minDataCol + 1 }
+/** Resolve every tracker against this workbook; throws with a precise message on layout drift. */
+export function resolveAll(ss: Spreadsheet): { r: ResolvedTracker; sheets: Sheets }[] {
+  return TRACKER_SPECS.map((spec) => {
+    const sheets = sheetsFor(ss, spec)
+    const r = resolveTracker(spec, sheets.data, sheets.display)
+    Logger.log(describeResolved(r))
+    return { r, sheets }
+  })
+}
+
+/** Dry run: what the layout probe finds in this workbook, one line per tracker (or the error). */
+export function describeLayout(): string {
+  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  return TRACKER_SPECS.map((spec) => {
+    try {
+      const sheets = sheetsFor(ss, spec)
+      return describeResolved(resolveTracker(spec, sheets.data, sheets.display))
+    } catch (e) {
+      return `${spec.key}: ERROR ${e instanceof Error ? e.message : e}`
+    }
+  }).join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -148,25 +166,35 @@ function dataColumnSpan(t: Tracker): { dataCols: number[]; minDataCol: number; m
 // ---------------------------------------------------------------------------
 
 /**
- * Full save-upload flow: clear stale highlights, paint cells that changed
- * since the last snapshot, then capture a new snapshot for next time.
- * Assumes the caller (uploadFile) already reset toast state. On failure the
- * user gets an error toast (not a stuck "Highlighting…" one) and the error is
- * rethrown for the caller's log.
+ * Full save-upload flow: paint cells that changed since the last snapshot
+ * (which also clears stale highlights), re-sort the Form Checklist, then
+ * write the new snapshot from the values already read. Assumes the caller
+ * (uploadFile) already reset toast state. On failure the user gets an error
+ * toast and the error is rethrown for the caller's log.
  */
 export function processChanges(options?: { skipSnapshot?: boolean }): void {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   const skipSnapshot = !!(options && options.skipSnapshot)
   try {
-    clearHighlights()
-    highlightChanges()
+    startStep(ss, 'Checking layout')
+    const trackers = resolveAll(ss)
+    clearLegacyMarkers(ss)
+    finishStep()
+
+    const held: Held[] = []
+    for (const { r, sheets } of trackers) {
+      held.push(highlightTracker(ss, r, sheets))
+    }
     try {
       sortFormChecklistByDone(ss)
     } catch (e) {
       // Cosmetic; never let it block the snapshot.
       Logger.log('Form Checklist sort failed: ' + (e instanceof Error ? e.message : e))
     }
-    if (!skipSnapshot) snapshot()
+    if (!skipSnapshot) {
+      for (const h of held) writeSnapshot(ss, h)
+      markSnapshotFormatV2()
+    }
   } catch (e) {
     failFlow(ss, e)
     throw e
@@ -183,14 +211,15 @@ export function processChangesWithoutSnapshot(): void {
 export function snapshot(): void {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   runStandaloneIfNeeded(ss, 'Snapshot', () => {
-    TRACKERS.forEach((t) => {
-      try {
-        captureSnapshotForTracker(ss, t)
-      } catch (e) {
-        Logger.log('Snapshot failed for ' + t.key + ': ' + (e instanceof Error ? e.message : e))
-        throw e
-      }
-    })
+    for (const { r, sheets } of resolveAll(ss)) {
+      startStep(ss, 'Reading ' + r.spec.displaySheet)
+      const current = readDataBlock(r, sheets.data)
+      const snap = ss.getSheetByName(snapshotSheetName(r.spec.key))
+      finishStep()
+      // Standalone: we haven't read the old snapshot, so always clear it.
+      writeSnapshot(ss, { r, snap, current, previousLastRow: Number.MAX_SAFE_INTEGER, previousIsV2: false })
+    }
+    markSnapshotFormatV2()
   })
 }
 
@@ -198,23 +227,193 @@ export function snapshot(): void {
 export function highlightChanges(): void {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   runStandaloneIfNeeded(ss, 'Highlight changes', () => {
-    TRACKERS.forEach((t) => {
-      try {
-        applyHighlightsForTracker(ss, t)
-      } catch (e) {
-        Logger.log('Highlight failed for ' + t.key + ': ' + (e instanceof Error ? e.message : e))
-        throw e
-      }
-    })
+    const trackers = resolveAll(ss)
+    clearLegacyMarkers(ss)
+    for (const { r, sheets } of trackers) highlightTracker(ss, r, sheets)
   })
 }
 
-/** Public entry: clear highlight backgrounds (and markers) on every tracker. */
+/** Public entry: clear highlight backgrounds on every tracker's tracked block. */
 export function clearHighlights(): void {
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   runStandaloneIfNeeded(ss, 'Clear highlights', () => {
-    TRACKERS.forEach((t) => clearHighlightsForTracker(ss, t))
+    for (const { r, sheets } of resolveAll(ss)) {
+      startStep(ss, 'Clearing ' + r.spec.displaySheet)
+      const numRows = displayRowCount(sheets.display, r)
+      const width = r.maxDisplayCol - r.minDisplayCol + 1
+      for (let offset = 0; offset < numRows; offset += WRITE_CHUNK_ROWS) {
+        const n = Math.min(WRITE_CHUNK_ROWS, numRows - offset)
+        sheets.display.getRange(r.spec.displayFirstRow + offset, r.minDisplayCol, n, width).setBackground(null)
+      }
+      finishStep()
+    }
   })
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+function displayRowCount(display: Sheet, r: ResolvedTracker): number {
+  return Math.max(0, display.getLastRow() - r.spec.displayFirstRow + 1)
+}
+
+/** The whole tracked block of the data sheet, from dataFirstRow to the last row. One read. */
+export function readDataBlock(r: ResolvedTracker, data: Sheet): CellValue[][] {
+  const lastRow = data.getLastRow()
+  const numRows = lastRow - r.spec.dataFirstRow + 1
+  if (numRows <= 0) return []
+  return data
+    .getRange(r.spec.dataFirstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1)
+    .getValues() as CellValue[][]
+}
+
+/**
+ * The snapshot's rows for this tracker, aligned so that index i is data row
+ * dataFirstRow + i — regardless of whether the sheet holds a v1 or v2 layout.
+ * Returns null when there is no usable snapshot yet.
+ */
+export function readSnapshotBlock(r: ResolvedTracker, snap: Sheet | null): { rows: CellValue[][]; lastRow: number; isV2: boolean } | null {
+  if (!snap) return null
+  const isV2 = snapshotFormatOnDisk() === SNAPSHOT_FORMAT_V2
+  const firstRow = isV2 ? r.spec.dataFirstRow : (V1_HEADER_ROWS[r.spec.key] ?? 1) + 1
+  const lastRow = snap.getLastRow()
+  const numRows = lastRow - firstRow + 1
+  if (numRows <= 0) return null
+  const rows = snap.getRange(firstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1).getValues() as CellValue[][]
+  return { rows, lastRow, isV2 }
+}
+
+function snapshotFormatOnDisk(): string | null {
+  return PropertiesService.getDocumentProperties().getProperty(SNAPSHOT_FORMAT_PROPERTY)
+}
+function markSnapshotFormatV2(): void {
+  PropertiesService.getDocumentProperties().setProperty(SNAPSHOT_FORMAT_PROPERTY, SNAPSHOT_FORMAT_V2)
+}
+
+// ---------------------------------------------------------------------------
+// Diff + paint
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure diff: for each data row, the background of every display column in
+ * [minDisplayCol, maxDisplayCol] (null = clear), and the count of changed
+ * cells. Excluded columns are always null. Rows beyond the snapshot compare
+ * against blanks (new Pokémon show as changed).
+ */
+export function diffBlocks(
+  r: ResolvedTracker,
+  snapValues: CellValue[][],
+  currentValues: CellValue[][],
+): { backgrounds: (string | null)[][]; changed: number } {
+  const width = r.maxDisplayCol - r.minDisplayCol + 1
+  const backgrounds: (string | null)[][] = []
+  let changed = 0
+  for (let i = 0; i < currentValues.length; i++) {
+    const row = new Array<string | null>(width).fill(null)
+    const cur = currentValues[i] ?? []
+    const old = snapValues[i] ?? []
+    for (const cell of r.cells) {
+      if (cell.color === null) continue
+      const k = cell.dataCol - r.minDataCol
+      if (String(old[k] ?? '') !== String(cur[k] ?? '')) {
+        row[cell.displayCol - r.minDisplayCol] = cell.color
+        changed++
+      }
+    }
+    backgrounds.push(row)
+  }
+  return { backgrounds, changed }
+}
+
+/**
+ * The permutation that sorts `keys` ascending the way Sheets does for a
+ * mixed numeric/text key column (numbers first, ascending; then text,
+ * case-insensitive; blanks last; stable). Returns null when already sorted.
+ */
+export function outOfOrder(keys: CellValue[]): boolean {
+  for (let i = 1; i < keys.length; i++) {
+    if (compareKeys(keys[i - 1]!, keys[i]!) > 0) return true
+  }
+  return false
+}
+
+function compareKeys(a: CellValue, b: CellValue): number {
+  const an = typeof a === 'number' ? a : Number(a)
+  const bn = typeof b === 'number' ? b : Number(b)
+  const aNum = a !== '' && a !== null && !Number.isNaN(an)
+  const bNum = b !== '' && b !== null && !Number.isNaN(bn)
+  if (aNum && bNum) return an - bn
+  if (aNum) return -1
+  if (bNum) return 1
+  const as = a === null ? '' : String(a)
+  const bs = b === null ? '' : String(b)
+  if (as === '' && bs !== '') return 1
+  if (bs === '' && as !== '') return -1
+  return as.localeCompare(bs, undefined, { sensitivity: 'base' })
+}
+
+/**
+ * Re-sort the display's data rows by the key column, but only when they are
+ * actually out of order (a slicer or manual sort moved them). Painting is by
+ * row offset, so the display must be in the data sheet's canonical order.
+ */
+export function ensureDisplayOrder(display: Sheet, r: ResolvedTracker): boolean {
+  const numRows = displayRowCount(display, r)
+  if (numRows <= 1) return false
+  const keys = display
+    .getRange(r.spec.displayFirstRow, r.spec.sortDisplayColumn, numRows, 1)
+    .getValues()
+    .map((row) => row[0] as CellValue)
+  if (!outOfOrder(keys)) return false
+  const lastCol = display.getLastColumn()
+  display
+    .getRange(r.spec.displayFirstRow, 1, numRows, lastCol)
+    .sort({ column: r.spec.sortDisplayColumn, ascending: true })
+  Logger.log(`${r.spec.key}: display was out of order; re-sorted by column ${r.spec.sortDisplayColumn}`)
+  return true
+}
+
+/**
+ * One tracker: read data + snapshot, diff, paint the tracked block (null
+ * backgrounds clear old highlights), and return the values for the snapshot
+ * step so nothing is read twice.
+ */
+export type Held = {
+  r: ResolvedTracker
+  snap: Sheet | null
+  current: CellValue[][]
+  /** Last row of the snapshot sheet as found (0 = none) and whether it was already v2. */
+  previousLastRow: number
+  previousIsV2: boolean
+}
+
+export function highlightTracker(ss: Spreadsheet, r: ResolvedTracker, sheets: Sheets): Held {
+  startStep(ss, 'Highlighting ' + r.spec.displaySheet)
+  const snap = ss.getSheetByName(snapshotSheetName(r.spec.key))
+  const current = readDataBlock(r, sheets.data)
+  const previous = readSnapshotBlock(r, snap)
+  const held = { r, snap, current, previousLastRow: previous?.lastRow ?? 0, previousIsV2: previous?.isV2 ?? true }
+
+  if (!previous) {
+    Logger.log(`${r.spec.key}: no snapshot yet, nothing to highlight`)
+    finishStep()
+    return held
+  }
+
+  ensureDisplayOrder(sheets.display, r)
+
+  const { backgrounds, changed } = diffBlocks(r, previous.rows, current)
+  const width = r.maxDisplayCol - r.minDisplayCol + 1
+  for (let offset = 0; offset < backgrounds.length; offset += WRITE_CHUNK_ROWS) {
+    const chunk = backgrounds.slice(offset, offset + WRITE_CHUNK_ROWS)
+    sheets.display
+      .getRange(r.spec.displayFirstRow + offset, r.minDisplayCol, chunk.length, width)
+      .setBackgrounds(chunk)
+  }
+  finishStep()
+  Logger.log(`${r.spec.key}: highlighted ${changed} changed cells over ${current.length} rows`)
+  return held
 }
 
 // ---------------------------------------------------------------------------
@@ -222,178 +421,44 @@ export function clearHighlights(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Write a single tracker's current data values into its hidden snapshot sheet,
- * creating the sheet on first run. Reads/writes in CHUNK_ROWS-sized batches.
+ * Write the tracker's current values into its hidden snapshot sheet (v2
+ * layout: same rows/columns as the data sheet, header band copied above for
+ * readability). Creates the sheet on first run. The old contents are only
+ * cleared when they could leave stale rows behind (upgrade from v1, or the
+ * data shrank) — otherwise the writes simply overwrite in place.
  */
-export function captureSnapshotForTracker(ss: Spreadsheet, t: Tracker): void {
-  startStep(ss, 'Snapshotting ' + t.displaySheet)
-  const data = ss.getSheetByName(t.dataSheet)
-  const display = ss.getSheetByName(t.displaySheet)
-  if (!data) throw new Error(t.dataSheet + ' not found')
-  if (!display) throw new Error(t.displaySheet + ' not found')
-
-  const { minDataCol, maxDataCol, count } = dataColumnSpan(t)
-
-  const lastRow = data.getLastRow()
-  if (lastRow < t.dataFirstRow) {
-    Logger.log(t.key + ': no data to snapshot')
-    return
-  }
-  const numRows = lastRow - t.dataFirstRow + 1
-
-  const snapName = snapshotSheetName(t.key)
-  let snap = ss.getSheetByName(snapName)
+export function writeSnapshot(ss: Spreadsheet, h: Held): void {
+  const { r, current } = h
+  startStep(ss, 'Snapshotting ' + r.spec.displaySheet)
+  let snap = h.snap
+  const newLastRow = r.spec.dataFirstRow + current.length - 1
   if (!snap) {
-    snap = ss.insertSheet(snapName)
+    snap = ss.insertSheet(snapshotSheetName(r.spec.key))
     snap.hideSheet()
-  } else {
+  } else if (!h.previousIsV2 || h.previousLastRow > newLastRow) {
     snap.clear()
   }
-
-  let snapDataStartRow = 1
-  if (t.includeHeaders) {
-    const numHeaderRows = t.headerRows || 1
-    const headers = data.getRange(1, minDataCol, numHeaderRows, count).getValues()
-    snap.getRange(1, minDataCol, numHeaderRows, count).setValues(headers)
-    snapDataStartRow = numHeaderRows + 1
-  }
-
-  for (let offset = 0; offset < numRows; offset += CHUNK_ROWS) {
-    const chunkSize = Math.min(CHUNK_ROWS, numRows - offset)
-    const values = data.getRange(t.dataFirstRow + offset, minDataCol, chunkSize, count).getValues()
-    snap.getRange(snapDataStartRow + offset, minDataCol, chunkSize, count).setValues(values)
-  }
-
-  if (minDataCol > 1) snap.hideColumns(1, minDataCol - 1)
-
-  finishStep()
-  Logger.log(`${t.key}: snapshot captured, ${numRows} rows, cols ${minDataCol}-${maxDataCol}`)
-}
-
-// ---------------------------------------------------------------------------
-// Highlight
-// ---------------------------------------------------------------------------
-
-/**
- * Sort a display sheet's data rows in place, ascending, by one column so its
- * row order matches the data sheet's canonical order. Header rows stay put.
- */
-export function sortDisplayByColumn(display: Sheet, t: Tracker): void {
-  if (!t.sortDisplayColumn) return
-  const lastRow = display.getLastRow()
-  if (lastRow <= t.displayFirstRow) return
-  const lastCol = display.getLastColumn()
-  const numRows = lastRow - t.displayFirstRow + 1
-  display
-    .getRange(t.displayFirstRow, 1, numRows, lastCol)
-    .sort({ column: t.sortDisplayColumn, ascending: true })
-}
-
-export type CellMapping = { idx: number; displayIdx: number; color: string }
-
-/** Precompute, per tracked data column, where it paints and in what colour. */
-export function cellMappingsFor(t: Tracker): CellMapping[] {
-  const { dataCols, minDataCol } = dataColumnSpan(t)
-  const highlightColor = t.highlightColor || DEX_HIGHLIGHT_COLOR
-  const out: CellMapping[] = []
-  for (const dataCol of dataCols) {
-    const displayCol = t.columnMap[dataCol]!
-    if (t.excludeDisplayColumns && t.excludeDisplayColumns.has(displayCol)) continue
-    out.push({
-      idx: dataCol - minDataCol,
-      displayIdx: displayCol - 1,
-      color: (t.columnHighlightColors && t.columnHighlightColors[displayCol]) || highlightColor,
+  const width = r.maxDataCol - r.minDataCol + 1
+  const headerRows = Math.min(r.spec.dataFirstRow - 1, r.dataBand.length)
+  if (headerRows > 0) {
+    const band = r.dataBand.slice(0, headerRows).map((row) => {
+      const out: CellValue[] = []
+      for (let c = r.minDataCol; c <= r.maxDataCol; c++) out.push((row[c - 1] as CellValue) ?? '')
+      return out
     })
+    snap.getRange(1, r.minDataCol, headerRows, width).setValues(band)
   }
-  return out
-}
-
-/**
- * Pure diff of one chunk: for each row, which display cells changed and in
- * what colour. `backgrounds` is `width` wide starting at display column 1.
- */
-export function diffChunk(
-  snapValues: unknown[][],
-  currentValues: unknown[][],
-  mappings: CellMapping[],
-  width: number,
-): { backgrounds: (string | null)[][]; rowChanged: boolean[]; changed: number } {
-  const backgrounds: (string | null)[][] = []
-  const rowChanged: boolean[] = []
-  let changed = 0
-  for (let r = 0; r < snapValues.length; r++) {
-    const row: (string | null)[] = new Array<string | null>(width).fill(null)
-    let any = false
-    const snapRow = snapValues[r] ?? []
-    const currentRow = currentValues[r] ?? []
-    for (const m of mappings) {
-      if (String(snapRow[m.idx]) !== String(currentRow[m.idx])) {
-        row[m.displayIdx] = m.color
-        any = true
-        changed++
-      }
-    }
-    backgrounds.push(row)
-    rowChanged.push(any)
+  for (let offset = 0; offset < current.length; offset += WRITE_CHUNK_ROWS) {
+    const chunk = current.slice(offset, offset + WRITE_CHUNK_ROWS)
+    snap.getRange(r.spec.dataFirstRow + offset, r.minDataCol, chunk.length, width).setValues(chunk)
   }
-  return { backgrounds, rowChanged, changed }
-}
-
-/**
- * Diff a single tracker's snapshot against current data and paint changed
- * cells on the display sheet; write a per-row marker when `useFilter`.
- */
-export function applyHighlightsForTracker(ss: Spreadsheet, t: Tracker): void {
-  startStep(ss, 'Highlighting ' + t.displaySheet)
-  const data = ss.getSheetByName(t.dataSheet)
-  const display = ss.getSheetByName(t.displaySheet)
-  const snap = ss.getSheetByName(snapshotSheetName(t.key))
-  if (!data || !display) throw new Error('Required sheet not found for ' + t.key)
-
-  // Hide the marker column even on the very first (snapshot-less) upload.
-  const markerCol = markerColumnFor(t)
-  if (markerCol) display.hideColumns(markerCol)
-
-  if (!snap) {
-    Logger.log(t.key + ': no snapshot exists, skipping')
-    return
-  }
-
-  sortDisplayByColumn(display, t)
-
-  const { minDataCol, count } = dataColumnSpan(t)
-  const snapDataStartRow = t.includeHeaders ? (t.headerRows || 1) + 1 : 1
-  const snapLastRow = snap.getLastRow()
-  if (snapLastRow < snapDataStartRow) {
-    Logger.log(t.key + ': snapshot is empty')
-    return
-  }
-  const snapDataRows = snapLastRow - snapDataStartRow + 1
-  const displayMaxCol = Math.max(...Object.values(t.columnMap))
-  const mappings = cellMappingsFor(t)
-
-  let totalChanged = 0
-  for (let offset = 0; offset < snapDataRows; offset += CHUNK_ROWS) {
-    const chunkSize = Math.min(CHUNK_ROWS, snapDataRows - offset)
-    const dataRow = t.dataFirstRow + offset
-    const displayRow = t.displayFirstRow + offset
-
-    const snapValues = snap.getRange(snapDataStartRow + offset, minDataCol, chunkSize, count).getValues()
-    const currentValues = data.getRange(dataRow, minDataCol, chunkSize, count).getValues()
-    const { backgrounds, rowChanged, changed } = diffChunk(snapValues, currentValues, mappings, displayMaxCol)
-    totalChanged += changed
-
-    display.getRange(displayRow, 1, chunkSize, displayMaxCol).setBackgrounds(backgrounds)
-    if (markerCol) {
-      display
-        .getRange(displayRow, markerCol, chunkSize, 1)
-        .setValues(rowChanged.map((c) => [c ? '●' : '']))
-    }
-  }
-
   finishStep()
-  Logger.log(`${t.key}: highlighted ${totalChanged} changed cells`)
+  Logger.log(`${r.spec.key}: snapshot written, ${current.length} rows`)
 }
+
+// ---------------------------------------------------------------------------
+// Housekeeping
+// ---------------------------------------------------------------------------
 
 /**
  * Sort the Form Checklist's data rows by column C ("Done") ascending so
@@ -414,62 +479,27 @@ export function sortFormChecklistByDone(ss: Spreadsheet): void {
   finishStep()
 }
 
-// ---------------------------------------------------------------------------
-// Clear
-// ---------------------------------------------------------------------------
-
-/** Collapse sorted row offsets into contiguous {start, count} runs. */
-export function toRuns(sortedOffsets: number[]): { start: number; count: number }[] {
-  const runs: { start: number; count: number }[] = []
-  let i = 0
-  while (i < sortedOffsets.length) {
-    const start = sortedOffsets[i]!
-    let end = start
-    while (i + 1 < sortedOffsets.length && sortedOffsets[i + 1] === sortedOffsets[i]! + 1) {
-      i++
-      end = sortedOffsets[i]!
-    }
-    runs.push({ start, count: end - start + 1 })
-    i++
-  }
-  return runs
-}
-
 /**
- * Clear highlight backgrounds for one tracker. With `useFilter`, reads the
- * marker column to clear only the rows that were highlighted; otherwise
- * clears in chunks.
+ * One-time cleanup after the marker-column workflow was removed: blank the
+ * `●` markers the old code left in the (hidden) columns past each display
+ * block. Idempotent via a document property; costs one clearContent per
+ * tracker, once.
  */
-export function clearHighlightsForTracker(ss: Spreadsheet, t: Tracker): void {
-  startStep(ss, 'Clearing ' + t.displaySheet)
-  const display = ss.getSheetByName(t.displaySheet)
-  if (!display) return
-  const lastRow = display.getLastRow()
-  if (lastRow < t.displayFirstRow) return
-
-  const maxCol = Math.max(...Object.values(t.columnMap))
-  const markerCol = markerColumnFor(t)
-  const numRows = lastRow - t.displayFirstRow + 1
-
-  if (markerCol) {
-    const markerValues = display.getRange(t.displayFirstRow, markerCol, numRows, 1).getValues()
-    const changedOffsets: number[] = []
-    for (let r = 0; r < numRows; r++) {
-      if (markerValues[r]![0] !== '') changedOffsets.push(r)
-    }
-    if (changedOffsets.length > 0) {
-      toRuns(changedOffsets).forEach(({ start, count }) => {
-        display.getRange(t.displayFirstRow + start, 1, count, maxCol).setBackground(null)
-      })
-    }
-    display.getRange(t.displayFirstRow, markerCol, numRows, 1).clearContent()
-  } else {
-    for (let offset = 0; offset < numRows; offset += CHUNK_ROWS) {
-      const chunkSize = Math.min(CHUNK_ROWS, numRows - offset)
-      display.getRange(t.displayFirstRow + offset, 1, chunkSize, maxCol).setBackground(null)
-    }
+export function clearLegacyMarkers(ss: Spreadsheet): void {
+  const props = PropertiesService.getDocumentProperties()
+  if (props.getProperty(LEGACY_MARKERS_PROPERTY)) return
+  for (const spec of TRACKER_SPECS) {
+    const col = LEGACY_MARKER_COLUMNS[spec.key]
+    const display = ss.getSheetByName(spec.displaySheet)
+    if (!col || !display) continue
+    const numRows = display.getLastRow() - spec.displayFirstRow + 1
+    if (numRows <= 0) continue
+    const range = display.getRange(spec.displayFirstRow, col, numRows, 1)
+    // Only ever blank a column that holds nothing but our markers.
+    const values = range.getValues()
+    if (!values.every((row) => row[0] === '' || row[0] === '●')) continue
+    if (values.some((row) => row[0] === '●')) range.clearContent()
   }
-
-  finishStep()
-  Logger.log(t.key + ': highlights cleared')
+  props.setProperty(LEGACY_MARKERS_PROPERTY, 'true')
+  Logger.log('Legacy marker columns cleared')
 }
