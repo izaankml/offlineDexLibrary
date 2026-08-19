@@ -109,12 +109,12 @@ API instead:
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
    the display is physically re-sorted first — otherwise no sort.
 3. *Snapshotting* — ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
-   few cells** of the hidden `_snapshot_<key>` sheet (v3: A1 = metadata `{v, firstRow,
-   minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). Older
-   grid snapshots (v1/v2) are read once through SpreadsheetApp and converted; the
-   `OFFLINEDEX_SNAPSHOT_FORMAT` property says which is on disk. `labels` lets a later
-   upload realign the baseline by header label if the creator inserts a column between
-   uploads (k-th occurrence ↔ k-th occurrence, since "SHINY"/"Friendship" repeat).
+   few cells** of the hidden `_snapshot_<key>` sheet (A1 = metadata `{v, firstRow,
+   minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). A
+   snapshot sheet whose A1 is not that metadata counts as "no baseline" and is wiped on
+   the first write. `labels` lets a later upload realign the baseline by header label if
+   the creator inserts a column between uploads (k-th occurrence ↔ k-th occurrence, since
+   "SHINY"/"Friendship" repeat).
 
 That is 4 API calls per upload (was ≈100 SpreadsheetApp calls, 4 sorts). The old Form
 Checklist "unchecked first" sort was dropped altogether (2026-08-18): it's one click by hand
@@ -274,7 +274,7 @@ checks out `creator` in the working tree.
 
 - **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. The old workaround (copy the source SHEET into the destination as a temp, copyTo, delete) was replaced in 2026-08 by reading formats through the Sheets API and writing them with `updateCells` — one read, one atomic write, no temp sheets.
 - **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
-- **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; it turned out the paint step already writes `null` into every unchanged tracked cell, so the clear pass and the marker column were redundant — and the marker column collided with creator columns (6.03 Ribbons). `clearLegacyMarkers` blanks the old markers once.
+- **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; the painted rows are now remembered in the snapshot metadata instead — and the marker column collided with creator columns (6.03 Ribbons).
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
 - **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.

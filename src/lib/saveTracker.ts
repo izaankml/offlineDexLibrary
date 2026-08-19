@@ -23,10 +23,9 @@
  *   1 values.batchUpdate (snapshots as compact JSON in a few cells)
  * plus, only if a slicer moved rows, a display sort.
  *
- * Snapshot format v3: `_snapshot_<key>` holds JSON — A1 = metadata (rows,
+ * Snapshot format: `_snapshot_<key>` holds JSON — A1 = metadata (rows,
  * columns, which display rows are currently highlighted), A2… = chunks of
- * rows. Older grid snapshots (v1: data from row headerRows+1; v2: data at the
- * data sheet's own row numbers) are still read once and converted.
+ * rows. A sheet whose A1 is not that metadata is treated as "no baseline".
  */
 
 import {
@@ -61,24 +60,8 @@ export const QUICK_CHECKLIST_HIGHLIGHT_COLOR = '#ffff00' // yellow
 export const DEX_HIGHLIGHT_COLOR = '#93c47d' // light green 1
 export const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
 
-/** Which snapshot layout is on disk: '3' = JSON cells; '2' = grid at data rows; unset = v1 grid. */
-export const SNAPSHOT_FORMAT_PROPERTY = 'OFFLINEDEX_SNAPSHOT_FORMAT'
-export const SNAPSHOT_FORMAT_V3 = '3'
-const V1_HEADER_ROWS: Record<string, number> = {
-  QuickChecklist: 1,
-  StarterDex: 2,
-  FullDex: 2,
-}
 /** Max characters per snapshot cell (Sheets allows 50,000). */
 const SNAPSHOT_CELL_CHARS = 45000
-
-/** Columns the old marker workflow wrote `●` into (Quick Checklist Q, dex sheets EF); cleared once. */
-export const LEGACY_MARKERS_PROPERTY = 'OFFLINEDEX_LEGACY_MARKERS_CLEARED'
-const LEGACY_MARKER_COLUMNS: Record<string, number> = {
-  QuickChecklist: 17,
-  StarterDex: 136,
-  FullDex: 136,
-}
 
 // ---------------------------------------------------------------------------
 // Tracker specs — header labels, not column numbers. See src/lib/layout.ts.
@@ -276,10 +259,10 @@ export type Loaded = {
   current: CellValue[][]
   /** Baseline rows aligned to `current` (index 0 = dataFirstRow), or null when none exists yet. */
   previous: CellValue[][] | null
-  /** Metadata of the v3 snapshot on disk, or null (none / legacy). */
+  /** Metadata of the snapshot on disk, or null when there is none. */
   meta: SnapshotMeta | null
-  /** Legacy grid snapshot that must be converted on the next write. */
-  legacy: boolean
+  /** The snapshot sheet exists but holds no usable metadata: wipe it before writing. */
+  stale: boolean
 }
 
 export type Workbook = { info: SpreadsheetInfo; loaded: Loaded[] }
@@ -360,8 +343,7 @@ function rowCountOf(
 /**
  * Read everything the flow needs in one metadata GET and one values.batchGet:
  * the whole data sheets (header band + values), the display header bands and
- * key columns, and the v3 snapshots. Legacy snapshots are read through
- * SpreadsheetApp (once; they're converted on the next write).
+ * key columns, and the snapshots.
  */
 export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
   const info = client.get(ss.getId(), {
@@ -379,11 +361,6 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
       }
     }
   }
-  const v3 =
-    PropertiesService.getDocumentProperties().getProperty(
-      SNAPSHOT_FORMAT_PROPERTY,
-    ) === SNAPSHOT_FORMAT_V3
-
   const ranges: string[] = []
   for (const spec of TRACKER_SPECS) {
     const dataTitle = apiTitle(info, spec.dataSheet, ss)
@@ -400,7 +377,7 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
     )
     const snapName = snapshotSheetName(spec.key)
     ranges.push(
-      v3 && sheetExists(info, snapName)
+      sheetExists(info, snapName)
         ? sheetRange(snapName, `A1:A${rowCountOf(info, snapName)}`)
         : '',
     )
@@ -422,7 +399,7 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
     const displayBand = take(true)
     const keyCol = take(true)
     const snapName = snapshotSheetName(spec.key)
-    const snapCells = take(v3 && sheetExists(info, snapName))
+    const snapCells = take(sheetExists(info, snapName))
 
     const dataBand = padValues(
       dataAll.slice(0, HEADER_BAND_ROWS),
@@ -448,24 +425,14 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
 
     let previous: CellValue[][] | null = null
     let meta: SnapshotMeta | null = null
-    let legacy = false
-    if (v3) {
-      if (snapCells.length) {
-        const flat = snapCells.map((row) => row[0])
-        meta = parseMeta(flat[0])
-        if (meta) {
-          previous = realign(decodeSnapshotChunks(flat.slice(1)), meta, r)
-        } else {
-          legacy = true // a grid left over from an older format: clear it on the next write
-        }
-      }
-    } else {
-      const legacyRows = readLegacySnapshot(ss, r)
-      if (legacyRows) {
-        previous = legacyRows
-        legacy = true
-      }
+    if (snapCells.length) {
+      const flat = snapCells.map((row) => row[0])
+      meta = parseMeta(flat[0])
+      if (meta) previous = realign(decodeSnapshotChunks(flat.slice(1)), meta, r)
     }
+    // A snapshot sheet that exists but carries no metadata holds something
+    // else (e.g. an older layout): wipe it before the first write.
+    const stale = sheetExists(info, snapName) && !meta
     loaded.push({
       r,
       sheetId: sheetIdByTitle(info, spec.displaySheet, ss),
@@ -473,13 +440,13 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
       current,
       previous,
       meta,
-      legacy,
+      stale,
     })
   }
   return { info, loaded }
 }
 
-/** A1 of a v3 snapshot sheet holds the JSON metadata; anything else is not a v3 snapshot. */
+/** A1 of a snapshot sheet holds the JSON metadata; anything else is not a snapshot. */
 function parseMeta(cell: unknown): SnapshotMeta | null {
   const text = String(cell ?? '')
   if (!text.startsWith('{')) return null
@@ -492,7 +459,7 @@ function parseMeta(cell: unknown): SnapshotMeta | null {
 }
 
 /**
- * Re-map a v3 snapshot onto the current tracked span when the creator moved
+ * Re-map a snapshot onto the current tracked span when the creator moved
  * columns between uploads: columns are matched by header label (the k-th
  * occurrence of a label maps to the k-th occurrence — "SHINY" and
  * "Friendship" repeat), unmatched columns compare against blank.
@@ -539,33 +506,13 @@ function normalize(s: unknown): string {
     .toLowerCase()
 }
 
-/** v1/v2 grid snapshots via SpreadsheetApp; null when there is none. */
-function readLegacySnapshot(
-  ss: Spreadsheet,
-  r: ResolvedTracker,
-): CellValue[][] | null {
-  const snap = ss.getSheetByName(snapshotSheetName(r.spec.key))
-  if (!snap) return null
-  const format = PropertiesService.getDocumentProperties().getProperty(
-    SNAPSHOT_FORMAT_PROPERTY,
-  )
-  const firstRow =
-    format === '2' ? r.spec.dataFirstRow : (V1_HEADER_ROWS[r.spec.key] ?? 1) + 1
-  const lastRow = snap.getLastRow()
-  const numRows = lastRow - firstRow + 1
-  if (numRows <= 0) return null
-  return snap
-    .getRange(firstRow, r.minDataCol, numRows, r.maxDataCol - r.minDataCol + 1)
-    .getValues() as CellValue[][]
-}
-
 // ---------------------------------------------------------------------------
 // Painting (one batchUpdate) and snapshot writing (one values.batchUpdate)
 // ---------------------------------------------------------------------------
 
 /**
  * Requests that clear last time's highlighted rows and paint this time's.
- * With no metadata (first v3 run) the whole tracked block is cleared once.
+ * With no metadata (first baseline) the whole tracked block is cleared once.
  */
 export function paintRequests(
   l: Loaded,
@@ -627,7 +574,7 @@ export function paintRequests(
   return { requests, painted }
 }
 
-/** The values.batchUpdate entries that store `rows` (+ meta) as the v3 snapshot of a tracker. */
+/** The values.batchUpdate entries that store `rows` (+ meta) as the snapshot of a tracker. */
 export function snapshotWrites(
   l: Loaded,
   rows: CellValue[][],
@@ -673,14 +620,14 @@ function metaWrite(
   }
 }
 
-/** Make sure each of these trackers' snapshot sheets exists (hidden) and, for legacy grids, is emptied. */
+/** Make sure each of these trackers' snapshot sheets exists (hidden); a stale one is emptied first. */
 function prepareSnapshotSheets(ss: Spreadsheet, loaded: Loaded[]): void {
   for (const l of loaded) {
     const name = snapshotSheetName(l.r.spec.key)
     const sheet = ss.getSheetByName(name)
     if (!sheet) {
       ss.insertSheet(name).hideSheet()
-    } else if (l.legacy) {
+    } else if (l.stale) {
       sheet.clear()
     }
   }
@@ -723,7 +670,6 @@ export function processChanges(
   try {
     startStep(ss, 'Reading sheets')
     const wb = loadWorkbook(ss, client)
-    clearLegacyMarkers(ss)
 
     startStep(ss, 'Highlighting changes')
     const paint: Request[] = []
@@ -756,8 +702,6 @@ export function processChanges(
         writes.push(...snapshotWrites(l, l.current, painted[i]!))
       } else if (!l.previous) {
         return // no baseline yet and we were asked not to create one
-      } else if (l.legacy || !l.meta) {
-        writes.push(...snapshotWrites(l, l.previous, painted[i]!)) // convert; baseline kept
       } else {
         writes.push(metaWrite(l, painted[i]!))
       }
@@ -765,11 +709,6 @@ export function processChanges(
     })
     prepareSnapshotSheets(ss, touched)
     if (writes.length) client.valuesBatchUpdate(ss.getId(), writes)
-    // Every snapshot on disk is now v3 (converted above) or absent.
-    PropertiesService.getDocumentProperties().setProperty(
-      SNAPSHOT_FORMAT_PROPERTY,
-      SNAPSHOT_FORMAT_V3,
-    )
     finishStep()
   } catch (e) {
     failFlow(ss, e)
@@ -802,10 +741,6 @@ export function snapshot(client: SheetsClient = liveSheets): void {
         snapshotWrites(l, l.current, l.meta?.painted ?? []),
       ),
     )
-    PropertiesService.getDocumentProperties().setProperty(
-      SNAPSHOT_FORMAT_PROPERTY,
-      SNAPSHOT_FORMAT_V3,
-    )
     finishStep()
   })
 }
@@ -829,9 +764,7 @@ export function clearHighlights(client: SheetsClient = liveSheets): void {
       requests.push(...paintRequests({ ...l, meta: null }, new Map()).requests)
     }
     if (requests.length) client.batchUpdate(ss.getId(), requests)
-    const writes = wb.loaded
-      .filter((l) => l.meta && !l.legacy)
-      .map((l) => metaWrite(l, []))
+    const writes = wb.loaded.filter((l) => l.meta).map((l) => metaWrite(l, []))
     if (writes.length) client.valuesBatchUpdate(ss.getId(), writes)
     finishStep()
   })
@@ -852,26 +785,3 @@ export function describeLayout(client: SheetsClient = liveSheets): string {
 // ---------------------------------------------------------------------------
 // Housekeeping
 // ---------------------------------------------------------------------------
-
-/**
- * One-time cleanup after the marker-column workflow was removed: blank the
- * `●` markers the old code left in the (hidden) columns past each display
- * block — only if that column holds nothing else. Idempotent via a property.
- */
-export function clearLegacyMarkers(ss: Spreadsheet): void {
-  const props = PropertiesService.getDocumentProperties()
-  if (props.getProperty(LEGACY_MARKERS_PROPERTY)) return
-  for (const spec of TRACKER_SPECS) {
-    const col = LEGACY_MARKER_COLUMNS[spec.key]
-    const display = ss.getSheetByName(spec.displaySheet)
-    if (!col || !display) continue
-    const numRows = display.getLastRow() - spec.displayFirstRow + 1
-    if (numRows <= 0) continue
-    const range = display.getRange(spec.displayFirstRow, col, numRows, 1)
-    const values = range.getValues()
-    if (!values.every((row) => row[0] === '' || row[0] === '●')) continue
-    if (values.some((row) => row[0] === '●')) range.clearContent()
-  }
-  props.setProperty(LEGACY_MARKERS_PROPERTY, 'true')
-  Logger.log('Legacy marker columns cleared')
-}

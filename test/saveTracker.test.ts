@@ -18,9 +18,7 @@ import { HEADERS } from './fixtures.ts'
 import {
   DEX_HIGHLIGHT_COLOR,
   INCREMENT_HIGHLIGHT_COLOR,
-  LEGACY_MARKERS_PROPERTY,
   QUICK_CHECKLIST_HIGHLIGHT_COLOR,
-  SNAPSHOT_FORMAT_PROPERTY,
   TRACKER_SPECS,
   clearHighlights,
   decodeSnapshotChunks,
@@ -39,8 +37,6 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const Q = LAYOUT_603.quick
 
 beforeEach(() => resetFakes())
-
-const props = () => PropertiesService.getDocumentProperties()
 
 /**
  * The header-keyed probe must reproduce exactly the column maps the old
@@ -158,7 +154,6 @@ test('snapshot → change → highlight paints the right display cells and nothi
     assert.ok(s.hidden)
     assert.match(String(s.valueAt(1, 1)), /^\{"v":3/)
   }
-  assert.equal(props().getProperty(SNAPSHOT_FORMAT_PROPERTY), '3')
 
   const qData = ss.getSheetByName('STARTER_CHECKLIST.data')!
   qData.load(Q.dataFirstRow, Q.dataShinyCol, [[42]]) // Bulbasaur SHINY
@@ -328,69 +323,23 @@ test('clearHighlights blanks the whole tracked block (manual clear), nothing out
   )
 })
 
-test('upgrade from a v2 grid snapshot: diffs once, converts to v3, clears the whole block once', () => {
+test('a snapshot sheet without metadata counts as no baseline and is wiped on the first write', () => {
   const ss = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(ss)
-  props().setProperty(SNAPSHOT_FORMAT_PROPERTY, '2')
-  // v2 layout: header band rows 1..firstRow-1, data at the data sheet's own rows
-  for (const [key, name, col, first, last] of [
-    ['QuickChecklist', 'STARTER_CHECKLIST.data', 4, 12, 11],
-    ['StarterDex', 'STARTER_DEX.data', 12, 3, 143],
-    ['FullDex', 'FULL_DEX.data', 8, 3, 139],
-  ] as const) {
-    const d = ss.getSheetByName(name)!
-    const s = ss.addSheet(snapshotSheetName(key))
-    const width = last - col + 1
-    s.load(1, col, d.readValues(1, col, first - 1, width))
-    s.load(first, col, d.readValues(first, col, 5, width))
-  }
+  const stale = ss.addSheet(snapshotSheetName('QuickChecklist'))
+  stale.load(12, 4, [[1, 2, 3]]) // some old grid content
   const q = ss.getSheetByName('Quick Checklist')!
-  q.load(12, 17, [['●'], [''], ['●'], [''], ['']]) // legacy markers
-  q.writeBackgrounds(13, 8, [['#ff0000']]) // a stale highlight from the old flow
-
-  ss.getSheetByName('STARTER_CHECKLIST.data')!.load(14, 4, [[42]])
+  q.writeBackgrounds(13, 8, [['#ff0000']]) // a stale highlight
   resetToastProgress('upload')
   processChanges()
-  assert.equal(
-    q.backgroundAt(14, 8),
-    QUICK_CHECKLIST_HIGHLIGHT_COLOR,
-    'diffed against the v2 rows',
-  )
+  assert.ok(logs.some((l) => l.includes('QuickChecklist: no snapshot yet')))
   assert.equal(
     q.backgroundAt(13, 8),
     null,
-    'whole block cleared once on upgrade',
+    'block cleared once with the first baseline',
   )
-  assert.equal(q.valueAt(12, 17), '', 'legacy markers cleared')
-  assert.equal(props().getProperty(SNAPSHOT_FORMAT_PROPERTY), '3')
-  assert.equal(props().getProperty(LEGACY_MARKERS_PROPERTY), 'true')
-  const snap = ss.getSheetByName(snapshotSheetName('QuickChecklist'))!
-  assert.match(String(snap.valueAt(1, 1)), /^\{"v":3/)
-  assert.equal(snap.valueAt(1, 4), '', 'old grid cleared')
-
-  resetToastProgress('upload')
-  processChanges()
-  assert.equal(q.backgroundAt(14, 8), null)
-})
-
-test('a display title the API spells differently is still found (via SpreadsheetApp + sheetId)', () => {
-  const ss = buildWorkbook({ rows: 3 })
-  setActiveSpreadsheet(ss)
-  // Give the tab a trailing non-breaking space: SpreadsheetApp finds it by the plain name in
-  // the fake only if names match, so emulate by renaming and registering an alias lookup.
-  const disp = ss.getSheetByName('Starter DEX Checklist')!
-  const original = ss.getSheetByName.bind(ss)
-  disp.name = 'Starter DEX Checklist\u00a0'
-  ;(
-    ss as unknown as { getSheetByName: (n: string) => unknown }
-  ).getSheetByName = (n: string) =>
-    original(n) ?? (n === 'Starter DEX Checklist' ? disp : null)
-  assert.match(describeLayout(), /StarterDex: data L–EM/)
-  assert.ok(
-    logs.some((l) =>
-      l.includes('is titled "Starter DEX Checklist\u00a0" in the API'),
-    ),
-  )
+  assert.match(String(stale.valueAt(1, 1)), /^\{"v":3/)
+  assert.equal(stale.valueAt(12, 4), '', 'old grid wiped')
 })
 
 test('a missing sheet fails the flow visibly instead of leaving a sticky toast', () => {
