@@ -54,6 +54,8 @@ export const QUICK_CHECKLIST_LOCATOR_ROW = 10
 export const QUICK_CHECKLIST_HEADER_ROWS = 10
 export const QUICK_CHECKLIST_TITLE_PREFIX = 'POKEROGUE DEX '
 export const QUICK_CHECKLIST_IMAGE_COLUMN = 2
+/** Sheets' default row height; a non-hidden row at this height is treated as "Fit to data". */
+const DEFAULT_ROW_HEIGHT = 21
 
 // Daily Mode: custom column L (map-size inputs L12:M14 feed the IMAGE formula
 // in B16). Presence is detected by the creator's "Missing Gym Leader
@@ -349,16 +351,20 @@ export function planQuickChecklist(
   if (srcFirst > 1) requests.push(formatRows(1, srcFirst - 1))
   requests.push(formatRows(srcFirst, srcCols))
 
-  // Row heights + hidden rows.
+  // Row heights + hidden rows. A source row at the default height that isn't
+  // hidden is (almost always) "Fit to data" — the API only reports the stored
+  // 21 px, not the rendered height — so those rows are auto-resized in the
+  // destination after the cell contents are written (see below).
+  const autoFitRows: number[] = []
   for (let r = 0; r < QUICK_CHECKLIST_HEADER_ROWS; r++) {
     const m = sGrid?.rowMetadata?.[r] ?? {}
+    const hidden = !!m.hiddenByUser
+    const px = m.pixelSize ?? DEFAULT_ROW_HEIGHT
+    if (!hidden && px === DEFAULT_ROW_HEIGHT) autoFitRows.push(r)
     requests.push({
       updateDimensionProperties: {
         range: { sheetId, dimension: 'ROWS', startIndex: r, endIndex: r + 1 },
-        properties: {
-          pixelSize: m.pixelSize ?? 21,
-          hiddenByUser: !!m.hiddenByUser,
-        },
+        properties: { pixelSize: px, hiddenByUser: hidden },
         fields: 'pixelSize,hiddenByUser',
       },
     })
@@ -421,6 +427,20 @@ export function planQuickChecklist(
     requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, 1, srcFirst - 1))
   requests.push(valueCells(QUICK_CHECKLIST_LOCATOR_ROW, srcFirst, srcCols))
 
+  // "Fit to data" for the auto-height rows, now that their contents are in place.
+  for (const r of autoFitRows) {
+    requests.push({
+      autoResizeDimensions: {
+        dimensions: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: r,
+          endIndex: r + 1,
+        },
+      },
+    })
+  }
+
   // Hide Ribbons (last column of the block).
   requests.push({
     updateDimensionProperties: {
@@ -439,7 +459,12 @@ export function planQuickChecklist(
     { length: QUICK_CHECKLIST_HEADER_ROWS },
     (_, r) => {
       const m = sGrid?.rowMetadata?.[r] ?? {}
-      return `${m.pixelSize ?? '?'}${m.hiddenByUser ? 'h' : ''}`
+      const px = m.pixelSize ?? DEFAULT_ROW_HEIGHT
+      return m.hiddenByUser
+        ? `${px}h`
+        : px === DEFAULT_ROW_HEIGHT
+          ? 'fit'
+          : `${px}`
     },
   ).join('/')
   ops.push({
