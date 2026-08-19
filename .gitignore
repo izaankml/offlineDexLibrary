@@ -7,7 +7,6 @@ bound/*
 !bound/LoadPlayerData.js
 !bound/UploadPlayerData.html
 !bound/appsscript.json
-!bound/.claspignore
 !bound/OfflineDexBound.js
 !bound/OfflineDexUpload.html
 

@@ -93,31 +93,11 @@ export class FakeRange {
       `${this.sheet.name}.${name}(${this.row},${this.col},${this.numRows},${this.numCols})`,
     )
   }
-  getRow(): number {
-    return this.row
-  }
-  getColumn(): number {
-    return this.col
-  }
-  getNumRows(): number {
-    return this.numRows
-  }
-  getNumColumns(): number {
-    return this.numCols
-  }
   getLastRow(): number {
     return this.row + this.numRows - 1
   }
   getLastColumn(): number {
     return this.col + this.numCols - 1
-  }
-  getA1Notation(): string {
-    const a = colToLetters(this.col) + this.row
-    if (this.numRows === 1 && this.numCols === 1) return a
-    return a + ':' + colToLetters(this.getLastColumn()) + this.getLastRow()
-  }
-  getCell(r: number, c: number): FakeRange {
-    return new FakeRange(this.sheet, this.row + r - 1, this.col + c - 1, 1, 1)
   }
   getValues(): CellValue[][] {
     this.call('getValues')
@@ -129,12 +109,6 @@ export class FakeRange {
       .readValues(this.row, this.col, this.numRows, this.numCols)
       .map((r) => r.map((v) => (v === null ? '' : String(v))))
   }
-  getValue(): CellValue {
-    return this.getValues()[0]![0]!
-  }
-  getDisplayValue(): string {
-    return this.getDisplayValues()[0]![0]!
-  }
   setValues(values: CellValue[][]): FakeRange {
     noteMutation()
     this.call('setValues')
@@ -143,35 +117,11 @@ export class FakeRange {
       values.some((r) => r.length !== this.numCols)
     ) {
       throw new Error(
-        `setValues size mismatch on ${this.getA1Notation()}: got ${values.length}x${values[0]?.length}`,
+        `setValues size mismatch on ${this.sheet.name}!(${this.row},${this.col},${this.numRows},${this.numCols}): got ${values.length}x${values[0]?.length}`,
       )
     }
     this.sheet.writeValues(this.row, this.col, values)
     return this
-  }
-  setValue(v: CellValue): FakeRange {
-    return this.setValues([[v]])
-  }
-  getFormulas(): string[][] {
-    this.call('getFormulas')
-    return this.sheet.readFormulas(
-      this.row,
-      this.col,
-      this.numRows,
-      this.numCols,
-    )
-  }
-  getFormula(): string {
-    return this.getFormulas()[0]![0]!
-  }
-  getBackgrounds(): (string | null)[][] {
-    this.call('getBackgrounds')
-    return this.sheet.readBackgrounds(
-      this.row,
-      this.col,
-      this.numRows,
-      this.numCols,
-    )
   }
   setBackgrounds(bg: (string | null)[][]): FakeRange {
     noteMutation()
@@ -180,7 +130,9 @@ export class FakeRange {
       bg.length !== this.numRows ||
       bg.some((r) => r.length !== this.numCols)
     ) {
-      throw new Error(`setBackgrounds size mismatch on ${this.getA1Notation()}`)
+      throw new Error(
+        `setBackgrounds size mismatch on ${this.sheet.name}!(${this.row},${this.col},${this.numRows},${this.numCols})`,
+      )
     }
     this.sheet.writeBackgrounds(this.row, this.col, bg)
     return this
@@ -218,13 +170,11 @@ export class FakeRange {
   }
 }
 
-type Cell = { value: CellValue; formula: string; background: string | null }
+type Cell = { value: CellValue; background: string | null }
 
 export class FakeSheet {
   private cells = new Map<string, Cell>()
   hidden = false
-  hiddenColumns = new Set<number>()
-  hiddenRows = new Set<number>()
   private maxRows = 1000
   private maxCols = 26
 
@@ -241,7 +191,7 @@ export class FakeSheet {
   private cell(r: number, c: number): Cell {
     let cell = this.cells.get(this.key(r, c))
     if (!cell) {
-      cell = { value: '', formula: '', background: null }
+      cell = { value: '', background: null }
       this.cells.set(this.key(r, c), cell)
     }
     if (r > this.maxRows) this.maxRows = r
@@ -275,16 +225,6 @@ export class FakeSheet {
     }
     return out
   }
-  readFormulas(row: number, col: number, nr: number, nc: number): string[][] {
-    const out: string[][] = []
-    for (let r = 0; r < nr; r++) {
-      const line: string[] = []
-      for (let c = 0; c < nc; c++)
-        line.push(this.cells.get(this.key(row + r, col + c))?.formula ?? '')
-      out.push(line)
-    }
-    return out
-  }
   readBackgrounds(
     row: number,
     col: number,
@@ -305,14 +245,7 @@ export class FakeSheet {
   writeValues(row: number, col: number, values: CellValue[][]): void {
     values.forEach((line, r) =>
       line.forEach((v, c) => {
-        const cell = this.cell(row + r, col + c)
-        if (typeof v === 'string' && v.startsWith('=')) {
-          cell.formula = v
-          cell.value = v
-        } else {
-          cell.formula = ''
-          cell.value = v
-        }
+        this.cell(row + r, col + c).value = v
       }),
     )
   }
@@ -357,9 +290,6 @@ export class FakeSheet {
     calls.push(`${this.name}.getName`)
     return this.name
   }
-  getSheetId(): number {
-    return 0
-  }
   getRange(a: number | string, b?: number, c?: number, d?: number): FakeRange {
     if (typeof a === 'string') {
       const p = parseA1(a, this)
@@ -391,33 +321,10 @@ export class FakeSheet {
   getMaxColumns(): number {
     return this.maxCols
   }
-  hideColumns(col: number, n = 1): void {
-    noteMutation()
-    calls.push(`${this.name}.hideColumns(${col},${n})`)
-    for (let c = col; c < col + n; c++) this.hiddenColumns.add(c)
-  }
-  showColumns(col: number, n = 1): void {
-    for (let c = col; c < col + n; c++) this.hiddenColumns.delete(c)
-  }
-  hideRows(row: number, n = 1): void {
-    for (let r = row; r < row + n; r++) this.hiddenRows.add(r)
-  }
-  showRows(row: number, n = 1): void {
-    for (let r = row; r < row + n; r++) this.hiddenRows.delete(r)
-  }
-  isColumnHiddenByUser(col: number): boolean {
-    return this.hiddenColumns.has(col)
-  }
   hideSheet(): void {
     noteMutation()
     calls.push(`${this.name}.hideSheet`)
     this.hidden = true
-  }
-  showSheet(): void {
-    this.hidden = false
-  }
-  isSheetHidden(): boolean {
-    return this.hidden
   }
   clear(): void {
     noteMutation()
@@ -524,12 +431,6 @@ g['PropertiesService'] = {
       setProperty: (k: string, v: string) => docProps.set(k, v),
       deleteProperty: (k: string) => docProps.delete(k),
     }
-  },
-}
-g['Utilities'] = { sleep(): void {} }
-g['LockService'] = {
-  getDocumentLock() {
-    return { waitLock(): void {}, releaseLock(): void {} }
   },
 }
 

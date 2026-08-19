@@ -8,8 +8,8 @@
  * regressions are measurable across versions.
  *
  * Module state persists for the length of one Apps Script execution, which is
- * exactly what lets `uploadFile` (bound) start a flow that `processChanges`
- * (library) continues.
+ * exactly what lets `uploadFileTracked` (bound) start a flow that
+ * `processChanges` (library) continues.
  */
 
 type Spreadsheet = GoogleAppsScript.Spreadsheet.Spreadsheet
@@ -42,11 +42,11 @@ function lastStepText(): string {
 
 /**
  * Start a new toast-tracked flow. Call once at the top of a multi-step
- * operation (e.g., uploadFile) before the first startStep.
+ * operation (e.g., uploadFileTracked) before the first startStep.
  * @param name - short flow name recorded in the timing log ("upload",
- *   "migration", ...). Defaults to "upload" so the existing bound call keeps working.
+ *   "migration", ...).
  */
-export function resetToastProgress(name = 'upload'): void {
+export function resetToastProgress(name: string): void {
   flow = { name, start: Date.now(), steps: [], current: null }
 }
 
@@ -61,7 +61,7 @@ export function flowActive(): boolean {
  * Finishes any step still open (so a forgotten finishStep can't lose data).
  */
 export function startStep(ss: Spreadsheet, label: string): void {
-  if (!flow) resetToastProgress()
+  if (!flow) resetToastProgress('flow')
   finishStep()
   ss.toast(lastStepText(), label, -1)
   flow!.current = { label, start: Date.now() }

@@ -12,7 +12,8 @@
  *      touched when the creator's layout changed;
  *   3. apply everything in ONE batchUpdate — atomic: all steps land or none.
  *
- * `finishSetup` shows the plan (describePlan) before applying it.
+ * `finishSetup` (setup.ts) drives it: planForVersions → describePlan in the
+ * confirm dialog → applyPlanWithProgress.
  */
 
 import { copyName } from '../shared/naming.ts'
@@ -24,13 +25,10 @@ import {
   startStep,
 } from './progress.ts'
 import {
-  type BandedRange,
-  type CellData,
   type ConditionalFormatRule,
   type GridData,
   type GridRange,
   type Request,
-  type SheetInfo,
   type SheetsClient,
   type SpreadsheetInfo,
   a1,
@@ -122,37 +120,6 @@ export function applyPlan(
   const requests = plan.ops.flatMap((op) => op.requests)
   if (requests.length === 0) return
   client.batchUpdate(plan.dstId, requests)
-}
-
-/**
- * Plan + apply with toast progress and timings; returns per-step results for
- * the caller to surface. Kept for callers that don't preview first.
- */
-export function portAll(
-  sourceVersion: string,
-  destVersion: string,
-  client: SheetsClient = liveSheets,
-): StepResult[] {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  resetToastProgress('migration')
-  let plan: MigrationPlan
-  startStep(ss, 'Planning migration')
-  try {
-    plan = planForVersions(sourceVersion, destVersion, client)
-  } catch (e) {
-    finishFlow(ss, 'Migration not started', 10)
-    return [
-      {
-        label: 'Planning migration',
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      },
-    ]
-  }
-  finishStep()
-  const results = applyPlanWithProgress(plan, client)
-  Logger.log(formatResults(results))
-  return results
 }
 
 /** Apply with a toast step; one result per op (all OK, or all ERR with the same message — the batch is atomic). */
@@ -1043,6 +1010,3 @@ export function findFileIdByVersion(version: string): string {
   }
   return matches[0]!.getId()
 }
-
-// Re-exported for tests / callers that only need the pure pieces.
-export type { BandedRange, CellData, SheetInfo }

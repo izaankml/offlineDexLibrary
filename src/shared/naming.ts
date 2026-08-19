@@ -12,7 +12,7 @@
 export const PUBLIC_SHEET_FILE_ID =
   '1peZNMRqicwfGAMYYJq6aeA13_1ZFVKvl--_gVQOdfv0'
 
-export const COPY_NAME_PREFIX = 'Offline RogueDex '
+const COPY_NAME_PREFIX = 'Offline RogueDex '
 /** Exact match for one of your copies. */
 export const COPY_NAME_RE = /^Offline RogueDex (\d+\.\d+)$/
 /** The first "X.YY" anywhere in a name. */

@@ -9,7 +9,7 @@ Automation on top of the OfflineDex spreadsheet: save-change highlighting, per-v
 │   ├── lib/          OfflineDex Library sources (TypeScript) → bundled to library/Code.js
 │   │   ├── index.ts        the public surface (each export = an OfflineDexLib.<fn>)
 │   │   ├── saveTracker.ts  snapshot / highlight / clear
-│   │   ├── migrator.ts     portAll and its steps
+│   │   ├── migrator.ts     migration plan → preview → atomic apply
 │   │   ├── setup.ts        Prepare Next Version / Finish Setup
 │   │   └── progress.ts     toasts + the `_timings` log
 │   └── shared/naming.ts    "Offline RogueDex X.YY" rules, shared with the CLI
@@ -52,8 +52,6 @@ npm run check      # typecheck + tests + build
 
 - Node.js v24+ (the update CLI is TypeScript run directly via Node's type stripping)
 - clasp: `npm install -g @google/clasp`, then `clasp login` (one-time OAuth flow)
-- Prettier on your PATH: `npm install -g prettier` (the update CLI normalizes the
-  creator's code with it before merging)
 - Apps Script API enabled: https://script.google.com/home/usersettings
 
 ---

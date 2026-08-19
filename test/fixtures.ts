@@ -17,8 +17,6 @@ export const HEADERS: Record<string, string[][]> = JSON.parse(
 export type WorkbookOptions = {
   /** Number of Pokémon rows per sheet (default 25). */
   rows?: number
-  /** Sheet name for the workbook (drives version detection). */
-  name?: string
 }
 
 /** Deterministic pseudo-random 0/1/count values so diffs are reproducible. */
@@ -51,21 +49,19 @@ export const LAYOUT_603 = {
     dataFirstRow: 3,
     displayFirstRow: 4,
     dataFoughtFlagCol: 12,
-    displayFoughtFlagCol: 4,
     dataLastCol: 143,
   },
   full: {
     dataFirstRow: 3,
     displayFirstRow: 4,
     dataFoughtFlagCol: 8,
-    displayFoughtFlagCol: 4,
     dataLastCol: 139,
   },
 } as const
 
 export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
   const n = opts.rows ?? 25
-  const ss = new FakeSpreadsheet(opts.name ?? 'Offline RogueDex 6.03')
+  const ss = new FakeSpreadsheet('Offline RogueDex 6.03')
 
   // --- Quick Checklist -----------------------------------------------------
   const qData = ss.addSheet('STARTER_CHECKLIST.data')
@@ -122,16 +118,6 @@ export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
   }
   dex('STARTER_DEX.data', 'Starter DEX Checklist', LAYOUT_603.starter)
   dex('FULL_DEX.data', 'Full DEX Checklist', LAYOUT_603.full)
-
-  // --- Form Checklist ----------------------------------------------------------
-  const form = ss.addSheet('Form Checklist')
-  form.load(1, 1, [['DEX#', 'Pokemon', 'Done', 'Default (A)']])
-  form.load(2, 1, [
-    [3, 'Venusaur', '☑', ''],
-    [6, 'Charizard', '☐', ''],
-    [9, 'Blastoise', '☑', ''],
-    [25, 'Pikachu', '☐', ''],
-  ])
 
   return ss
 }

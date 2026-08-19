@@ -52,8 +52,7 @@ Notes:
   The bound project stays plain JS because it is 3-way merged with the creator's code.
 - `src/lib/progress.ts` also appends every flow's per-step durations to a hidden `_timings`
   sheet (one write per flow), so wait times are measurable across versions.
-- The sections below describe the modules by their pre-TypeScript file names
-  (`SaveTracker.js` → `saveTracker.ts`, etc.); the behaviour is unchanged.
+- The sections below describe the modules under `src/lib`.
 
 ## The library: OfflineDexLib
 
@@ -168,9 +167,9 @@ is a **plan → preview → apply** pipeline on the Sheets advanced service (She
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
 
 Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
-notes what was already done), and `previewMigration()` returns the plan as text.
+notes what was already done).
 
-### Setup.js
+### setup.ts
 
 The Google-side half of a version update (the terminal half is `scripts/update.ts`).
 
@@ -184,12 +183,13 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
   with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
   nothing even with full Drive scope inside Apps Script), so no lookup is attempted —
-  it was removed to keep the library's permissions to `DriveApp` only (no Drive advanced
-  service, no `UrlFetchApp`).
+  it was removed (the library uses `DriveApp` and the Sheets advanced service; no Drive
+  advanced service, no `UrlFetchApp`).
 - `finishSetup()` — run from the *new* sheet's menu. Reads the destination version from
   the sheet's name, asks `detectPreviousVersion` for the source, shows one YES/NO/CANCEL
-  confirm (NO falls back to a typed prompt), calls `portAll(source, dest)`, and records
-  `OFFLINEDEX_MIGRATED_FROM` in document properties. Returns `true` when the migration
+  confirm (NO falls back to a typed prompt), builds the migration plan (`planForVersions`),
+  shows it (`describePlan`) in a second confirm, applies it (`applyPlanWithProgress`),
+  and records `OFFLINEDEX_MIGRATED_FROM` in document properties. Returns `true` when the migration
   ran; the bound wrapper then opens the upload dialog (the dialog HTML lives in the bound
   project, so the library can't open it).
 - `nudgeFinishSetupIfFresh()` — called from `onOpen`: if `OFFLINEDEX_MIGRATED_FROM` is
@@ -197,9 +197,8 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   toasts a pointer to Finish Setup.
 - `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
   lower than `dest`; used by Finish Setup so you never type the source version.
-- `copyName(v)` / `versionFromName(name)` — the one place the `Offline RogueDex X.YY`
-  naming rule lives on the Apps Script side (Migrator's `findFileIdByVersion` uses it too;
-  `scripts/update.ts` mirrors it for Node).
+- Naming (`copyName`, `versionFromName`, `compareVersions`, `PUBLIC_SHEET_FILE_ID`) lives
+  once in `src/shared/naming.ts`, bundled into the library and imported by `scripts/update.ts`.
 
 Why the copy/lookup happen in Apps Script and not the CLI: `drive` / `drive.readonly` are
 Google-*restricted* scopes and clasp's built-in OAuth client isn't verified for them, so
@@ -252,7 +251,7 @@ The full runbook lives in [UPDATING.md](UPDATING.md). Three touches:
    containing `OfflineDexLib` (= not a pristine copy). `npm run update` with no args reads
    the public sheet's title and says whether a new version is out.
 3. **New sheet** → reload → RogueDex Functions → **Finish Setup**: confirms the
-   auto-detected previous version, runs `portAll`, marks the copy migrated, opens the
+   auto-detected previous version, shows the plan, applies it, marks the copy migrated, opens the
    upload dialog.
 
 **How the reconcile works:** a `creator` branch holds the creator's *pristine* bound code,
@@ -273,10 +272,10 @@ checks out `creator` in the working tree.
 ## Things that took some figuring out
 
 - **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. The old workaround (copy the source SHEET into the destination as a temp, copyTo, delete) was replaced in 2026-08 by reading formats through the Sheets API and writing them with `updateCells` — one read, one atomic write, no temp sheets.
-- **Highlights as background fills:** changed cells are painted with `setBackgrounds()`, using per-column color overrides (`columnHighlightColors`) so the highlight colors coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
+- **Highlights as background fills:** changed cells get a background colour (default per tracker, purple for the increment counters) so the highlights coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
 - **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; the painted rows are now remembered in the snapshot metadata instead — and the marker column collided with creator columns (6.03 Ribbons).
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
-- **Service errors on big ranges:** chunking in 200-row batches is required for the Full Dex sheet (132 cols × 1100 rows). An explicit `flush()` per chunk is not — it just adds latency.
+- **Bulk I/O through SpreadsheetApp is slow in this workbook** (≈1 s per call, 15–25 s per 145k-cell read/write) and its mutations are applied lazily — after any synchronous Sheets API call. Hence: all bulk reads/writes go through the Sheets API, and the API client flushes SpreadsheetApp before every call.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.
 - **Apps Script library scope:** library functions are accessed as `OfflineDexLib.functionName(...)`. Library top-level constants/functions all share scope within the library.
 - **Menu items can't call library functions directly:** must go through bound-script wrapper functions.
@@ -284,12 +283,10 @@ checks out `creator` in the working tree.
 ## Setup requirements
 
 - Node.js (via Homebrew or direct download), v24+ (the update CLI relies on native TypeScript type stripping)
-- Prettier on PATH (`npm i -g prettier`)
 - clasp: `npm install -g @google/clasp`
 - `clasp login` once for OAuth
 - Apps Script API enabled in Google account settings (https://script.google.com/home/usersettings)
 
 ## Future enhancements that have come up
 
-- Track timing per migration in the version history at the top of Migrator.js
 - If Google ever exposes bound scripts via Drive, Prepare Next Version could look up the copy's Script ID itself (a `Drive.Files.list` `'<sheetId>' in parents` query) and prefill the command

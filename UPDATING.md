@@ -176,7 +176,7 @@ brings it along.)
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
 - **Daily Mode column L** — whether to insert it is decided by a landmark label in the
-  creator's layout (`DAILY_MODE_LANDMARK_*` in `Migrator.js`). If the creator moves or
+  creator's layout (`DAILY_MODE_LANDMARK_*` in `src/lib/migrator.ts`). If the creator moves or
   renames it, the Daily Mode steps fail with an `ERR` in the log (fix the constants,
   redo from a fresh copy) — eyeball that sheet after migrating.
 - **Quick Checklist columns** — the creator's layout is kept; the port finds the data
@@ -195,10 +195,10 @@ brings it along.)
 - **Merge conflict on a file I customized** — expected when you and the creator edited
   the same lines. Keep both, remove the `<<<<<<< ======= >>>>>>>` markers,
   `git add`, `npm run update -- --continue`.
-- **Suddenly lots of formatting-only conflicts** — Prettier didn't run. The CLI
-  refuses to start without it; `npm i -g prettier` (or add it locally) and re-run.
+- **Suddenly lots of formatting-only conflicts** — Prettier didn't run. It's a
+  devDependency; `npm install` and re-run.
 - **The creator moved the public sheet** — update `PUBLIC_SHEET_FILE_ID` in
-  `scripts/update.ts` and `library/Setup.js`.
+  `src/shared/naming.ts` (shared by the CLI and the library).
 - **Library changes not taking effect** — the bound manifest uses
   `developmentMode: true`, so building and pushing the library (`npm run build && cd library
   && clasp push`, or automatically on `git push` via the pre-push hook) is enough; no

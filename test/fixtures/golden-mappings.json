@@ -2,7 +2,6 @@
   "QuickChecklist": {
     "dataFirstRow": 12,
     "displayFirstRow": 12,
-    "marker": 17,
     "cells": [
       [0, 8, "#ffff00"],
       [1, 9, "#ffff00"],
@@ -17,7 +16,6 @@
   "StarterDex": {
     "dataFirstRow": 3,
     "displayFirstRow": 4,
-    "marker": 136,
     "cells": [
       [0, 4, "#93c47d"],
       [2, 6, "#93c47d"],
@@ -153,7 +151,6 @@
   "FullDex": {
     "dataFirstRow": 3,
     "displayFirstRow": 4,
-    "marker": 136,
     "cells": [
       [0, 4, "#93c47d"],
       [2, 6, "#93c47d"],
