@@ -105,41 +105,45 @@ export interface SheetsClient {
 export const liveSheets: SheetsClient = {
   get(spreadsheetId, params) {
     SpreadsheetApp.flush()
-    return service().get(
+    return spreadsheetsService().get(
       spreadsheetId,
       params as never,
     ) as unknown as SpreadsheetInfo
   },
   batchUpdate(spreadsheetId, requests) {
     SpreadsheetApp.flush()
-    service().batchUpdate({ requests: requests as never }, spreadsheetId)
+    spreadsheetsService().batchUpdate(
+      { requests: requests as never },
+      spreadsheetId,
+    )
   },
   valuesBatchGet(spreadsheetId, ranges, render) {
     SpreadsheetApp.flush()
-    const res = service().Values!.batchGet(spreadsheetId, {
+    const response = spreadsheetsService().Values!.batchGet(spreadsheetId, {
       ranges,
       valueRenderOption: render,
       dateTimeRenderOption: 'FORMATTED_STRING',
     } as never) as unknown as { valueRanges?: ValueRange[] }
-    return res.valueRanges ?? []
+    return response.valueRanges ?? []
   },
   valuesBatchUpdate(spreadsheetId, data) {
     SpreadsheetApp.flush()
-    service().Values!.batchUpdate(
+    spreadsheetsService().Values!.batchUpdate(
       { valueInputOption: 'RAW', data } as never,
       spreadsheetId,
     )
   },
 }
 
-function service(): GoogleAppsScript.Sheets.Collection.SpreadsheetsCollection {
-  const api = (globalThis as { Sheets?: GoogleAppsScript.Sheets }).Sheets
-  if (!api?.Spreadsheets) {
+function spreadsheetsService(): GoogleAppsScript.Sheets.Collection.SpreadsheetsCollection {
+  const sheetsService = (globalThis as { Sheets?: GoogleAppsScript.Sheets })
+    .Sheets
+  if (!sheetsService?.Spreadsheets) {
     throw new Error(
       'The Sheets advanced service is not enabled for the OfflineDex Library (appsscript.json → enabledAdvancedServices).',
     )
   }
-  return api.Spreadsheets
+  return sheetsService.Spreadsheets
 }
 
 // ---------------------------------------------------------------------------
@@ -152,51 +156,62 @@ export function sheetByTitle(
   title: string,
 ): SheetInfo | null {
   const sheets = info.sheets ?? []
-  const exact = sheets.find((s) => s.properties.title === title)
-  if (exact) return exact
-  const norm = (t: string): string =>
-    t.replace(/\s+/g, ' ').trim().toLowerCase()
-  const want = norm(title)
-  return sheets.find((s) => norm(s.properties.title) === want) ?? null
-}
-
-/** The GridData block of a sheet whose top-left is (row0, col0), 0-based; the first block if unspecified. */
-export function gridAt(
-  sheet: SheetInfo,
-  row0?: number,
-  col0?: number,
-): GridData | null {
-  const blocks = sheet.data ?? []
-  if (row0 === undefined) return blocks[0] ?? null
+  const exactMatch = sheets.find((sheet) => sheet.properties.title === title)
+  if (exactMatch) return exactMatch
+  const normalizeTitle = (text: string): string =>
+    text.replace(/\s+/g, ' ').trim().toLowerCase()
+  const wantedTitle = normalizeTitle(title)
   return (
-    blocks.find(
-      (g) => (g.startRow ?? 0) === row0 && (g.startColumn ?? 0) === (col0 ?? 0),
+    sheets.find(
+      (sheet) => normalizeTitle(sheet.properties.title) === wantedTitle,
     ) ?? null
   )
 }
 
-/** Cell at 0-based (r, c) inside a grid block, or an empty cell. */
-export function cellAt(grid: GridData | null, r: number, c: number): CellData {
-  return grid?.rowData?.[r]?.values?.[c] ?? {}
+/** The GridData block of a sheet whose top-left is (startRow, startColumn), 0-based; the first block if unspecified. */
+export function gridAt(
+  sheet: SheetInfo,
+  startRow?: number,
+  startColumn?: number,
+): GridData | null {
+  const blocks = sheet.data ?? []
+  if (startRow === undefined) return blocks[0] ?? null
+  return (
+    blocks.find(
+      (block) =>
+        (block.startRow ?? 0) === startRow &&
+        (block.startColumn ?? 0) === (startColumn ?? 0),
+    ) ?? null
+  )
+}
+
+/** Cell at 0-based (rowIndex, columnIndex) inside a grid block, or an empty cell. */
+export function cellAt(
+  grid: GridData | null,
+  rowIndex: number,
+  columnIndex: number,
+): CellData {
+  return grid?.rowData?.[rowIndex]?.values?.[columnIndex] ?? {}
 }
 
 export function displayText(cell: CellData): string {
   if (cell.formattedValue !== undefined) return String(cell.formattedValue)
-  const v = cell.userEnteredValue
-  if (!v) return ''
-  if (v.stringValue !== undefined) return v.stringValue
-  if (v.numberValue !== undefined) return String(v.numberValue)
-  if (v.boolValue !== undefined) return String(v.boolValue).toUpperCase()
+  const value = cell.userEnteredValue
+  if (!value) return ''
+  if (value.stringValue !== undefined) return value.stringValue
+  if (value.numberValue !== undefined) return String(value.numberValue)
+  if (value.boolValue !== undefined)
+    return String(value.boolValue).toUpperCase()
   return ''
 }
 
 /** Hex '#rrggbb' → API Color. */
 export function hexToColor(hex: string): Color {
-  const m = hex.replace('#', '')
+  const rgbHex = hex.replace('#', '')
   return {
-    red: parseInt(m.slice(0, 2), 16) / 255,
-    green: parseInt(m.slice(2, 4), 16) / 255,
-    blue: parseInt(m.slice(4, 6), 16) / 255,
+    red: parseInt(rgbHex.slice(0, 2), 16) / 255,
+    green: parseInt(rgbHex.slice(2, 4), 16) / 255,
+    blue: parseInt(rgbHex.slice(4, 6), 16) / 255,
   }
 }
 
@@ -206,34 +221,35 @@ export function sheetRange(sheetName: string, a1Range: string): string {
 }
 
 /**
- * Normalize a values.batchGet block to exactly `rows` × `cols`, blanks as ''.
+ * Normalize a values.batchGet block to exactly `rowCount` × `columnCount`, blanks as ''.
  * (The API omits trailing empty cells and rows.)
  */
 export function padValues(
   values: unknown[][] | undefined,
-  rows: number,
-  cols: number,
+  rowCount: number,
+  columnCount: number,
 ): unknown[][] {
-  const out: unknown[][] = []
-  for (let r = 0; r < rows; r++) {
-    const src = values?.[r] ?? []
-    const row: unknown[] = new Array(cols)
-    for (let c = 0; c < cols; c++) {
-      const v = src[c]
-      row[c] = v === undefined || v === null ? '' : v
+  const padded: unknown[][] = []
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+    const sourceRow = values?.[rowIndex] ?? []
+    const row: unknown[] = new Array(columnCount)
+    for (let columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+      const value = sourceRow[columnIndex]
+      row[columnIndex] = value === undefined || value === null ? '' : value
     }
-    out.push(row)
+    padded.push(row)
   }
-  return out
+  return padded
 }
 
-export function a1(row1: number, col1: number): string {
-  let s = ''
-  let c = col1
-  while (c > 0) {
-    const m = (c - 1) % 26
-    s = String.fromCharCode(65 + m) + s
-    c = Math.floor((c - 1) / 26)
+/** A1 notation for a 1-based (row, column): a1(16, 2) = 'B16'. */
+export function a1(row: number, column: number): string {
+  let letters = ''
+  let remaining = column
+  while (remaining > 0) {
+    const remainder = (remaining - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    remaining = Math.floor((remaining - 1) / 26)
   }
-  return s + row1
+  return letters + row
 }

@@ -40,9 +40,9 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   PUBLIC_SHEET_FILE_ID,
-  COPY_NAME_RE as SHEET_NAME_RE,
+  COPY_NAME_RE,
   VERSION_RE,
-  extractScriptId as parseScriptId,
+  extractScriptId,
 } from '../src/shared/naming.ts'
 
 // ---------------------------------------------------------------------------
@@ -106,38 +106,44 @@ type RunOptions = {
 
 type RunResult = { code: number; stdout: string; stderr: string }
 
-function run(cmd: string, args: string[], opts: RunOptions = {}): RunResult {
-  const result = spawnSync(cmd, args, {
-    cwd: opts.cwd ?? REPO_ROOT,
+function run(
+  command: string,
+  args: string[],
+  options: RunOptions = {},
+): RunResult {
+  const spawned = spawnSync(command, args, {
+    cwd: options.cwd ?? REPO_ROOT,
     encoding: 'utf8',
-    stdio: opts.inherit ? 'inherit' : 'pipe',
+    stdio: options.inherit ? 'inherit' : 'pipe',
   })
-  if (result.error) {
-    if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-      fail(`\`${cmd}\` is not installed or not on your PATH.`)
+  if (spawned.error) {
+    if ((spawned.error as NodeJS.ErrnoException).code === 'ENOENT') {
+      fail(`\`${command}\` is not installed or not on your PATH.`)
     }
-    throw result.error
+    throw spawned.error
   }
-  const out: RunResult = {
-    code: result.status ?? 1,
-    stdout: (result.stdout ?? '').toString().trimEnd(),
-    stderr: (result.stderr ?? '').toString().trimEnd(),
+  const result: RunResult = {
+    code: spawned.status ?? 1,
+    stdout: (spawned.stdout ?? '').toString().trimEnd(),
+    stderr: (spawned.stderr ?? '').toString().trimEnd(),
   }
-  if (out.code !== 0 && !opts.allowFail) {
+  if (result.code !== 0 && !options.allowFail) {
     fail(
-      `\`${cmd} ${args.join(' ')}\` failed (exit ${out.code})` +
-        (out.stderr || out.stdout ? `:\n${out.stderr || out.stdout}` : ''),
+      `\`${command} ${args.join(' ')}\` failed (exit ${result.code})` +
+        (result.stderr || result.stdout
+          ? `:\n${result.stderr || result.stdout}`
+          : ''),
     )
   }
-  return out
+  return result
 }
 
-function git(args: string[], opts: RunOptions = {}): RunResult {
-  return run('git', args, opts)
+function git(args: string[], options: RunOptions = {}): RunResult {
+  return run('git', args, options)
 }
 
-function gitOut(args: string[], opts: RunOptions = {}): string {
-  return git(args, opts).stdout
+function gitOut(args: string[], options: RunOptions = {}): string {
+  return git(args, options).stdout
 }
 
 function branchExists(name: string): boolean {
@@ -190,29 +196,29 @@ let cachedAccessToken: string | null = null
 async function accessToken(): Promise<string> {
   if (cachedAccessToken) return cachedAccessToken
 
-  const rcPath = join(homedir(), '.clasprc.json')
-  if (!existsSync(rcPath)) {
+  const clasprcPath = join(homedir(), '.clasprc.json')
+  if (!existsSync(clasprcPath)) {
     fail('Not logged in to clasp. Run `clasp login` first.')
   }
-  const rc = JSON.parse(readFileSync(rcPath, 'utf8')) as {
+  const clasprc = JSON.parse(readFileSync(clasprcPath, 'utf8')) as {
     tokens?: Record<string, ClaspToken>
   }
-  const user = process.env['CLASP_USER'] ?? 'default'
-  const token = rc.tokens?.[user]
+  const claspUser = process.env['CLASP_USER'] ?? 'default'
+  const token = clasprc.tokens?.[claspUser]
   if (!token?.refresh_token) {
-    fail(`No clasp credentials for user "${user}". Run \`clasp login\`.`)
+    fail(`No clasp credentials for user "${claspUser}". Run \`clasp login\`.`)
   }
 
-  const fresh =
+  const tokenStillValid =
     token.access_token &&
     token.expiry_date &&
     token.expiry_date - 60_000 > Date.now()
-  if (fresh) {
+  if (tokenStillValid) {
     cachedAccessToken = token.access_token!
     return cachedAccessToken
   }
 
-  const res = await fetch('https://oauth2.googleapis.com/token', {
+  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -222,29 +228,31 @@ async function accessToken(): Promise<string> {
       grant_type: 'refresh_token',
     }),
   })
-  if (!res.ok) {
+  if (!refreshResponse.ok) {
     fail(
-      `Could not refresh clasp's Google login (${res.status}). ` +
+      `Could not refresh clasp's Google login (${refreshResponse.status}). ` +
         'Run `clasp login` again.',
     )
   }
-  const body = (await res.json()) as { access_token: string }
-  cachedAccessToken = body.access_token
+  const refreshed = (await refreshResponse.json()) as { access_token: string }
+  cachedAccessToken = refreshed.access_token
   return cachedAccessToken
 }
 
-async function googleGet<T>(url: string, what: string): Promise<T> {
-  const res = await fetch(url, {
+async function googleGet<T>(url: string, resourceLabel: string): Promise<T> {
+  const response = await fetch(url, {
     headers: { authorization: `Bearer ${await accessToken()}` },
   })
-  if (res.status === 404) fail(`${what}: not found (404). Check the ID.`)
-  if (res.status === 403 || res.status === 401) {
+  if (response.status === 404)
+    fail(`${resourceLabel}: not found (404). Check the ID.`)
+  if (response.status === 403 || response.status === 401) {
     fail(
-      `${what}: access denied (${res.status}). Are you logged in to clasp as the account that owns the sheet?`,
+      `${resourceLabel}: access denied (${response.status}). Are you logged in to clasp as the account that owns the sheet?`,
     )
   }
-  if (!res.ok) fail(`${what}: HTTP ${res.status}\n${await res.text()}`)
-  return (await res.json()) as T
+  if (!response.ok)
+    fail(`${resourceLabel}: HTTP ${response.status}\n${await response.text()}`)
+  return (await response.json()) as T
 }
 
 type ScriptInfo = {
@@ -290,7 +298,7 @@ async function resolveScript(scriptId: string): Promise<ScriptInfo> {
     )
   }
 
-  const match = file.name.match(SHEET_NAME_RE)
+  const match = file.name.match(COPY_NAME_RE)
   if (!match) {
     fail(
       `That script belongs to "${file.name}", which isn't named like a copy ("Offline RogueDex X.YY"). ` +
@@ -342,32 +350,34 @@ function parseArgs(argv: string[]): Args {
     versionOverride: null,
     help: false,
   }
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!
-    if (a === '--continue') args.continueMerge = true
-    else if (a === '--abort') args.abort = true
-    else if (a === '--no-push') args.push = false
-    else if (a === '-h' || a === '--help') args.help = true
-    else if (a === '--version') {
-      const v = argv[++i]
-      if (!v || !VERSION_RE.test(v)) fail('--version needs a value like 6.03')
-      args.versionOverride = v
-    } else if (a.startsWith('--version=')) {
-      args.versionOverride = a.slice('--version='.length)
-    } else if (a.startsWith('-')) fail(`Unknown option ${a}`)
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]!
+    if (arg === '--continue') args.continueMerge = true
+    else if (arg === '--abort') args.abort = true
+    else if (arg === '--no-push') args.push = false
+    else if (arg === '-h' || arg === '--help') args.help = true
+    else if (arg === '--version') {
+      const versionValue = argv[++index]
+      if (!versionValue || !VERSION_RE.test(versionValue))
+        fail('--version needs a value like 6.03')
+      args.versionOverride = versionValue
+    } else if (arg.startsWith('--version=')) {
+      args.versionOverride = arg.slice('--version='.length)
+    } else if (arg.startsWith('-')) fail(`Unknown option ${arg}`)
     else if (args.target) fail('Only one Script ID / URL is expected.')
-    else args.target = a
+    else args.target = arg
   }
   return args
 }
 
 /**
  * Accept a bare Script ID or any URL that contains one
- * (script.google.com/.../projects/<id>/edit, ?scriptId=..., etc.).
+ * (script.google.com/.../projects/<id>/edit, ?scriptId=..., etc.); a UserError
+ * otherwise.
  */
-function extractScriptId(target: string): string {
-  const id = parseScriptId(target)
-  if (id) return id
+function requireScriptId(target: string): string {
+  const scriptId = extractScriptId(target)
+  if (scriptId) return scriptId
   fail(
     `"${target}" doesn't look like a Script ID or an Apps Script editor URL.\n` +
       '  Get it from the "Prepare Next Version" dialog in your current sheet, or from\n' +
@@ -424,49 +434,56 @@ function checkPreconditions(): void {
  */
 function recordCreatorBaseline(scriptId: string, version: string): boolean {
   const bootstrap = !branchExists(CREATOR_BRANCH)
-  const wt = mkdtempSync(join(tmpdir(), 'offlinedex-creator-'))
-  rmSync(wt, { recursive: true, force: true }) // git wants to create it itself
+  const worktreeDir = mkdtempSync(join(tmpdir(), 'offlinedex-creator-'))
+  rmSync(worktreeDir, { recursive: true, force: true }) // git wants to create it itself
 
   try {
     if (bootstrap) {
-      git(['worktree', 'add', '--orphan', '-b', CREATOR_BRANCH, wt])
+      git(['worktree', 'add', '--orphan', '-b', CREATOR_BRANCH, worktreeDir])
       note(
         `no \`${CREATOR_BRANCH}\` branch yet — bootstrapping it from this copy`,
       )
     } else {
-      git(['worktree', 'add', wt, CREATOR_BRANCH])
+      git(['worktree', 'add', worktreeDir, CREATOR_BRANCH])
     }
     // The orphan bootstrap worktree starts empty; without the repo's .gitignore
     // `git add` would sweep in .clasp.json (a Script ID) and the creator-only
     // files (ImportDB.js, ...). Older creator branches also predate some rules.
-    if (!existsSync(join(wt, '.gitignore'))) {
-      copyFileSync(join(REPO_ROOT, '.gitignore'), join(wt, '.gitignore'))
+    if (!existsSync(join(worktreeDir, '.gitignore'))) {
+      copyFileSync(
+        join(REPO_ROOT, '.gitignore'),
+        join(worktreeDir, '.gitignore'),
+      )
     }
-    const wtBound = join(wt, 'bound')
-    mkdirSync(wtBound, { recursive: true })
+    const worktreeBoundDir = join(worktreeDir, 'bound')
+    mkdirSync(worktreeBoundDir, { recursive: true })
     writeFileSync(
-      join(wtBound, '.clasp.json'),
+      join(worktreeBoundDir, '.clasp.json'),
       JSON.stringify({ scriptId, rootDir: '.' }, null, 2) + '\n',
     )
 
     console.log("\n── clasp pull (creator's pristine code) ───────")
-    run('clasp', ['pull'], { cwd: wtBound, inherit: true })
+    run('clasp', ['pull'], { cwd: worktreeBoundDir, inherit: true })
 
     // A fresh creator copy never references the library. If it does, this copy
     // already had your code pushed to it and must NOT become the baseline.
-    for (const f of readdirSync(wtBound)) {
-      if (!/\.(js|html)$/.test(f)) continue
-      if (readFileSync(join(wtBound, f), 'utf8').includes(CUSTOM_CODE_MARKER)) {
+    for (const fileName of readdirSync(worktreeBoundDir)) {
+      if (!/\.(js|html)$/.test(fileName)) continue
+      if (
+        readFileSync(join(worktreeBoundDir, fileName), 'utf8').includes(
+          CUSTOM_CODE_MARKER,
+        )
+      ) {
         fail(
-          `${f} in the pulled code references ${CUSTOM_CODE_MARKER} — this copy already has your code pushed to it, ` +
+          `${fileName} in the pulled code references ${CUSTOM_CODE_MARKER} — this copy already has your code pushed to it, ` +
             'so it cannot be recorded as the creator baseline. Point at a fresh, untouched copy.',
         )
       }
     }
     step('pulled creator code')
 
-    const present = TRACKED_BOUND_FILES.filter((f) =>
-      existsSync(join(wtBound, f)),
+    const presentFiles = TRACKED_BOUND_FILES.filter((fileName) =>
+      existsSync(join(worktreeBoundDir, fileName)),
     )
     run(
       PRETTIER_BIN,
@@ -476,16 +493,16 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
         PRETTIER_CONFIG,
         '--log-level',
         'warn',
-        ...present,
+        ...presentFiles,
       ],
-      { cwd: wtBound, inherit: true },
+      { cwd: worktreeBoundDir, inherit: true },
     )
-    step(`prettier-normalized ${present.length} files`)
+    step(`prettier-normalized ${presentFiles.length} files`)
 
-    if (!bootstrap && !treeDirty(wt)) {
+    if (!bootstrap && !treeDirty(worktreeDir)) {
       return false
     }
-    git(['add', '-A', '.gitignore', 'bound'], { cwd: wt })
+    git(['add', '-A', '.gitignore', 'bound'], { cwd: worktreeDir })
     git(
       [
         'commit',
@@ -493,15 +510,15 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
         '-m',
         bootstrap ? `creator baseline (${version})` : `creator ${version}`,
       ],
-      { cwd: wt },
+      { cwd: worktreeDir },
     )
     step(
       `committed "${bootstrap ? 'creator baseline' : 'creator'} ${version}" on ${CREATOR_BRANCH}`,
     )
     return true
   } finally {
-    git(['worktree', 'remove', '--force', wt], { allowFail: true })
-    rmSync(wt, { recursive: true, force: true })
+    git(['worktree', 'remove', '--force', worktreeDir], { allowFail: true })
+    rmSync(worktreeDir, { recursive: true, force: true })
   }
 }
 
@@ -527,7 +544,7 @@ function mergeCreator(version: string, bootstrap: boolean): boolean {
   You and the creator changed the same lines in:
 ${conflicts
   .split('\n')
-  .map((f) => `    ${f}`)
+  .map((fileName) => `    ${fileName}`)
   .join('\n')}
 ${bootstrap ? "\n  (First-time bootstrap: whole-file conflicts are expected — combine the\n  creator's current code with your customizations once.)\n" : ''}
   Resolve each file keeping BOTH the creator's update and your edit, then:
@@ -546,12 +563,12 @@ function claspPush(): void {
 }
 
 function printFinishSetup(sheetId: string | null, version: string): void {
-  const where = sheetId
+  const target = sheetId
     ? `https://docs.google.com/spreadsheets/d/${sheetId}`
     : `"Offline RogueDex ${version}"`
   console.log(`
 ── Done ───────────────────────────────────────
-  Open ${where}
+  Open ${target}
   reload it once so the menu rebuilds, then:
     RogueDex Functions → Finish Setup
   (migrates from your previous version, then opens the save upload dialog)
@@ -559,32 +576,32 @@ function printFinishSetup(sheetId: string | null, version: string): void {
 }
 
 async function doUpdate(args: Args): Promise<void> {
-  const scriptId = extractScriptId(args.target!)
+  const scriptId = requireScriptId(args.target!)
   checkPreconditions()
 
-  let info: ScriptInfo | null = null
+  let scriptInfo: ScriptInfo | null = null
   let version = args.versionOverride
   if (!version) {
-    info = await resolveScript(scriptId)
-    version = info.version
-    const ageMin = Math.round(
-      (Date.now() - info.sheetCreated.getTime()) / 60_000,
+    scriptInfo = await resolveScript(scriptId)
+    version = scriptInfo.version
+    const ageMinutes = Math.round(
+      (Date.now() - scriptInfo.sheetCreated.getTime()) / 60_000,
     )
-    const age =
-      ageMin < 90
-        ? `${ageMin} min ago`
-        : ageMin < 60 * 48
-          ? `${Math.round(ageMin / 60)} h ago`
-          : `${Math.round(ageMin / 60 / 24)} days ago`
+    const ageText =
+      ageMinutes < 90
+        ? `${ageMinutes} min ago`
+        : ageMinutes < 60 * 48
+          ? `${Math.round(ageMinutes / 60)} h ago`
+          : `${Math.round(ageMinutes / 60 / 24)} days ago`
     step(
-      `script ${scriptId.slice(0, 8)}… → sheet "${info.sheetName}" (created ${age}) → version ${version}`,
+      `script ${scriptId.slice(0, 8)}… → sheet "${scriptInfo.sheetName}" (created ${ageText}) → version ${version}`,
     )
   } else {
     note(`using --version ${version}, skipping the Google lookup`)
   }
 
-  const previous = lastBaselineVersion()
-  if (previous === version) {
+  const previousBaseline = lastBaselineVersion()
+  if (previousBaseline === version) {
     fail(
       `A creator baseline for ${version} is already recorded on \`${CREATOR_BRANCH}\`.\n` +
         `  If the merge already happened, you're done — just \`clasp push -f\` from bound/ if needed.\n` +
@@ -599,28 +616,28 @@ async function doUpdate(args: Args): Promise<void> {
   step(`wrote bound/.clasp.json → ${scriptId.slice(0, 8)}…`)
 
   const bootstrap = !branchExists(CREATOR_BRANCH)
-  const changed = recordCreatorBaseline(scriptId, version)
+  const baselineChanged = recordCreatorBaseline(scriptId, version)
 
-  if (!changed) {
+  if (!baselineChanged) {
     note(
-      `creator's bound code is identical to the ${previous ?? 'previous'} baseline — nothing to merge` +
-        (previous
-          ? ` (they didn't change any of the tracked files between ${previous} and ${version})`
+      `creator's bound code is identical to the ${previousBaseline ?? 'previous'} baseline — nothing to merge` +
+        (previousBaseline
+          ? ` (they didn't change any of the tracked files between ${previousBaseline} and ${version})`
           : ''),
     )
     if (args.push) claspPush()
-    printFinishSetup(info?.sheetId ?? null, version)
+    printFinishSetup(scriptInfo?.sheetId ?? null, version)
     return
   }
 
-  const clean = mergeCreator(version, bootstrap)
-  if (!clean) {
+  const mergedCleanly = mergeCreator(version, bootstrap)
+  if (!mergedCleanly) {
     process.exitCode = 1
     return
   }
   if (args.push) claspPush()
   else note('skipped clasp push (--no-push)')
-  printFinishSetup(info?.sheetId ?? null, version)
+  printFinishSetup(scriptInfo?.sheetId ?? null, version)
 }
 
 function doContinue(args: Args): void {
@@ -634,7 +651,7 @@ function doContinue(args: Args): void {
     fail(
       `Still conflicted:\n${unmerged
         .split('\n')
-        .map((f) => `    ${f}`)
+        .map((fileName) => `    ${fileName}`)
         .join(
           '\n',
         )}\n  Resolve them, \`git add\` each file, then re-run --continue.`,
@@ -656,22 +673,22 @@ function doAbort(): void {
 }
 
 async function doStatus(): Promise<void> {
-  const local = lastBaselineVersion()
-  const pub = await publishedVersion()
-  console.log(`  creator's public sheet is titled "${pub.name}"`)
-  if (!pub.version) {
+  const localBaseline = lastBaselineVersion()
+  const published = await publishedVersion()
+  console.log(`  creator's public sheet is titled "${published.name}"`)
+  if (!published.version) {
     fail("Couldn't read a version out of that title.")
   }
-  if (!local) {
+  if (!localBaseline) {
     console.log(
       `  no creator baseline recorded locally yet — first update will bootstrap it.`,
     )
-  } else if (local === pub.version) {
-    console.log(`  up to date: your last baseline is ${local}.`)
+  } else if (localBaseline === published.version) {
+    console.log(`  up to date: your last baseline is ${localBaseline}.`)
     return
   } else {
     console.log(
-      `  new version ${pub.version} is out (your last baseline is ${local}).`,
+      `  new version ${published.version} is out (your last baseline is ${localBaseline}).`,
     )
   }
   console.log(`
@@ -689,11 +706,11 @@ async function main(): Promise<void> {
   return doStatus()
 }
 
-main().catch((e: unknown) => {
-  if (e instanceof UserError) {
-    console.error(`\n  ✗ ${e.message}\n`)
+main().catch((error: unknown) => {
+  if (error instanceof UserError) {
+    console.error(`\n  ✗ ${error.message}\n`)
   } else {
-    console.error(e)
+    console.error(error)
   }
   process.exitCode = 1
 })

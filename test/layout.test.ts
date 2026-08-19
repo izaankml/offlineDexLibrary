@@ -10,7 +10,8 @@ import {
 } from '../src/lib/layout.ts'
 import { TRACKER_SPECS } from '../src/lib/saveTracker.ts'
 
-const spec = (key: string) => TRACKER_SPECS.find((s) => s.key === key)!
+const spec = (key: string) =>
+  TRACKER_SPECS.find((candidate) => candidate.key === key)!
 
 test('findLabel is case/space-insensitive and 1-based', () => {
   const band = [
@@ -23,28 +24,28 @@ test('findLabel is case/space-insensitive and 1-based', () => {
 })
 
 test('Quick Checklist resolves on the migrated 6.03 header (labels replaced by stats)', () => {
-  const r = resolveFromBands(
+  const resolved = resolveFromBands(
     spec('QuickChecklist'),
     HEADERS['STARTER_CHECKLIST.data']!,
     HEADERS['Quick Checklist (migrated)']!,
   )
-  assert.equal(r.shift, 4)
-  assert.equal(r.minDataCol, LAYOUT_603.quick.dataShinyCol)
-  assert.equal(r.maxDataCol, LAYOUT_603.quick.dataMaxIvsCol)
-  assert.equal(r.minDisplayCol, LAYOUT_603.quick.displayShinyCol)
-  assert.equal(r.maxDisplayCol, LAYOUT_603.quick.displayMaxIvsCol)
-  assert.equal(r.cells.length, 8)
-  assert.ok(r.cells.every((c) => c.color === '#ffff00'))
+  assert.equal(resolved.shift, 4)
+  assert.equal(resolved.minDataCol, LAYOUT_603.quick.dataShinyCol)
+  assert.equal(resolved.maxDataCol, LAYOUT_603.quick.dataMaxIvsCol)
+  assert.equal(resolved.minDisplayCol, LAYOUT_603.quick.displayShinyCol)
+  assert.equal(resolved.maxDisplayCol, LAYOUT_603.quick.displayMaxIvsCol)
+  assert.equal(resolved.cells.length, 8)
+  assert.ok(resolved.cells.every((cell) => cell.color === '#ffff00'))
 })
 
 test('Quick Checklist resolves identically on the fresh PUBLIC 6.03 header', () => {
-  const r = resolveFromBands(
+  const resolved = resolveFromBands(
     spec('QuickChecklist'),
     HEADERS['STARTER_CHECKLIST.data']!,
     HEADERS['Quick Checklist (fresh PUBLIC)']!,
   )
-  assert.equal(r.shift, 4)
-  assert.equal(r.minDisplayCol, 8)
+  assert.equal(resolved.shift, 4)
+  assert.equal(resolved.minDisplayCol, 8)
 })
 
 test('Quick Checklist on the 6.01 layout (no junk column E) resolves to shift +3', () => {
@@ -52,46 +53,46 @@ test('Quick Checklist on the 6.01 layout (no junk column E) resolves to shift +3
     ...row.slice(0, 4),
     ...row.slice(5),
   ])
-  const r = resolveFromBands(
+  const resolved = resolveFromBands(
     spec('QuickChecklist'),
     HEADERS['STARTER_CHECKLIST.data']!,
     display601,
   )
-  assert.equal(r.shift, 3)
-  assert.equal(r.minDisplayCol, 7)
+  assert.equal(resolved.shift, 3)
+  assert.equal(resolved.minDisplayCol, 7)
 })
 
 test('dex sheets resolve to the known 6.03 shifts with named exclude/increment columns', () => {
-  const s = resolveFromBands(
+  const starter = resolveFromBands(
     spec('StarterDex'),
     HEADERS['STARTER_DEX.data']!,
     HEADERS['Starter DEX Checklist']!,
   )
-  assert.equal(s.shift, -8)
-  assert.equal(s.minDataCol, 12)
-  assert.equal(s.maxDataCol, 143)
-  assert.equal(s.minDisplayCol, 4)
-  assert.equal(s.maxDisplayCol, 135)
-  const byDisplay = Object.fromEntries(
-    s.cells.map((c) => [c.displayCol, c.color]),
+  assert.equal(starter.shift, -8)
+  assert.equal(starter.minDataCol, 12)
+  assert.equal(starter.maxDataCol, 143)
+  assert.equal(starter.minDisplayCol, 4)
+  assert.equal(starter.maxDisplayCol, 135)
+  const colorByDisplayCol = Object.fromEntries(
+    starter.cells.map((cell) => [cell.displayCol, cell.color]),
   )
-  assert.equal(byDisplay[5], null, 'E Fought Count excluded')
-  assert.equal(byDisplay[34], null, 'AH Candy Count excluded')
-  assert.equal(byDisplay[35], null, 'AI Friendship excluded')
-  assert.equal(byDisplay[14], '#b4a7d6', 'N Caught Count increment')
-  assert.equal(byDisplay[28], '#b4a7d6', 'AB Hatched Count increment')
-  assert.equal(byDisplay[41], '#b4a7d6', 'AO Classic Wins increment')
-  assert.equal(byDisplay[4], '#93c47d')
+  assert.equal(colorByDisplayCol[5], null, 'E Fought Count excluded')
+  assert.equal(colorByDisplayCol[34], null, 'AH Candy Count excluded')
+  assert.equal(colorByDisplayCol[35], null, 'AI Friendship excluded')
+  assert.equal(colorByDisplayCol[14], '#b4a7d6', 'N Caught Count increment')
+  assert.equal(colorByDisplayCol[28], '#b4a7d6', 'AB Hatched Count increment')
+  assert.equal(colorByDisplayCol[41], '#b4a7d6', 'AO Classic Wins increment')
+  assert.equal(colorByDisplayCol[4], '#93c47d')
 
-  const f = resolveFromBands(
+  const full = resolveFromBands(
     spec('FullDex'),
     HEADERS['FULL_DEX.data']!,
     HEADERS['Full DEX Checklist']!,
   )
-  assert.equal(f.shift, -4)
-  assert.equal(f.minDataCol, 8)
-  assert.equal(f.maxDataCol, 139)
-  assert.equal(f.maxDisplayCol, 135)
+  assert.equal(full.shift, -4)
+  assert.equal(full.minDataCol, 8)
+  assert.equal(full.maxDataCol, 139)
+  assert.equal(full.maxDisplayCol, 135)
 })
 
 test('a creator column insert in the display is absorbed; a renamed anchor fails loudly', () => {
@@ -100,15 +101,15 @@ test('a creator column insert in the display is absorbed; a renamed anchor fails
     'NEW',
     ...row.slice(3),
   ])
-  const r = resolveFromBands(
+  const resolved = resolveFromBands(
     spec('StarterDex'),
     HEADERS['STARTER_DEX.data']!,
     display,
   )
-  assert.equal(r.shift, -7)
+  assert.equal(resolved.shift, -7)
 
   const renamed = HEADERS['STARTER_DEX.data']!.map((row) =>
-    row.map((c) => (c === 'Fought Flag' ? 'Seen Flag' : c)),
+    row.map((label) => (label === 'Fought Flag' ? 'Seen Flag' : label)),
   )
   assert.throws(
     () =>
@@ -140,13 +141,13 @@ test('cross-check catches a display that only partly moved', () => {
 })
 
 test('describeResolved is readable', () => {
-  const r = resolveFromBands(
+  const resolved = resolveFromBands(
     spec('QuickChecklist'),
     HEADERS['STARTER_CHECKLIST.data']!,
     HEADERS['Quick Checklist (migrated)']!,
   )
   assert.equal(
-    describeResolved(r),
+    describeResolved(resolved),
     'QuickChecklist: data D–K (SHINY … Max IVs) → display H–O (shift +4)',
   )
   assert.equal(columnLetter(136), 'EF')

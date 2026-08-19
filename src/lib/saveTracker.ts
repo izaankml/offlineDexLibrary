@@ -33,6 +33,7 @@ import {
   type ResolvedTracker,
   type TrackerSpec,
   describeResolved,
+  normalizeLabel,
   resolveFromBands,
 } from './layout.ts'
 import {
@@ -121,8 +122,10 @@ export function snapshotSheetName(key: string): string {
 // Snapshot encoding (pure)
 // ---------------------------------------------------------------------------
 
+/** A contiguous run of display rows, as offsets from displayFirstRow. */
 export type Run = { start: number; count: number }
 
+/** Persisted in A1 of each snapshot sheet — field names are part of the on-disk format. */
 export type SnapshotMeta = {
   v: 3
   /** Data sheet row of rows[0] and the tracked column span, as they were when written. */
@@ -141,28 +144,32 @@ export type SnapshotMeta = {
 /** Split rows into JSON strings each under the per-cell limit. */
 export function encodeSnapshotChunks(rows: CellValue[][]): string[] {
   const chunks: string[] = []
-  let buf: CellValue[][] = []
-  let size = 2
+  let pendingRows: CellValue[][] = []
+  let pendingChars = 2 // the enclosing "[]"
   for (const row of rows) {
-    const s = JSON.stringify(row)
-    if (buf.length && size + s.length + 1 > SNAPSHOT_CELL_CHARS) {
-      chunks.push(JSON.stringify(buf))
-      buf = []
-      size = 2
+    const rowJson = JSON.stringify(row)
+    if (
+      pendingRows.length &&
+      pendingChars + rowJson.length + 1 > SNAPSHOT_CELL_CHARS
+    ) {
+      chunks.push(JSON.stringify(pendingRows))
+      pendingRows = []
+      pendingChars = 2
     }
-    buf.push(row)
-    size += s.length + 1
+    pendingRows.push(row)
+    pendingChars += rowJson.length + 1
   }
-  if (buf.length || chunks.length === 0) chunks.push(JSON.stringify(buf))
+  if (pendingRows.length || chunks.length === 0)
+    chunks.push(JSON.stringify(pendingRows))
   return chunks
 }
 
 export function decodeSnapshotChunks(cells: unknown[]): CellValue[][] {
   const rows: CellValue[][] = []
-  for (const c of cells) {
-    if (c === '' || c === null || c === undefined) continue
-    const parsed = JSON.parse(String(c)) as CellValue[][]
-    for (const r of parsed) rows.push(r)
+  for (const cell of cells) {
+    if (cell === '' || cell === null || cell === undefined) continue
+    const chunkRows = JSON.parse(String(cell)) as CellValue[][]
+    for (const row of chunkRows) rows.push(row)
   }
   return rows
 }
@@ -170,19 +177,19 @@ export function decodeSnapshotChunks(cells: unknown[]): CellValue[][] {
 /** Collapse sorted row offsets into contiguous runs. */
 export function toRuns(sortedOffsets: number[]): Run[] {
   const runs: Run[] = []
-  let i = 0
-  while (i < sortedOffsets.length) {
-    const start = sortedOffsets[i]!
+  let index = 0
+  while (index < sortedOffsets.length) {
+    const start = sortedOffsets[index]!
     let end = start
     while (
-      i + 1 < sortedOffsets.length &&
-      sortedOffsets[i + 1] === sortedOffsets[i]! + 1
+      index + 1 < sortedOffsets.length &&
+      sortedOffsets[index + 1] === sortedOffsets[index]! + 1
     ) {
-      i++
-      end = sortedOffsets[i]!
+      index++
+      end = sortedOffsets[index]!
     }
     runs.push({ start, count: end - start + 1 })
-    i++
+    index++
   }
   return runs
 }
@@ -197,35 +204,39 @@ export function toRuns(sortedOffsets: number[]): Run[] {
  * beyond the snapshot compare against blanks.
  */
 export function diffBlocks(
-  r: ResolvedTracker,
-  snapValues: CellValue[][],
+  layout: ResolvedTracker,
+  snapshotValues: CellValue[][],
   currentValues: CellValue[][],
-): { rowColors: Map<number, (string | null)[]>; changed: number } {
-  const width = r.maxDisplayCol - r.minDisplayCol + 1
+): { rowColors: Map<number, (string | null)[]>; changedCells: number } {
+  const displayWidth = layout.maxDisplayCol - layout.minDisplayCol + 1
   const rowColors = new Map<number, (string | null)[]>()
-  let changed = 0
-  for (let i = 0; i < currentValues.length; i++) {
-    const cur = currentValues[i] ?? []
-    const old = snapValues[i] ?? []
-    let row: (string | null)[] | null = null
-    for (const cell of r.cells) {
+  let changedCells = 0
+  for (let rowOffset = 0; rowOffset < currentValues.length; rowOffset++) {
+    const currentRow = currentValues[rowOffset] ?? []
+    const snapshotRow = snapshotValues[rowOffset] ?? []
+    let colorsForRow: (string | null)[] | null = null
+    for (const cell of layout.cells) {
       if (cell.color === null) continue
-      const k = cell.dataCol - r.minDataCol
-      if (String(old[k] ?? '') !== String(cur[k] ?? '')) {
-        if (!row) row = new Array<string | null>(width).fill(null)
-        row[cell.displayCol - r.minDisplayCol] = cell.color
-        changed++
+      const dataOffset = cell.dataCol - layout.minDataCol
+      if (
+        String(snapshotRow[dataOffset] ?? '') !==
+        String(currentRow[dataOffset] ?? '')
+      ) {
+        if (!colorsForRow)
+          colorsForRow = new Array<string | null>(displayWidth).fill(null)
+        colorsForRow[cell.displayCol - layout.minDisplayCol] = cell.color
+        changedCells++
       }
     }
-    if (row) rowColors.set(i, row)
+    if (colorsForRow) rowColors.set(rowOffset, colorsForRow)
   }
-  return { rowColors, changed }
+  return { rowColors, changedCells }
 }
 
 /** True when the key column is not in ascending (numbers first, then text) order. */
 export function outOfOrder(keys: CellValue[]): boolean {
-  for (let i = 1; i < keys.length; i++) {
-    if (compareKeys(keys[i - 1]!, keys[i]!) > 0) return true
+  for (let index = 1; index < keys.length; index++) {
+    if (compareKeys(keys[index - 1]!, keys[index]!) > 0) return true
   }
   return false
 }
@@ -236,36 +247,44 @@ export function outOfOrder(keys: CellValue[]): boolean {
  * blanks last. Must match what Range.sort() would produce, or we'd re-sort
  * every upload.
  */
-function compareKeys(a: CellValue, b: CellValue): number {
-  const aBlank = a === '' || a === null
-  const bBlank = b === '' || b === null
-  if (aBlank || bBlank) return aBlank && bBlank ? 0 : aBlank ? 1 : -1
-  const aNum = typeof a === 'number'
-  const bNum = typeof b === 'number'
-  if (aNum && bNum) return (a as number) - (b as number)
-  if (aNum) return -1
-  if (bNum) return 1
-  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })
+function compareKeys(left: CellValue, right: CellValue): number {
+  const leftBlank = left === '' || left === null
+  const rightBlank = right === '' || right === null
+  if (leftBlank || rightBlank)
+    return leftBlank && rightBlank ? 0 : leftBlank ? 1 : -1
+  const leftIsNumber = typeof left === 'number'
+  const rightIsNumber = typeof right === 'number'
+  if (leftIsNumber && rightIsNumber) return (left as number) - (right as number)
+  if (leftIsNumber) return -1
+  if (rightIsNumber) return 1
+  return String(left).localeCompare(String(right), undefined, {
+    sensitivity: 'base',
+  })
 }
 
 // ---------------------------------------------------------------------------
 // Reading the workbook (one metadata GET + one values.batchGet)
 // ---------------------------------------------------------------------------
 
-export type Loaded = {
-  r: ResolvedTracker
-  sheetId: number
-  keys: CellValue[]
-  current: CellValue[][]
-  /** Baseline rows aligned to `current` (index 0 = dataFirstRow), or null when none exists yet. */
-  previous: CellValue[][] | null
+/** Everything the flow needs for one tracker, read in a single batch. */
+export type LoadedTracker = {
+  layout: ResolvedTracker
+  displaySheetId: number
+  /** The display's key column (sortDisplayColumn) from displayFirstRow down. */
+  displayKeys: CellValue[]
+  /** Tracked block of the data sheet, index 0 = dataFirstRow. */
+  currentValues: CellValue[][]
+  /** Baseline rows aligned to `currentValues`, or null when none exists yet. */
+  snapshotValues: CellValue[][] | null
   /** Metadata of the snapshot on disk, or null when there is none. */
-  meta: SnapshotMeta | null
+  snapshotMeta: SnapshotMeta | null
   /** The snapshot sheet exists but holds no usable metadata: wipe it before writing. */
-  stale: boolean
+  snapshotSheetStale: boolean
 }
 
-export type Workbook = { info: SpreadsheetInfo; loaded: Loaded[] }
+export type Workbook = { info: SpreadsheetInfo; trackers: LoadedTracker[] }
+
+type SheetInfoLite = NonNullable<SpreadsheetInfo['sheets']>[number]
 
 /**
  * Sheet lookup by title. Exact match first, then a whitespace/case-tolerant
@@ -276,68 +295,73 @@ export type Workbook = { info: SpreadsheetInfo; loaded: Loaded[] }
 function findSheet(
   info: SpreadsheetInfo,
   title: string,
-  ss?: Spreadsheet,
+  spreadsheet?: Spreadsheet,
 ): SheetInfoLite | null {
   const sheets = info.sheets ?? []
-  const exact = sheets.find((x) => x.properties.title === title)
-  if (exact) return exact
-  const want = normalize(title)
-  const loose = sheets.find((x) => normalize(x.properties.title) === want)
-  if (loose) return loose
-  const viaApp = ss?.getSheetByName(title)
-  if (viaApp) {
-    const id = viaApp.getSheetId()
-    return sheets.find((x) => x.properties.sheetId === id) ?? null
+  const exactMatch = sheets.find((sheet) => sheet.properties.title === title)
+  if (exactMatch) return exactMatch
+  const wantedTitle = normalizeLabel(title)
+  const looseMatch = sheets.find(
+    (sheet) => normalizeLabel(sheet.properties.title) === wantedTitle,
+  )
+  if (looseMatch) return looseMatch
+  const sheetViaApp = spreadsheet?.getSheetByName(title)
+  if (sheetViaApp) {
+    const sheetId = sheetViaApp.getSheetId()
+    return sheets.find((sheet) => sheet.properties.sheetId === sheetId) ?? null
   }
   return null
 }
-type SheetInfoLite = NonNullable<SpreadsheetInfo['sheets']>[number]
 
 function requireSheet(
   info: SpreadsheetInfo,
   title: string,
-  why: string,
-  ss?: Spreadsheet,
+  purpose: string,
+  spreadsheet?: Spreadsheet,
 ): SheetInfoLite {
-  const s = findSheet(info, title, ss)
-  if (!s) {
-    const titles = (info.sheets ?? [])
-      .map((x) => JSON.stringify(x.properties.title))
+  const sheet = findSheet(info, title, spreadsheet)
+  if (!sheet) {
+    const knownTitles = (info.sheets ?? [])
+      .map((known) => JSON.stringify(known.properties.title))
       .join(', ')
     throw new Error(
-      `${title} not found (${why}). Sheets reported by the API: ${titles}`,
+      `${title} not found (${purpose}). Sheets reported by the API: ${knownTitles}`,
     )
   }
-  return s
+  return sheet
 }
 function sheetIdByTitle(
   info: SpreadsheetInfo,
   title: string,
-  ss?: Spreadsheet,
+  spreadsheet?: Spreadsheet,
 ): number {
-  return requireSheet(info, title, 'display sheet', ss).properties.sheetId
+  return requireSheet(info, title, 'display sheet', spreadsheet).properties
+    .sheetId
 }
 function sheetExists(
   info: SpreadsheetInfo,
   title: string,
-  ss?: Spreadsheet,
+  spreadsheet?: Spreadsheet,
 ): boolean {
-  return findSheet(info, title, ss) !== null
+  return findSheet(info, title, spreadsheet) !== null
 }
 /** The title as the API spells it (used to build A1 ranges that the API will accept). */
 function apiTitle(
   info: SpreadsheetInfo,
   title: string,
-  ss?: Spreadsheet,
+  spreadsheet?: Spreadsheet,
 ): string {
-  return findSheet(info, title, ss)?.properties.title ?? title
+  return findSheet(info, title, spreadsheet)?.properties.title ?? title
 }
 function rowCountOf(
   info: SpreadsheetInfo,
   title: string,
-  ss?: Spreadsheet,
+  spreadsheet?: Spreadsheet,
 ): number {
-  return findSheet(info, title, ss)?.properties.gridProperties?.rowCount ?? 1000
+  return (
+    findSheet(info, title, spreadsheet)?.properties.gridProperties?.rowCount ??
+    1000
+  )
 }
 
 /**
@@ -345,15 +369,23 @@ function rowCountOf(
  * the whole data sheets (header band + values), the display header bands and
  * key columns, and the snapshots.
  */
-export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
-  const info = client.get(ss.getId(), {
+export function loadWorkbook(
+  spreadsheet: Spreadsheet,
+  client: SheetsClient,
+): Workbook {
+  const info = client.get(spreadsheet.getId(), {
     fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
   })
   // Resolve every sheet up front (with the SpreadsheetApp fallback) and pin
   // the API's own spelling of each title into the info list for later lookups.
   for (const spec of TRACKER_SPECS) {
     for (const title of [spec.dataSheet, spec.displaySheet]) {
-      const found = requireSheet(info, title, `needed by ${spec.key}`, ss)
+      const found = requireSheet(
+        info,
+        title,
+        `needed by ${spec.key}`,
+        spreadsheet,
+      )
       if (found.properties.title !== title) {
         Logger.log(
           `Note: "${title}" is titled ${JSON.stringify(found.properties.title)} in the API; using that`,
@@ -363,87 +395,107 @@ export function loadWorkbook(ss: Spreadsheet, client: SheetsClient): Workbook {
   }
   const ranges: string[] = []
   for (const spec of TRACKER_SPECS) {
-    const dataTitle = apiTitle(info, spec.dataSheet, ss)
-    const displayTitle = apiTitle(info, spec.displaySheet, ss)
+    const dataTitle = apiTitle(info, spec.dataSheet, spreadsheet)
+    const displayTitle = apiTitle(info, spec.displaySheet, spreadsheet)
     ranges.push(
-      sheetRange(dataTitle, `1:${rowCountOf(info, spec.dataSheet, ss)}`),
+      sheetRange(
+        dataTitle,
+        `1:${rowCountOf(info, spec.dataSheet, spreadsheet)}`,
+      ),
     )
     ranges.push(sheetRange(displayTitle, `1:${HEADER_BAND_ROWS}`))
     ranges.push(
       sheetRange(
         displayTitle,
-        `${a1(spec.displayFirstRow, spec.sortDisplayColumn)}:${a1(rowCountOf(info, spec.displaySheet, ss), spec.sortDisplayColumn)}`,
+        `${a1(spec.displayFirstRow, spec.sortDisplayColumn)}:${a1(rowCountOf(info, spec.displaySheet, spreadsheet), spec.sortDisplayColumn)}`,
       ),
     )
-    const snapName = snapshotSheetName(spec.key)
+    const snapshotName = snapshotSheetName(spec.key)
     ranges.push(
-      sheetExists(info, snapName)
-        ? sheetRange(snapName, `A1:A${rowCountOf(info, snapName)}`)
+      sheetExists(info, snapshotName)
+        ? sheetRange(snapshotName, `A1:A${rowCountOf(info, snapshotName)}`)
         : '',
     )
   }
-  const wanted = ranges.filter((x) => x !== '')
-  const got = client.valuesBatchGet(ss.getId(), wanted, 'UNFORMATTED_VALUE')
-  if (got.length !== wanted.length) {
+  const requestedRanges = ranges.filter((range) => range !== '')
+  const valueRanges = client.valuesBatchGet(
+    spreadsheet.getId(),
+    requestedRanges,
+    'UNFORMATTED_VALUE',
+  )
+  if (valueRanges.length !== requestedRanges.length) {
     throw new Error(
-      `values.batchGet returned ${got.length} ranges for ${wanted.length}`,
+      `values.batchGet returned ${valueRanges.length} ranges for ${requestedRanges.length}`,
     )
   }
-  let gi = 0
-  const take = (present: boolean): unknown[][] =>
-    present ? (got[gi++]?.values ?? []) : []
+  let nextRangeIndex = 0
+  const takeNext = (wasRequested: boolean): unknown[][] =>
+    wasRequested ? (valueRanges[nextRangeIndex++]?.values ?? []) : []
 
-  const loaded: Loaded[] = []
+  const trackers: LoadedTracker[] = []
   for (const spec of TRACKER_SPECS) {
-    const dataAll = take(true)
-    const displayBand = take(true)
-    const keyCol = take(true)
-    const snapName = snapshotSheetName(spec.key)
-    const snapCells = take(sheetExists(info, snapName))
+    const dataSheetValues = takeNext(true)
+    const displayBand = takeNext(true)
+    const keyColumnValues = takeNext(true)
+    const snapshotName = snapshotSheetName(spec.key)
+    const snapshotCells = takeNext(sheetExists(info, snapshotName))
 
     const dataBand = padValues(
-      dataAll.slice(0, HEADER_BAND_ROWS),
+      dataSheetValues.slice(0, HEADER_BAND_ROWS),
       HEADER_BAND_ROWS,
-      Math.max(...dataAll.slice(0, HEADER_BAND_ROWS).map((r) => r.length), 1),
+      Math.max(
+        ...dataSheetValues.slice(0, HEADER_BAND_ROWS).map((row) => row.length),
+        1,
+      ),
     )
-    const r = resolveFromBands(spec, dataBand, displayBand)
-    Logger.log(describeResolved(r))
+    const layout = resolveFromBands(spec, dataBand, displayBand)
+    Logger.log(describeResolved(layout))
 
     // Data block: rows from dataFirstRow to the last returned row, tracked columns only.
-    const dataRows = Math.max(0, dataAll.length - (spec.dataFirstRow - 1))
-    const width = r.maxDataCol - r.minDataCol + 1
-    const current = padValues(
-      dataAll
-        .slice(spec.dataFirstRow - 1)
-        .map((row) => row.slice(r.minDataCol - 1, r.maxDataCol)),
-      dataRows,
-      width,
-    ) as CellValue[][]
-    const keys = padValues(keyCol, keyCol.length, 1).map(
-      (row) => row[0] as CellValue,
+    const dataRowCount = Math.max(
+      0,
+      dataSheetValues.length - (spec.dataFirstRow - 1),
     )
+    const trackedWidth = layout.maxDataCol - layout.minDataCol + 1
+    const currentValues = padValues(
+      dataSheetValues
+        .slice(spec.dataFirstRow - 1)
+        .map((row) => row.slice(layout.minDataCol - 1, layout.maxDataCol)),
+      dataRowCount,
+      trackedWidth,
+    ) as CellValue[][]
+    const displayKeys = padValues(
+      keyColumnValues,
+      keyColumnValues.length,
+      1,
+    ).map((row) => row[0] as CellValue)
 
-    let previous: CellValue[][] | null = null
-    let meta: SnapshotMeta | null = null
-    if (snapCells.length) {
-      const flat = snapCells.map((row) => row[0])
-      meta = parseMeta(flat[0])
-      if (meta) previous = realign(decodeSnapshotChunks(flat.slice(1)), meta, r)
+    let snapshotValues: CellValue[][] | null = null
+    let snapshotMeta: SnapshotMeta | null = null
+    if (snapshotCells.length) {
+      const snapshotColumn = snapshotCells.map((row) => row[0])
+      snapshotMeta = parseMeta(snapshotColumn[0])
+      if (snapshotMeta)
+        snapshotValues = realign(
+          decodeSnapshotChunks(snapshotColumn.slice(1)),
+          snapshotMeta,
+          layout,
+        )
     }
     // A snapshot sheet that exists but carries no metadata holds something
     // else (e.g. an older layout): wipe it before the first write.
-    const stale = sheetExists(info, snapName) && !meta
-    loaded.push({
-      r,
-      sheetId: sheetIdByTitle(info, spec.displaySheet, ss),
-      keys,
-      current,
-      previous,
-      meta,
-      stale,
+    const snapshotSheetStale = sheetExists(info, snapshotName) && !snapshotMeta
+    trackers.push({
+      layout,
+      displaySheetId: sheetIdByTitle(info, spec.displaySheet, spreadsheet),
+      displayKeys,
+      currentValues,
+      snapshotValues,
+      snapshotMeta,
+      snapshotSheetStale,
     })
   }
-  return { info, loaded }
+  return { info, trackers }
 }
 
 /** A1 of a snapshot sheet holds the JSON metadata; anything else is not a snapshot. */
@@ -451,8 +503,10 @@ function parseMeta(cell: unknown): SnapshotMeta | null {
   const text = String(cell ?? '')
   if (!text.startsWith('{')) return null
   try {
-    const m = JSON.parse(text) as Partial<SnapshotMeta>
-    return m.v === 3 && Array.isArray(m.painted) ? (m as SnapshotMeta) : null
+    const parsed = JSON.parse(text) as Partial<SnapshotMeta>
+    return parsed.v === 3 && Array.isArray(parsed.painted)
+      ? (parsed as SnapshotMeta)
+      : null
   } catch {
     return null
   }
@@ -467,43 +521,50 @@ function parseMeta(cell: unknown): SnapshotMeta | null {
 export function realign(
   rows: CellValue[][],
   meta: SnapshotMeta,
-  r: ResolvedTracker,
+  layout: ResolvedTracker,
 ): CellValue[][] {
-  const newLabels = r.dataCols.map((c) => normalize(r.labels[c] ?? ''))
-  const oldLabels = (meta.labels ?? []).map(normalize)
-  const sameCols =
-    meta.minCol === r.minDataCol &&
-    meta.maxCol === r.maxDataCol &&
-    (oldLabels.length === 0 ||
-      oldLabels.join('\u0000') === newLabels.join('\u0000'))
-  const rowShift = r.spec.dataFirstRow - meta.firstRow
-  if (sameCols && rowShift === 0) return rows
+  const currentLabels = layout.dataCols.map((column) =>
+    normalizeLabel(layout.labels[column] ?? ''),
+  )
+  const snapshotLabels = (meta.labels ?? []).map(normalizeLabel)
+  const sameColumns =
+    meta.minCol === layout.minDataCol &&
+    meta.maxCol === layout.maxDataCol &&
+    (snapshotLabels.length === 0 ||
+      snapshotLabels.join('\u0000') === currentLabels.join('\u0000'))
+  const rowShift = layout.spec.dataFirstRow - meta.firstRow
+  if (sameColumns && rowShift === 0) return rows
 
-  // Column map: new index -> old index (or -1), by k-th occurrence of the label.
-  const seen = new Map<string, number>()
-  const colMap = newLabels.map((label) => {
-    const k = seen.get(label) ?? 0
-    seen.set(label, k + 1)
-    if (!oldLabels.length) return -1
-    let n = 0
-    for (let i = 0; i < oldLabels.length; i++) {
-      if (oldLabels[i] === label && n++ === k) return i
+  // Column map: current index -> snapshot index (or -1), by k-th occurrence of the label.
+  const occurrencesSeen = new Map<string, number>()
+  const snapshotIndexByCurrentIndex = currentLabels.map((label) => {
+    const occurrence = occurrencesSeen.get(label) ?? 0
+    occurrencesSeen.set(label, occurrence + 1)
+    if (!snapshotLabels.length) return -1
+    let matchesSeen = 0
+    for (
+      let snapshotIndex = 0;
+      snapshotIndex < snapshotLabels.length;
+      snapshotIndex++
+    ) {
+      if (
+        snapshotLabels[snapshotIndex] === label &&
+        matchesSeen++ === occurrence
+      )
+        return snapshotIndex
     }
     return -1
   })
-  const out: CellValue[][] = []
-  for (let i = 0; i + rowShift < rows.length; i++) {
-    const src = rows[i + rowShift] ?? []
-    out.push(colMap.map((j) => (j >= 0 ? (src[j] ?? '') : '')))
+  const realigned: CellValue[][] = []
+  for (let rowOffset = 0; rowOffset + rowShift < rows.length; rowOffset++) {
+    const snapshotRow = rows[rowOffset + rowShift] ?? []
+    realigned.push(
+      snapshotIndexByCurrentIndex.map((snapshotIndex) =>
+        snapshotIndex >= 0 ? (snapshotRow[snapshotIndex] ?? '') : '',
+      ),
+    )
   }
-  return out
-}
-
-function normalize(s: unknown): string {
-  return String(s ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase()
+  return realigned
 }
 
 // ---------------------------------------------------------------------------
@@ -515,52 +576,54 @@ function normalize(s: unknown): string {
  * With no metadata (first baseline) the whole tracked block is cleared once.
  */
 export function paintRequests(
-  l: Loaded,
+  tracker: LoadedTracker,
   rowColors: Map<number, (string | null)[]>,
 ): { requests: Request[]; painted: Run[] } {
-  const { r, sheetId } = l
-  const startCol = r.minDisplayCol - 1
-  const endCol = r.maxDisplayCol
+  const { layout, displaySheetId } = tracker
+  const startColumnIndex = layout.minDisplayCol - 1
+  const endColumnIndex = layout.maxDisplayCol
   const requests: Request[] = []
-  const rowRange = (run: Run): Record<string, number> => ({
-    sheetId,
-    startRowIndex: r.spec.displayFirstRow - 1 + run.start,
-    endRowIndex: r.spec.displayFirstRow - 1 + run.start + run.count,
-    startColumnIndex: startCol,
-    endColumnIndex: endCol,
+  const runRange = (run: Run): Record<string, number> => ({
+    sheetId: displaySheetId,
+    startRowIndex: layout.spec.displayFirstRow - 1 + run.start,
+    endRowIndex: layout.spec.displayFirstRow - 1 + run.start + run.count,
+    startColumnIndex,
+    endColumnIndex,
   })
-  const oldRuns: Run[] = l.meta
-    ? l.meta.painted
+  const previouslyPaintedRuns: Run[] = tracker.snapshotMeta
+    ? tracker.snapshotMeta.painted
     : [
         {
           start: 0,
           count: Math.max(
-            l.current.length,
-            l.previous?.length ?? 0,
-            l.keys.length,
+            tracker.currentValues.length,
+            tracker.snapshotValues?.length ?? 0,
+            tracker.displayKeys.length,
           ),
         },
       ]
-  for (const run of oldRuns) {
+  for (const run of previouslyPaintedRuns) {
     if (run.count <= 0) continue
     requests.push({
       repeatCell: {
-        range: rowRange(run),
+        range: runRange(run),
         cell: { userEnteredFormat: {} },
         fields: 'userEnteredFormat.backgroundColor',
       },
     })
   }
 
-  const offsets = [...rowColors.keys()].sort((x, y) => x - y)
-  const painted = toRuns(offsets)
+  const changedRowOffsets = [...rowColors.keys()].sort(
+    (left, right) => left - right,
+  )
+  const painted = toRuns(changedRowOffsets)
   for (const run of painted) {
     requests.push({
       updateCells: {
-        range: rowRange(run),
-        rows: Array.from({ length: run.count }, (_, k) => ({
+        range: runRange(run),
+        rows: Array.from({ length: run.count }, (_, rowInRun) => ({
           values: rowColors
-            .get(run.start + k)!
+            .get(run.start + rowInRun)!
             .map((color) =>
               color
                 ? { userEnteredFormat: { backgroundColor: hexToColor(color) } }
@@ -576,59 +639,70 @@ export function paintRequests(
 
 /** The values.batchUpdate entries that store `rows` (+ meta) as the snapshot of a tracker. */
 export function snapshotWrites(
-  l: Loaded,
+  tracker: LoadedTracker,
   rows: CellValue[][],
-  painted: Run[],
+  paintedRuns: Run[],
 ): { range: string; values: unknown[][] }[] {
   const chunks = encodeSnapshotChunks(rows)
   const meta: SnapshotMeta = {
     v: 3,
-    firstRow: l.r.spec.dataFirstRow,
-    minCol: l.r.minDataCol,
-    maxCol: l.r.maxDataCol,
+    firstRow: tracker.layout.spec.dataFirstRow,
+    minCol: tracker.layout.minDataCol,
+    maxCol: tracker.layout.maxDataCol,
     rows: rows.length,
     cells: chunks.length,
-    labels: l.r.dataCols.map((c) => l.r.labels[c] ?? ''),
-    painted,
+    labels: tracker.layout.dataCols.map(
+      (column) => tracker.layout.labels[column] ?? '',
+    ),
+    painted: paintedRuns,
   }
-  const column: unknown[][] = [
+  const snapshotColumn: unknown[][] = [
     [JSON.stringify(meta)],
-    ...chunks.map((c) => [c]),
+    ...chunks.map((chunk) => [chunk]),
   ]
-  const leftover = Math.max(0, (l.meta?.cells ?? 0) - chunks.length)
-  for (let i = 0; i < leftover; i++) column.push([''])
+  const leftoverCells = Math.max(
+    0,
+    (tracker.snapshotMeta?.cells ?? 0) - chunks.length,
+  )
+  for (let index = 0; index < leftoverCells; index++) snapshotColumn.push([''])
   return [
     {
       range: sheetRange(
-        snapshotSheetName(l.r.spec.key),
-        `A1:A${column.length}`,
+        snapshotSheetName(tracker.layout.spec.key),
+        `A1:A${snapshotColumn.length}`,
       ),
-      values: column,
+      values: snapshotColumn,
     },
   ]
 }
 
 /** Just the metadata cell (used when highlights change but the baseline must stay). */
 function metaWrite(
-  l: Loaded,
-  painted: Run[],
+  tracker: LoadedTracker,
+  paintedRuns: Run[],
 ): { range: string; values: unknown[][] } {
-  const meta: SnapshotMeta = { ...(l.meta as SnapshotMeta), painted }
+  const meta: SnapshotMeta = {
+    ...(tracker.snapshotMeta as SnapshotMeta),
+    painted: paintedRuns,
+  }
   return {
-    range: sheetRange(snapshotSheetName(l.r.spec.key), 'A1'),
+    range: sheetRange(snapshotSheetName(tracker.layout.spec.key), 'A1'),
     values: [[JSON.stringify(meta)]],
   }
 }
 
 /** Make sure each of these trackers' snapshot sheets exists (hidden); a stale one is emptied first. */
-function prepareSnapshotSheets(ss: Spreadsheet, loaded: Loaded[]): void {
-  for (const l of loaded) {
-    const name = snapshotSheetName(l.r.spec.key)
-    const sheet = ss.getSheetByName(name)
-    if (!sheet) {
-      ss.insertSheet(name).hideSheet()
-    } else if (l.stale) {
-      sheet.clear()
+function prepareSnapshotSheets(
+  spreadsheet: Spreadsheet,
+  trackers: LoadedTracker[],
+): void {
+  for (const tracker of trackers) {
+    const snapshotName = snapshotSheetName(tracker.layout.spec.key)
+    const snapshotSheet = spreadsheet.getSheetByName(snapshotName)
+    if (!snapshotSheet) {
+      spreadsheet.insertSheet(snapshotName).hideSheet()
+    } else if (tracker.snapshotSheetStale) {
+      snapshotSheet.clear()
     }
   }
 }
@@ -638,15 +712,20 @@ function prepareSnapshotSheets(ss: Spreadsheet, loaded: Loaded[]): void {
  * actually out of order (a slicer or manual sort moved them). Painting is by
  * row offset, so the display must be in the data sheet's canonical order.
  */
-export function ensureDisplayOrder(ss: Spreadsheet, l: Loaded): boolean {
-  if (l.keys.length <= 1 || !outOfOrder(l.keys)) return false
-  const display = ss.getSheetByName(l.r.spec.displaySheet)!
-  const lastCol = display.getLastColumn()
-  display
-    .getRange(l.r.spec.displayFirstRow, 1, l.keys.length, lastCol)
-    .sort({ column: l.r.spec.sortDisplayColumn, ascending: true })
+export function ensureDisplayOrder(
+  spreadsheet: Spreadsheet,
+  tracker: LoadedTracker,
+): boolean {
+  if (tracker.displayKeys.length <= 1 || !outOfOrder(tracker.displayKeys))
+    return false
+  const spec = tracker.layout.spec
+  const displaySheet = spreadsheet.getSheetByName(spec.displaySheet)!
+  const lastColumn = displaySheet.getLastColumn()
+  displaySheet
+    .getRange(spec.displayFirstRow, 1, tracker.displayKeys.length, lastColumn)
+    .sort({ column: spec.sortDisplayColumn, ascending: true })
   Logger.log(
-    `${l.r.spec.key}: display was out of order; re-sorted by column ${l.r.spec.sortDisplayColumn}`,
+    `${spec.key}: display was out of order; re-sorted by column ${spec.sortDisplayColumn}`,
   )
   return true
 }
@@ -665,57 +744,70 @@ export function processChanges(
   options?: { skipSnapshot?: boolean },
   client: SheetsClient = liveSheets,
 ): void {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
   const skipSnapshot = !!(options && options.skipSnapshot)
   try {
-    startStep(ss, 'Reading sheets')
-    const wb = loadWorkbook(ss, client)
+    startStep(spreadsheet, 'Reading sheets')
+    const workbook = loadWorkbook(spreadsheet, client)
 
-    startStep(ss, 'Highlighting changes')
-    const paint: Request[] = []
-    const painted: Run[][] = []
-    for (const l of wb.loaded) {
-      if (!l.previous) {
-        Logger.log(`${l.r.spec.key}: no snapshot yet, nothing to highlight`)
+    startStep(spreadsheet, 'Highlighting changes')
+    const paintBatch: Request[] = []
+    const paintedRunsPerTracker: Run[][] = []
+    for (const tracker of workbook.trackers) {
+      const key = tracker.layout.spec.key
+      if (!tracker.snapshotValues) {
+        Logger.log(`${key}: no snapshot yet, nothing to highlight`)
         // Unknown highlight state (no metadata): clear the block once so
         // nothing stale survives into the new baseline.
-        if (!l.meta) paint.push(...paintRequests(l, new Map()).requests)
-        painted.push([])
+        if (!tracker.snapshotMeta)
+          paintBatch.push(...paintRequests(tracker, new Map()).requests)
+        paintedRunsPerTracker.push([])
         continue
       }
-      ensureDisplayOrder(ss, l)
-      const { rowColors, changed } = diffBlocks(l.r, l.previous, l.current)
-      const p = paintRequests(l, rowColors)
-      paint.push(...p.requests)
-      painted.push(p.painted)
+      ensureDisplayOrder(spreadsheet, tracker)
+      const { rowColors, changedCells } = diffBlocks(
+        tracker.layout,
+        tracker.snapshotValues,
+        tracker.currentValues,
+      )
+      const paint = paintRequests(tracker, rowColors)
+      paintBatch.push(...paint.requests)
+      paintedRunsPerTracker.push(paint.painted)
       Logger.log(
-        `${l.r.spec.key}: highlighted ${changed} changed cells in ${rowColors.size} rows over ${l.current.length} rows`,
+        `${key}: highlighted ${changedCells} changed cells in ${rowColors.size} rows over ${tracker.currentValues.length} rows`,
       )
     }
-    if (paint.length) client.batchUpdate(ss.getId(), paint)
+    if (paintBatch.length) client.batchUpdate(spreadsheet.getId(), paintBatch)
 
-    startStep(ss, skipSnapshot ? 'Saving highlight state' : 'Snapshotting')
-    const writes: { range: string; values: unknown[][] }[] = []
-    const touched: Loaded[] = []
-    wb.loaded.forEach((l, i) => {
+    startStep(
+      spreadsheet,
+      skipSnapshot ? 'Saving highlight state' : 'Snapshotting',
+    )
+    const valueWrites: { range: string; values: unknown[][] }[] = []
+    const trackersToWrite: LoadedTracker[] = []
+    workbook.trackers.forEach((tracker, index) => {
+      const paintedRuns = paintedRunsPerTracker[index]!
       if (!skipSnapshot) {
-        writes.push(...snapshotWrites(l, l.current, painted[i]!))
-      } else if (!l.previous) {
+        valueWrites.push(
+          ...snapshotWrites(tracker, tracker.currentValues, paintedRuns),
+        )
+      } else if (!tracker.snapshotValues) {
         return // no baseline yet and we were asked not to create one
       } else {
-        writes.push(metaWrite(l, painted[i]!))
+        valueWrites.push(metaWrite(tracker, paintedRuns))
       }
-      touched.push(l)
+      trackersToWrite.push(tracker)
     })
-    prepareSnapshotSheets(ss, touched)
-    if (writes.length) client.valuesBatchUpdate(ss.getId(), writes)
+    prepareSnapshotSheets(spreadsheet, trackersToWrite)
+    if (valueWrites.length)
+      client.valuesBatchUpdate(spreadsheet.getId(), valueWrites)
     finishStep()
-  } catch (e) {
-    failFlow(ss, e)
-    throw e
+  } catch (error) {
+    failFlow(spreadsheet, error)
+    throw error
   }
   finishFlow(
-    ss,
+    spreadsheet,
     skipSnapshot
       ? 'All sheets processed (baseline kept)'
       : 'All sheets processed',
@@ -729,16 +821,20 @@ export function processChangesWithoutSnapshot(): void {
 
 /** Public entry: capture the current values as the baseline (highlights untouched). */
 export function snapshot(client: SheetsClient = liveSheets): void {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  runStandaloneIfNeeded(ss, 'Snapshot', () => {
-    startStep(ss, 'Reading sheets')
-    const wb = loadWorkbook(ss, client)
-    startStep(ss, 'Snapshotting')
-    prepareSnapshotSheets(ss, wb.loaded)
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
+  runStandaloneIfNeeded(spreadsheet, 'Snapshot', () => {
+    startStep(spreadsheet, 'Reading sheets')
+    const workbook = loadWorkbook(spreadsheet, client)
+    startStep(spreadsheet, 'Snapshotting')
+    prepareSnapshotSheets(spreadsheet, workbook.trackers)
     client.valuesBatchUpdate(
-      ss.getId(),
-      wb.loaded.flatMap((l) =>
-        snapshotWrites(l, l.current, l.meta?.painted ?? []),
+      spreadsheet.getId(),
+      workbook.trackers.flatMap((tracker) =>
+        snapshotWrites(
+          tracker,
+          tracker.currentValues,
+          tracker.snapshotMeta?.painted ?? [],
+        ),
       ),
     )
     finishStep()
@@ -752,32 +848,38 @@ export function highlightChanges(): void {
 
 /** Public entry: clear every highlight (last painted rows, or the whole block if unknown). */
 export function clearHighlights(client: SheetsClient = liveSheets): void {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  runStandaloneIfNeeded(ss, 'Clear highlights', () => {
-    startStep(ss, 'Reading sheets')
-    const wb = loadWorkbook(ss, client)
-    startStep(ss, 'Clearing highlights')
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
+  runStandaloneIfNeeded(spreadsheet, 'Clear highlights', () => {
+    startStep(spreadsheet, 'Reading sheets')
+    const workbook = loadWorkbook(spreadsheet, client)
+    startStep(spreadsheet, 'Clearing highlights')
     // Manual clear: wipe the WHOLE tracked block of every display (not just
     // the rows we remember painting), so anything stray goes too.
     const requests: Request[] = []
-    for (const l of wb.loaded) {
-      requests.push(...paintRequests({ ...l, meta: null }, new Map()).requests)
+    for (const tracker of workbook.trackers) {
+      requests.push(
+        ...paintRequests({ ...tracker, snapshotMeta: null }, new Map())
+          .requests,
+      )
     }
-    if (requests.length) client.batchUpdate(ss.getId(), requests)
-    const writes = wb.loaded.filter((l) => l.meta).map((l) => metaWrite(l, []))
-    if (writes.length) client.valuesBatchUpdate(ss.getId(), writes)
+    if (requests.length) client.batchUpdate(spreadsheet.getId(), requests)
+    const metaWrites = workbook.trackers
+      .filter((tracker) => tracker.snapshotMeta)
+      .map((tracker) => metaWrite(tracker, []))
+    if (metaWrites.length)
+      client.valuesBatchUpdate(spreadsheet.getId(), metaWrites)
     finishStep()
   })
 }
 
 /** Dry run: what the layout probe finds in this workbook, one line per tracker (or the error). */
 export function describeLayout(client: SheetsClient = liveSheets): string {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
   try {
-    return loadWorkbook(ss, client)
-      .loaded.map((l) => describeResolved(l.r))
+    return loadWorkbook(spreadsheet, client)
+      .trackers.map((tracker) => describeResolved(tracker.layout))
       .join('\n')
-  } catch (e) {
-    return 'ERROR ' + (e instanceof Error ? e.message : String(e))
+  } catch (error) {
+    return 'ERROR ' + (error instanceof Error ? error.message : String(error))
   }
 }

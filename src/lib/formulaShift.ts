@@ -1,7 +1,7 @@
 /**
  * Shift the column references of a formula the way Google Sheets does when
  * columns are inserted: every UNQUALIFIED (same-sheet) reference whose column
- * is at or right of `fromCol` moves right by `offset`; sheet-qualified
+ * is at or right of `fromColumn` moves right by `offset`; sheet-qualified
  * references ('Other'!F1), string literals and function names are untouched.
  *
  * Used by the Migrator to port your Quick Checklist header formulas into a
@@ -10,140 +10,145 @@
  */
 
 export function columnToIndex(letters: string): number {
-  let n = 0
-  for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64)
-  return n
+  let index = 0
+  for (const letter of letters.toUpperCase())
+    index = index * 26 + (letter.charCodeAt(0) - 64)
+  return index
 }
 
-export function indexToColumn(col: number): string {
-  let s = ''
-  while (col > 0) {
-    const m = (col - 1) % 26
-    s = String.fromCharCode(65 + m) + s
-    col = Math.floor((col - 1) / 26)
+export function indexToColumn(columnIndex: number): string {
+  let letters = ''
+  let remaining = columnIndex
+  while (remaining > 0) {
+    const remainder = (remaining - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    remaining = Math.floor((remaining - 1) / 26)
   }
-  return s
+  return letters
 }
 
-const isWordChar = (ch: string): boolean => /[A-Za-z0-9_.]/.test(ch)
+const isWordChar = (char: string): boolean => /[A-Za-z0-9_.]/.test(char)
 
 /**
- * @param formula  e.g. '=COUNTIF(F12:F,"☑")+A10'
- * @param fromCol  1-based column; references to columns >= fromCol shift
- * @param offset   columns to shift by (0 returns the formula unchanged)
+ * @param formula     e.g. '=COUNTIF(F12:F,"☑")+A10'
+ * @param fromColumn  1-based column; references to columns >= fromColumn shift
+ * @param offset      columns to shift by (0 returns the formula unchanged)
  */
 export function shiftFormulaColumns(
   formula: string,
-  fromCol: number,
+  fromColumn: number,
   offset: number,
 ): string {
   if (!formula || offset === 0 || !formula.startsWith('=')) return formula
-  let out = ''
-  let i = 0
-  const n = formula.length
-  while (i < n) {
-    const ch = formula[i]!
+  let shifted = ''
+  let pos = 0
+  const length = formula.length
+  while (pos < length) {
+    const char = formula[pos]!
     // String literal: copy verbatim.
-    if (ch === '"') {
-      let j = i + 1
-      while (j < n) {
-        if (formula[j] === '"') {
-          if (formula[j + 1] === '"') {
-            j += 2
+    if (char === '"') {
+      let end = pos + 1
+      while (end < length) {
+        if (formula[end] === '"') {
+          if (formula[end + 1] === '"') {
+            end += 2
             continue
           }
           break
         }
-        j++
+        end++
       }
-      out += formula.slice(i, j + 1)
-      i = j + 1
+      shifted += formula.slice(pos, end + 1)
+      pos = end + 1
       continue
     }
     // Quoted sheet name: 'My Sheet'!  → copy the name and the following reference untouched.
-    if (ch === "'") {
-      let j = i + 1
-      while (j < n) {
-        if (formula[j] === "'") {
-          if (formula[j + 1] === "'") {
-            j += 2
+    if (char === "'") {
+      let end = pos + 1
+      while (end < length) {
+        if (formula[end] === "'") {
+          if (formula[end + 1] === "'") {
+            end += 2
             continue
           }
           break
         }
-        j++
+        end++
       }
-      out += formula.slice(i, j + 1)
-      i = j + 1
-      if (formula[i] === '!') {
-        out += '!'
-        i++
-        const ref = readRef(formula, i)
-        out += ref.text
-        i += ref.text.length
+      shifted += formula.slice(pos, end + 1)
+      pos = end + 1
+      if (formula[pos] === '!') {
+        shifted += '!'
+        pos++
+        const qualifiedRef = readRef(formula, pos)
+        shifted += qualifiedRef.text
+        pos += qualifiedRef.text.length
       }
       continue
     }
     // Word: could be a bare sheet name (followed by '!'), a function name, or a cell/range ref.
-    if (/[A-Za-z_$]/.test(ch)) {
-      let j = i
+    if (/[A-Za-z_$]/.test(char)) {
+      let end = pos
       while (
-        j < n &&
-        (isWordChar(formula[j]!) || formula[j] === '$' || formula[j] === ':')
+        end < length &&
+        (isWordChar(formula[end]!) ||
+          formula[end] === '$' ||
+          formula[end] === ':')
       )
-        j++
+        end++
       // Bare sheet qualifier: SheetName!A1
-      if (formula[j] === '!') {
-        out += formula.slice(i, j + 1)
-        i = j + 1
-        const ref = readRef(formula, i)
-        out += ref.text
-        i += ref.text.length
+      if (formula[end] === '!') {
+        shifted += formula.slice(pos, end + 1)
+        pos = end + 1
+        const qualifiedRef = readRef(formula, pos)
+        shifted += qualifiedRef.text
+        pos += qualifiedRef.text.length
         continue
       }
       // Function name: identifier followed by '('
-      if (formula[j] === '(') {
-        out += formula.slice(i, j)
-        i = j
+      if (formula[end] === '(') {
+        shifted += formula.slice(pos, end)
+        pos = end
         continue
       }
-      const ref = readRef(formula, i)
-      if (ref.text) {
-        out += shiftRef(ref.text, fromCol, offset)
-        i += ref.text.length
+      const localRef = readRef(formula, pos)
+      if (localRef.text) {
+        shifted += shiftRef(localRef.text, fromColumn, offset)
+        pos += localRef.text.length
         continue
       }
-      out += formula.slice(i, j)
-      i = j
+      shifted += formula.slice(pos, end)
+      pos = end
       continue
     }
-    out += ch
-    i++
+    shifted += char
+    pos++
   }
-  return out
+  return shifted
 }
 
 /** A1-style reference (cell, range, column range, row range) starting at `pos`, or ''. */
 function readRef(formula: string, pos: number): { text: string } {
   const rest = formula.slice(pos)
-  const m = rest.match(
+  const match = rest.match(
     /^(\$?[A-Z]{1,3}\$?\d*|\$?\d+)(:(\$?[A-Z]{1,3}\$?\d*|\$?\d+))?(?![A-Za-z0-9_(])/,
   )
-  if (!m) return { text: '' }
+  if (!match) return { text: '' }
   // Reject things like "TRUE" (4 letters get split) — the regex caps at 3 letters
   // and the negative lookahead refuses a following letter, so "TRUE" never matches.
-  return { text: m[0] }
+  return { text: match[0] }
 }
 
-function shiftRef(ref: string, fromCol: number, offset: number): string {
+function shiftRef(ref: string, fromColumn: number, offset: number): string {
   return ref
     .split(':')
     .map((part) => {
-      const m = part.match(/^(\$?)([A-Z]{1,3})(\$?\d*)$/)
-      if (!m) return part // row-only part like "12" or "$12"
-      const col = columnToIndex(m[2]!)
-      if (col < fromCol) return part
-      return m[1] + indexToColumn(col + offset) + m[3]
+      const match = part.match(/^(\$?)([A-Z]{1,3})(\$?\d*)$/)
+      if (!match) return part // row-only part like "12" or "$12"
+      const [, dollar, columnLetters, rowPart] = match
+      const column = columnToIndex(columnLetters!)
+      if (column < fromColumn) return part
+      return dollar + indexToColumn(column + offset) + rowPart
     })
     .join(':')
 }

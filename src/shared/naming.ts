@@ -25,17 +25,17 @@ export function copyName(version: string): string {
 
 /** The first "X.YY" in a sheet/file name, or null if there isn't one. */
 export function versionFromName(name: string): string | null {
-  const m = String(name).match(VERSION_RE)
-  return m ? m[0] : null
+  const match = String(name).match(VERSION_RE)
+  return match ? match[0] : null
 }
 
 /** Numeric compare of "major.minor" strings: negative, zero, positive. */
-export function compareVersions(a: string, b: string): number {
-  const pa = String(a).split('.').map(Number)
-  const pb = String(b).split('.').map(Number)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
-    if (d !== 0) return d
+export function compareVersions(versionA: string, versionB: string): number {
+  const partsA = String(versionA).split('.').map(Number)
+  const partsB = String(versionB).split('.').map(Number)
+  for (let index = 0; index < Math.max(partsA.length, partsB.length); index++) {
+    const difference = (partsA[index] ?? 0) - (partsB[index] ?? 0)
+    if (difference !== 0) return difference
   }
   return 0
 }
@@ -46,11 +46,11 @@ export function compareVersions(a: string, b: string): number {
  * Returns null when nothing that looks like a Script ID is present.
  */
 export function extractScriptId(target: string): string | null {
-  const t = target.trim()
-  const fromPath = t.match(/\/projects\/([A-Za-z0-9_-]{20,})/)
+  const trimmed = target.trim()
+  const fromPath = trimmed.match(/\/projects\/([A-Za-z0-9_-]{20,})/)
   if (fromPath) return fromPath[1] ?? null
-  const fromQuery = t.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)
+  const fromQuery = trimmed.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)
   if (fromQuery) return fromQuery[1] ?? null
-  if (/^[A-Za-z0-9_-]{20,}$/.test(t)) return t
+  if (/^[A-Za-z0-9_-]{20,}$/.test(trimmed)) return trimmed
   return null
 }

@@ -36,19 +36,21 @@ export function resetFakes(): void {
 }
 
 function colToLetters(col: number): string {
-  let s = ''
-  while (col > 0) {
-    const m = (col - 1) % 26
-    s = String.fromCharCode(65 + m) + s
-    col = Math.floor((col - 1) / 26)
+  let letters = ''
+  let remaining = col
+  while (remaining > 0) {
+    const remainder = (remaining - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    remaining = Math.floor((remaining - 1) / 26)
   }
-  return s
+  return letters
 }
 
 function lettersToCol(letters: string): number {
-  let n = 0
-  for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64)
-  return n
+  let col = 0
+  for (const letter of letters.toUpperCase())
+    col = col * 26 + (letter.charCodeAt(0) - 64)
+  return col
 }
 
 /** Parse "B16", "B16:M131", "A:A" (unbounded rows become the sheet's max). */
@@ -56,17 +58,17 @@ function parseA1(
   a1: string,
   sheet: FakeSheet,
 ): { row: number; col: number; numRows: number; numCols: number } {
-  const [start, end] = a1.split(':') as [string, string | undefined]
-  const m1 = start.match(/^([A-Za-z]+)(\d*)$/)
-  if (!m1) throw new Error('bad A1: ' + a1)
-  const col = lettersToCol(m1[1]!)
-  const row = m1[2] ? parseInt(m1[2], 10) : 1
-  if (!end) return { row, col, numRows: 1, numCols: 1 }
-  const m2 = end.match(/^([A-Za-z]+)(\d*)$/)
-  if (!m2) throw new Error('bad A1: ' + a1)
-  const col2 = lettersToCol(m2[1]!)
-  const row2 = m2[2] ? parseInt(m2[2], 10) : sheet.getMaxRows()
-  return { row, col, numRows: row2 - row + 1, numCols: col2 - col + 1 }
+  const [startRef, endRef] = a1.split(':') as [string, string | undefined]
+  const startMatch = startRef.match(/^([A-Za-z]+)(\d*)$/)
+  if (!startMatch) throw new Error('bad A1: ' + a1)
+  const col = lettersToCol(startMatch[1]!)
+  const row = startMatch[2] ? parseInt(startMatch[2], 10) : 1
+  if (!endRef) return { row, col, numRows: 1, numCols: 1 }
+  const endMatch = endRef.match(/^([A-Za-z]+)(\d*)$/)
+  if (!endMatch) throw new Error('bad A1: ' + a1)
+  const endCol = lettersToCol(endMatch[1]!)
+  const endRow = endMatch[2] ? parseInt(endMatch[2], 10) : sheet.getMaxRows()
+  return { row, col, numRows: endRow - row + 1, numCols: endCol - col + 1 }
 }
 
 export class FakeRange {
@@ -88,9 +90,9 @@ export class FakeRange {
     this.numRows = numRows
     this.numCols = numCols
   }
-  private call(name: string): void {
+  private recordCall(methodName: string): void {
     calls.push(
-      `${this.sheet.name}.${name}(${this.row},${this.col},${this.numRows},${this.numCols})`,
+      `${this.sheet.name}.${methodName}(${this.row},${this.col},${this.numRows},${this.numCols})`,
     )
   }
   getLastRow(): number {
@@ -100,21 +102,21 @@ export class FakeRange {
     return this.col + this.numCols - 1
   }
   getValues(): CellValue[][] {
-    this.call('getValues')
+    this.recordCall('getValues')
     return this.sheet.readValues(this.row, this.col, this.numRows, this.numCols)
   }
   getDisplayValues(): string[][] {
-    this.call('getDisplayValues')
+    this.recordCall('getDisplayValues')
     return this.sheet
       .readValues(this.row, this.col, this.numRows, this.numCols)
-      .map((r) => r.map((v) => (v === null ? '' : String(v))))
+      .map((row) => row.map((value) => (value === null ? '' : String(value))))
   }
   setValues(values: CellValue[][]): FakeRange {
     noteMutation()
-    this.call('setValues')
+    this.recordCall('setValues')
     if (
       values.length !== this.numRows ||
-      values.some((r) => r.length !== this.numCols)
+      values.some((row) => row.length !== this.numCols)
     ) {
       throw new Error(
         `setValues size mismatch on ${this.sheet.name}!(${this.row},${this.col},${this.numRows},${this.numCols}): got ${values.length}x${values[0]?.length}`,
@@ -123,41 +125,41 @@ export class FakeRange {
     this.sheet.writeValues(this.row, this.col, values)
     return this
   }
-  setBackgrounds(bg: (string | null)[][]): FakeRange {
+  setBackgrounds(backgrounds: (string | null)[][]): FakeRange {
     noteMutation()
-    this.call('setBackgrounds')
+    this.recordCall('setBackgrounds')
     if (
-      bg.length !== this.numRows ||
-      bg.some((r) => r.length !== this.numCols)
+      backgrounds.length !== this.numRows ||
+      backgrounds.some((row) => row.length !== this.numCols)
     ) {
       throw new Error(
         `setBackgrounds size mismatch on ${this.sheet.name}!(${this.row},${this.col},${this.numRows},${this.numCols})`,
       )
     }
-    this.sheet.writeBackgrounds(this.row, this.col, bg)
+    this.sheet.writeBackgrounds(this.row, this.col, backgrounds)
     return this
   }
   setBackground(color: string | null): FakeRange {
     noteMutation()
-    this.call('setBackground')
-    const bg = Array.from({ length: this.numRows }, () =>
+    this.recordCall('setBackground')
+    const backgrounds = Array.from({ length: this.numRows }, () =>
       new Array<string | null>(this.numCols).fill(color),
     )
-    this.sheet.writeBackgrounds(this.row, this.col, bg)
+    this.sheet.writeBackgrounds(this.row, this.col, backgrounds)
     return this
   }
   clearContent(): FakeRange {
     noteMutation()
-    this.call('clearContent')
-    const blank = Array.from({ length: this.numRows }, () =>
+    this.recordCall('clearContent')
+    const blanks = Array.from({ length: this.numRows }, () =>
       new Array<CellValue>(this.numCols).fill(''),
     )
-    this.sheet.writeValues(this.row, this.col, blank)
+    this.sheet.writeValues(this.row, this.col, blanks)
     return this
   }
   sort(spec: { column: number; ascending: boolean }): FakeRange {
     noteMutation()
-    this.call('sort')
+    this.recordCall('sort')
     this.sheet.sortRows(
       this.row,
       this.col,
@@ -185,17 +187,17 @@ export class FakeSheet {
     this.name = name
   }
 
-  private key(r: number, c: number): string {
-    return r + ':' + c
+  private cellKey(row: number, col: number): string {
+    return row + ':' + col
   }
-  private cell(r: number, c: number): Cell {
-    let cell = this.cells.get(this.key(r, c))
+  private cell(row: number, col: number): Cell {
+    let cell = this.cells.get(this.cellKey(row, col))
     if (!cell) {
       cell = { value: '', background: null }
-      this.cells.set(this.key(r, c), cell)
+      this.cells.set(this.cellKey(row, col), cell)
     }
-    if (r > this.maxRows) this.maxRows = r
-    if (c > this.maxCols) this.maxCols = c
+    if (row > this.maxRows) this.maxRows = row
+    if (col > this.maxCols) this.maxCols = col
     return cell
   }
 
@@ -208,79 +210,96 @@ export class FakeSheet {
   grid(): CellValue[][] {
     return this.readValues(1, 1, this.getLastRow(), this.getLastColumn())
   }
-  backgroundAt(r: number, c: number): string | null {
-    return this.cells.get(this.key(r, c))?.background ?? null
+  backgroundAt(row: number, col: number): string | null {
+    return this.cells.get(this.cellKey(row, col))?.background ?? null
   }
-  valueAt(r: number, c: number): CellValue {
-    return this.cells.get(this.key(r, c))?.value ?? ''
+  valueAt(row: number, col: number): CellValue {
+    return this.cells.get(this.cellKey(row, col))?.value ?? ''
   }
 
-  readValues(row: number, col: number, nr: number, nc: number): CellValue[][] {
-    const out: CellValue[][] = []
-    for (let r = 0; r < nr; r++) {
+  readValues(
+    row: number,
+    col: number,
+    numRows: number,
+    numCols: number,
+  ): CellValue[][] {
+    const values: CellValue[][] = []
+    for (let rowOffset = 0; rowOffset < numRows; rowOffset++) {
       const line: CellValue[] = []
-      for (let c = 0; c < nc; c++)
-        line.push(this.cells.get(this.key(row + r, col + c))?.value ?? '')
-      out.push(line)
+      for (let colOffset = 0; colOffset < numCols; colOffset++)
+        line.push(
+          this.cells.get(this.cellKey(row + rowOffset, col + colOffset))
+            ?.value ?? '',
+        )
+      values.push(line)
     }
-    return out
+    return values
   }
   readBackgrounds(
     row: number,
     col: number,
-    nr: number,
-    nc: number,
+    numRows: number,
+    numCols: number,
   ): (string | null)[][] {
-    const out: (string | null)[][] = []
-    for (let r = 0; r < nr; r++) {
+    const backgrounds: (string | null)[][] = []
+    for (let rowOffset = 0; rowOffset < numRows; rowOffset++) {
       const line: (string | null)[] = []
-      for (let c = 0; c < nc; c++)
+      for (let colOffset = 0; colOffset < numCols; colOffset++)
         line.push(
-          this.cells.get(this.key(row + r, col + c))?.background ?? null,
+          this.cells.get(this.cellKey(row + rowOffset, col + colOffset))
+            ?.background ?? null,
         )
-      out.push(line)
+      backgrounds.push(line)
     }
-    return out
+    return backgrounds
   }
   writeValues(row: number, col: number, values: CellValue[][]): void {
-    values.forEach((line, r) =>
-      line.forEach((v, c) => {
-        this.cell(row + r, col + c).value = v
+    values.forEach((line, rowOffset) =>
+      line.forEach((value, colOffset) => {
+        this.cell(row + rowOffset, col + colOffset).value = value
       }),
     )
   }
-  writeBackgrounds(row: number, col: number, bg: (string | null)[][]): void {
-    bg.forEach((line, r) =>
-      line.forEach((v, c) => (this.cell(row + r, col + c).background = v)),
+  writeBackgrounds(
+    row: number,
+    col: number,
+    backgrounds: (string | null)[][],
+  ): void {
+    backgrounds.forEach((line, rowOffset) =>
+      line.forEach(
+        (color, colOffset) =>
+          (this.cell(row + rowOffset, col + colOffset).background = color),
+      ),
     )
   }
   sortRows(
     row: number,
     col: number,
-    nr: number,
-    nc: number,
-    byCol: number,
+    numRows: number,
+    numCols: number,
+    sortColumn: number,
     ascending: boolean,
   ): void {
     const rows: Cell[][] = []
-    for (let r = 0; r < nr; r++) {
+    for (let rowOffset = 0; rowOffset < numRows; rowOffset++) {
       const line: Cell[] = []
-      for (let c = 0; c < nc; c++) line.push({ ...this.cell(row + r, col + c) })
+      for (let colOffset = 0; colOffset < numCols; colOffset++)
+        line.push({ ...this.cell(row + rowOffset, col + colOffset) })
       rows.push(line)
     }
-    const idx = byCol - col
-    rows.sort((a, b) => {
-      const av = a[idx]!.value
-      const bv = b[idx]!.value
-      const cmp =
-        typeof av === 'number' && typeof bv === 'number'
-          ? av - bv
-          : String(av).localeCompare(String(bv))
-      return ascending ? cmp : -cmp
+    const sortIndex = sortColumn - col
+    rows.sort((left, right) => {
+      const leftValue = left[sortIndex]!.value
+      const rightValue = right[sortIndex]!.value
+      const comparison =
+        typeof leftValue === 'number' && typeof rightValue === 'number'
+          ? leftValue - rightValue
+          : String(leftValue).localeCompare(String(rightValue))
+      return ascending ? comparison : -comparison
     })
-    rows.forEach((line, r) =>
-      line.forEach((cell, c) =>
-        Object.assign(this.cell(row + r, col + c), cell),
+    rows.forEach((line, rowOffset) =>
+      line.forEach((cell, colOffset) =>
+        Object.assign(this.cell(row + rowOffset, col + colOffset), cell),
       ),
     )
   }
@@ -290,30 +309,41 @@ export class FakeSheet {
     calls.push(`${this.name}.getName`)
     return this.name
   }
-  getRange(a: number | string, b?: number, c?: number, d?: number): FakeRange {
-    if (typeof a === 'string') {
-      const p = parseA1(a, this)
-      return new FakeRange(this, p.row, p.col, p.numRows, p.numCols)
+  getRange(
+    rowOrA1: number | string,
+    col?: number,
+    numRows?: number,
+    numCols?: number,
+  ): FakeRange {
+    if (typeof rowOrA1 === 'string') {
+      const parsed = parseA1(rowOrA1, this)
+      return new FakeRange(
+        this,
+        parsed.row,
+        parsed.col,
+        parsed.numRows,
+        parsed.numCols,
+      )
     }
-    return new FakeRange(this, a, b ?? 1, c ?? 1, d ?? 1)
+    return new FakeRange(this, rowOrA1, col ?? 1, numRows ?? 1, numCols ?? 1)
   }
   getLastRow(): number {
     calls.push(`${this.name}.getLastRow`)
-    let last = 0
-    for (const [k, cell] of this.cells) {
+    let lastRow = 0
+    for (const [key, cell] of this.cells) {
       if (cell.value !== '' && cell.value !== null)
-        last = Math.max(last, parseInt(k.split(':')[0]!, 10))
+        lastRow = Math.max(lastRow, parseInt(key.split(':')[0]!, 10))
     }
-    return last
+    return lastRow
   }
   getLastColumn(): number {
     calls.push(`${this.name}.getLastColumn`)
-    let last = 0
-    for (const [k, cell] of this.cells) {
+    let lastCol = 0
+    for (const [key, cell] of this.cells) {
       if (cell.value !== '' && cell.value !== null)
-        last = Math.max(last, parseInt(k.split(':')[1]!, 10))
+        lastCol = Math.max(lastCol, parseInt(key.split(':')[1]!, 10))
     }
-    return last
+    return lastCol
   }
   getMaxRows(): number {
     return this.maxRows
@@ -331,30 +361,39 @@ export class FakeSheet {
     calls.push(`${this.name}.clear`)
     this.cells.clear()
   }
-  insertRowsBefore(row: number, n: number): void {
+  insertRowsBefore(row: number, count: number): void {
     noteMutation()
-    calls.push(`${this.name}.insertRowsBefore(${row},${n})`)
-    const next = new Map<string, Cell>()
-    for (const [k, cell] of this.cells) {
-      const [r, c] = k.split(':').map(Number) as [number, number]
-      next.set(this.key(r >= row ? r + n : r, c), cell)
+    calls.push(`${this.name}.insertRowsBefore(${row},${count})`)
+    const shifted = new Map<string, Cell>()
+    for (const [key, cell] of this.cells) {
+      const [cellRow, cellCol] = key.split(':').map(Number) as [number, number]
+      shifted.set(
+        this.cellKey(cellRow >= row ? cellRow + count : cellRow, cellCol),
+        cell,
+      )
     }
-    this.cells = next
-    this.maxRows += n
+    this.cells = shifted
+    this.maxRows += count
   }
   setColumnWidth(col: number, width: number): void {
     calls.push(`${this.name}.setColumnWidth(${col},${width})`)
   }
-  deleteRows(row: number, n: number): void {
+  deleteRows(row: number, count: number): void {
     noteMutation()
-    calls.push(`${this.name}.deleteRows(${row},${n})`)
-    const next = new Map<string, Cell>()
-    for (const [k, cell] of this.cells) {
-      const [r, c] = k.split(':').map(Number) as [number, number]
-      if (r >= row && r < row + n) continue
-      next.set(this.key(r >= row + n ? r - n : r, c), cell)
+    calls.push(`${this.name}.deleteRows(${row},${count})`)
+    const remaining = new Map<string, Cell>()
+    for (const [key, cell] of this.cells) {
+      const [cellRow, cellCol] = key.split(':').map(Number) as [number, number]
+      if (cellRow >= row && cellRow < row + count) continue
+      remaining.set(
+        this.cellKey(
+          cellRow >= row + count ? cellRow - count : cellRow,
+          cellCol,
+        ),
+        cell,
+      )
     }
-    this.cells = next
+    this.cells = remaining
   }
 }
 
@@ -367,9 +406,9 @@ export class FakeSpreadsheet {
     this.id = id
   }
   addSheet(name: string): FakeSheet {
-    const s = new FakeSheet(this, name)
-    this.sheets.push(s)
-    return s
+    const sheet = new FakeSheet(this, name)
+    this.sheets.push(sheet)
+    return sheet
   }
   // --- Spreadsheet API ---
   getName(): string {
@@ -380,7 +419,7 @@ export class FakeSpreadsheet {
   }
   getSheetByName(name: string): FakeSheet | null {
     calls.push(`getSheetByName(${name})`)
-    return this.sheets.find((s) => s.name === name) ?? null
+    return this.sheets.find((sheet) => sheet.name === name) ?? null
   }
   getSheets(): FakeSheet[] {
     return [...this.sheets]
@@ -393,7 +432,7 @@ export class FakeSpreadsheet {
   deleteSheet(sheet: FakeSheet): void {
     noteMutation()
     calls.push(`deleteSheet(${sheet.name})`)
-    this.sheets = this.sheets.filter((s) => s !== sheet)
+    this.sheets = this.sheets.filter((other) => other !== sheet)
   }
   toast(body: string, title: string, timeout: number): void {
     calls.push('toast')
@@ -402,14 +441,14 @@ export class FakeSpreadsheet {
 }
 
 let activeSpreadsheet: FakeSpreadsheet | null = null
-export function setActiveSpreadsheet(ss: FakeSpreadsheet): void {
-  activeSpreadsheet = ss
+export function setActiveSpreadsheet(spreadsheet: FakeSpreadsheet): void {
+  activeSpreadsheet = spreadsheet
 }
 
 const docProps = new Map<string, string>()
 
-const g = globalThis as Record<string, unknown>
-g['SpreadsheetApp'] = {
+const fakeGlobals = globalThis as Record<string, unknown>
+fakeGlobals['SpreadsheetApp'] = {
   getActiveSpreadsheet(): FakeSpreadsheet {
     if (!activeSpreadsheet) throw new Error('no active spreadsheet set in test')
     return activeSpreadsheet
@@ -419,17 +458,17 @@ g['SpreadsheetApp'] = {
     pendingMutations = 0
   },
 }
-g['Logger'] = {
-  log(msg: unknown): void {
-    logs.push(String(msg))
+fakeGlobals['Logger'] = {
+  log(message: unknown): void {
+    logs.push(String(message))
   },
 }
-g['PropertiesService'] = {
+fakeGlobals['PropertiesService'] = {
   getDocumentProperties() {
     return {
-      getProperty: (k: string) => docProps.get(k) ?? null,
-      setProperty: (k: string, v: string) => docProps.set(k, v),
-      deleteProperty: (k: string) => docProps.delete(k),
+      getProperty: (key: string) => docProps.get(key) ?? null,
+      setProperty: (key: string, value: string) => docProps.set(key, value),
+      deleteProperty: (key: string) => docProps.delete(key),
     }
   },
 }
@@ -449,14 +488,14 @@ export const batchUpdates: {
 function sheetIdOf(sheet: FakeSheet): number {
   return sheet.spreadsheet.getSheets().indexOf(sheet) + 100
 }
-function sheetById(ss: FakeSpreadsheet, id: number): FakeSheet {
-  const s = ss.getSheets()[id - 100]
-  if (!s) throw new Error('fake Sheets: no sheet with id ' + id)
-  return s
+function sheetById(spreadsheet: FakeSpreadsheet, sheetId: number): FakeSheet {
+  const sheet = spreadsheet.getSheets()[sheetId - 100]
+  if (!sheet) throw new Error('fake Sheets: no sheet with id ' + sheetId)
+  return sheet
 }
 
 function parseSheetRange(
-  ss: FakeSpreadsheet,
+  spreadsheet: FakeSpreadsheet,
   ref: string,
 ): {
   sheet: FakeSheet
@@ -465,78 +504,86 @@ function parseSheetRange(
   numRows: number
   numCols: number
 } {
-  const m = ref.match(/^(?:'((?:[^']|'')*)'|([^'!]+))!(.+)$/)
-  if (!m) throw new Error('fake Sheets: bad range ' + ref)
-  const name = (m[1] ?? m[2] ?? '').replace(/''/g, "'")
-  const sheet = ss.getSheetByName(name)
+  const refMatch = ref.match(/^(?:'((?:[^']|'')*)'|([^'!]+))!(.+)$/)
+  if (!refMatch) throw new Error('fake Sheets: bad range ' + ref)
+  const sheetName = (refMatch[1] ?? refMatch[2] ?? '').replace(/''/g, "'")
+  const sheet = spreadsheet.getSheetByName(sheetName)
   if (!sheet) throw new Error(`fake Sheets: Unable to parse range: ${ref}`)
-  const a1 = m[3]!
+  const a1 = refMatch[3]!
   const lastRow = Math.max(sheet.getLastRow(), 1)
   const lastCol = Math.max(sheet.getLastColumn(), 1)
-  let row: number, col: number, row2: number, col2: number
-  const rows = a1.match(/^(\d+):(\d+)$/)
-  const cols = a1.match(/^([A-Z]+):([A-Z]+)$/)
-  if (rows) {
-    row = parseInt(rows[1]!, 10)
-    row2 = Math.min(parseInt(rows[2]!, 10), sheet.getMaxRows())
+  let row: number, col: number, endRow: number, endCol: number
+  const rowRangeMatch = a1.match(/^(\d+):(\d+)$/)
+  const colRangeMatch = a1.match(/^([A-Z]+):([A-Z]+)$/)
+  if (rowRangeMatch) {
+    row = parseInt(rowRangeMatch[1]!, 10)
+    endRow = Math.min(parseInt(rowRangeMatch[2]!, 10), sheet.getMaxRows())
     col = 1
-    col2 = lastCol
-  } else if (cols) {
-    col = lettersToCol(cols[1]!)
-    col2 = lettersToCol(cols[2]!)
+    endCol = lastCol
+  } else if (colRangeMatch) {
+    col = lettersToCol(colRangeMatch[1]!)
+    endCol = lettersToCol(colRangeMatch[2]!)
     row = 1
-    row2 = lastRow
+    endRow = lastRow
   } else {
-    const [s1, s2] = a1.split(':') as [string, string | undefined]
-    const p1 = s1.match(/^([A-Z]+)(\d+)$/)
-    if (!p1) throw new Error('fake Sheets: bad A1 ' + a1)
-    col = lettersToCol(p1[1]!)
-    row = parseInt(p1[2]!, 10)
-    if (!s2) {
-      col2 = col
-      row2 = row
+    const [startRef, endRef] = a1.split(':') as [string, string | undefined]
+    const startMatch = startRef.match(/^([A-Z]+)(\d+)$/)
+    if (!startMatch) throw new Error('fake Sheets: bad A1 ' + a1)
+    col = lettersToCol(startMatch[1]!)
+    row = parseInt(startMatch[2]!, 10)
+    if (!endRef) {
+      endCol = col
+      endRow = row
     } else {
-      const p2 = s2.match(/^([A-Z]+)(\d*)$/)
-      if (!p2) throw new Error('fake Sheets: bad A1 ' + a1)
-      col2 = lettersToCol(p2[1]!)
-      row2 = p2[2] ? parseInt(p2[2], 10) : Math.max(lastRow, row)
+      const endMatch = endRef.match(/^([A-Z]+)(\d*)$/)
+      if (!endMatch) throw new Error('fake Sheets: bad A1 ' + a1)
+      endCol = lettersToCol(endMatch[1]!)
+      endRow = endMatch[2] ? parseInt(endMatch[2], 10) : Math.max(lastRow, row)
     }
   }
   return {
     sheet,
     row,
     col,
-    numRows: Math.max(0, row2 - row + 1),
-    numCols: Math.max(0, col2 - col + 1),
+    numRows: Math.max(0, endRow - row + 1),
+    numCols: Math.max(0, endCol - col + 1),
   }
 }
 
 /** Trim like the API: drop trailing '' cells per row and trailing empty rows. */
 function ragged(values: CellValue[][]): CellValue[][] {
-  const rows = values.map((r) => {
-    let end = r.length
-    while (end > 0 && (r[end - 1] === '' || r[end - 1] === null)) end--
-    return r.slice(0, end)
+  const trimmedRows = values.map((row) => {
+    let end = row.length
+    while (end > 0 && (row[end - 1] === '' || row[end - 1] === null)) end--
+    return row.slice(0, end)
   })
-  let n = rows.length
-  while (n > 0 && rows[n - 1]!.length === 0) n--
-  return rows.slice(0, n)
+  let rowCount = trimmedRows.length
+  while (rowCount > 0 && trimmedRows[rowCount - 1]!.length === 0) rowCount--
+  return trimmedRows.slice(0, rowCount)
 }
 
 function hexOf(
   color: { red?: number; green?: number; blue?: number } | undefined,
 ): string | null {
   if (!color) return null
-  const h = (x: number | undefined): string =>
-    Math.round((x ?? 0) * 255)
+  const channelHex = (channel: number | undefined): string =>
+    Math.round((channel ?? 0) * 255)
       .toString(16)
       .padStart(2, '0')
-  return '#' + h(color.red) + h(color.green) + h(color.blue)
+  return (
+    '#' +
+    channelHex(color.red) +
+    channelHex(color.green) +
+    channelHex(color.blue)
+  )
 }
 
-function applyRequest(ss: FakeSpreadsheet, req: Record<string, unknown>): void {
-  if ('updateCells' in req) {
-    const u = req['updateCells'] as {
+function applyRequest(
+  spreadsheet: FakeSpreadsheet,
+  request: Record<string, unknown>,
+): void {
+  if ('updateCells' in request) {
+    const update = request['updateCells'] as {
       range: Record<string, number>
       rows: {
         values: {
@@ -547,22 +594,22 @@ function applyRequest(ss: FakeSpreadsheet, req: Record<string, unknown>): void {
       }[]
       fields: string
     }
-    if (!u.fields.includes('backgroundColor')) return
-    const sheet = sheetById(ss, u.range['sheetId']!)
-    u.rows.forEach((row, r) => {
-      const bg = row.values.map((cell) =>
+    if (!update.fields.includes('backgroundColor')) return
+    const sheet = sheetById(spreadsheet, update.range['sheetId']!)
+    update.rows.forEach((row, rowOffset) => {
+      const backgrounds = row.values.map((cell) =>
         hexOf(cell.userEnteredFormat?.backgroundColor),
       )
       sheet.writeBackgrounds(
-        u.range['startRowIndex']! + 1 + r,
-        u.range['startColumnIndex']! + 1,
-        [bg],
+        update.range['startRowIndex']! + 1 + rowOffset,
+        update.range['startColumnIndex']! + 1,
+        [backgrounds],
       )
     })
     return
   }
-  if ('repeatCell' in req) {
-    const u = req['repeatCell'] as {
+  if ('repeatCell' in request) {
+    const repeat = request['repeatCell'] as {
       range: Record<string, number>
       cell: {
         userEnteredFormat?: {
@@ -571,18 +618,20 @@ function applyRequest(ss: FakeSpreadsheet, req: Record<string, unknown>): void {
       }
       fields: string
     }
-    if (!u.fields.includes('backgroundColor')) return
-    const sheet = sheetById(ss, u.range['sheetId']!)
-    const color = hexOf(u.cell.userEnteredFormat?.backgroundColor)
-    const nr = u.range['endRowIndex']! - u.range['startRowIndex']!
-    const nc = u.range['endColumnIndex']! - u.range['startColumnIndex']!
-    const bg = Array.from({ length: nr }, () =>
-      new Array<string | null>(nc).fill(color),
+    if (!repeat.fields.includes('backgroundColor')) return
+    const sheet = sheetById(spreadsheet, repeat.range['sheetId']!)
+    const color = hexOf(repeat.cell.userEnteredFormat?.backgroundColor)
+    const numRows =
+      repeat.range['endRowIndex']! - repeat.range['startRowIndex']!
+    const numCols =
+      repeat.range['endColumnIndex']! - repeat.range['startColumnIndex']!
+    const backgrounds = Array.from({ length: numRows }, () =>
+      new Array<string | null>(numCols).fill(color),
     )
     sheet.writeBackgrounds(
-      u.range['startRowIndex']! + 1,
-      u.range['startColumnIndex']! + 1,
-      bg,
+      repeat.range['startRowIndex']! + 1,
+      repeat.range['startColumnIndex']! + 1,
+      backgrounds,
     )
     return
   }
@@ -597,24 +646,28 @@ function requireFlushed(method: string): void {
   }
 }
 
-g['Sheets'] = {
+function activeFakeSpreadsheet(): FakeSpreadsheet {
+  return (
+    fakeGlobals['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
+  ).getActiveSpreadsheet()
+}
+
+fakeGlobals['Sheets'] = {
   Spreadsheets: {
     get(_id: string, params: { fields?: string; ranges?: string[] }) {
       requireFlushed('spreadsheets.get')
       apiCalls.push({ method: 'spreadsheets.get', detail: params })
-      const ss = (
-        g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
-      ).getActiveSpreadsheet()
+      const spreadsheet = activeFakeSpreadsheet()
       return {
-        spreadsheetId: ss.getId(),
-        sheets: ss.getSheets().map((s) => ({
+        spreadsheetId: spreadsheet.getId(),
+        sheets: spreadsheet.getSheets().map((sheet) => ({
           properties: {
-            sheetId: sheetIdOf(s),
-            title: s.name,
-            hidden: s.hidden,
+            sheetId: sheetIdOf(sheet),
+            title: sheet.name,
+            hidden: sheet.hidden,
             gridProperties: {
-              rowCount: s.getMaxRows(),
-              columnCount: s.getMaxColumns(),
+              rowCount: sheet.getMaxRows(),
+              columnCount: sheet.getMaxColumns(),
             },
           },
         })),
@@ -627,24 +680,25 @@ g['Sheets'] = {
         detail: body.requests.length,
       })
       batchUpdates.push({ id, requests: body.requests })
-      const ss = (
-        g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
-      ).getActiveSpreadsheet()
-      for (const r of body.requests) applyRequest(ss, r)
+      const spreadsheet = activeFakeSpreadsheet()
+      for (const request of body.requests) applyRequest(spreadsheet, request)
       return {}
     },
     Values: {
       batchGet(_id: string, params: { ranges: string[] }) {
         requireFlushed('values.batchGet')
         apiCalls.push({ method: 'values.batchGet', detail: params.ranges })
-        const ss = (
-          g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
-        ).getActiveSpreadsheet()
+        const spreadsheet = activeFakeSpreadsheet()
         return {
           valueRanges: params.ranges.map((ref) => {
-            const p = parseSheetRange(ss, ref)
+            const target = parseSheetRange(spreadsheet, ref)
             const values = ragged(
-              p.sheet.readValues(p.row, p.col, p.numRows, p.numCols),
+              target.sheet.readValues(
+                target.row,
+                target.col,
+                target.numRows,
+                target.numCols,
+              ),
             )
             return values.length ? { range: ref, values } : { range: ref }
           }),
@@ -657,14 +711,12 @@ g['Sheets'] = {
         requireFlushed('values.batchUpdate')
         apiCalls.push({
           method: 'values.batchUpdate',
-          detail: body.data.map((d) => d.range),
+          detail: body.data.map((entry) => entry.range),
         })
-        const ss = (
-          g['SpreadsheetApp'] as { getActiveSpreadsheet(): FakeSpreadsheet }
-        ).getActiveSpreadsheet()
-        for (const d of body.data) {
-          const p = parseSheetRange(ss, d.range)
-          p.sheet.writeValues(p.row, p.col, d.values)
+        const spreadsheet = activeFakeSpreadsheet()
+        for (const entry of body.data) {
+          const target = parseSheetRange(spreadsheet, entry.range)
+          target.sheet.writeValues(target.row, target.col, entry.values)
         }
         return {}
       },

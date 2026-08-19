@@ -20,13 +20,13 @@ export type WorkbookOptions = {
 }
 
 /** Deterministic pseudo-random 0/1/count values so diffs are reproducible. */
-function synth(row: number, col: number): CellValue {
-  const h = (row * 31 + col * 17) % 7
-  return h < 3 ? 0 : h < 6 ? 1 : row + col
+function syntheticValue(row: number, col: number): CellValue {
+  const hash = (row * 31 + col * 17) % 7
+  return hash < 3 ? 0 : hash < 6 ? 1 : row + col
 }
 
-function loadHeaders(sheet: FakeSheet, rows: string[][]): void {
-  sheet.load(1, 1, rows)
+function loadHeaders(sheet: FakeSheet, headerRows: string[][]): void {
+  sheet.load(1, 1, headerRows)
 }
 
 /**
@@ -59,65 +59,65 @@ export const LAYOUT_603 = {
   },
 } as const
 
-export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
-  const n = opts.rows ?? 25
-  const ss = new FakeSpreadsheet('Offline RogueDex 6.03')
+export function buildWorkbook(options: WorkbookOptions = {}): FakeSpreadsheet {
+  const rowCount = options.rows ?? 25
+  const spreadsheet = new FakeSpreadsheet('Offline RogueDex 6.03')
 
   // --- Quick Checklist -----------------------------------------------------
-  const qData = ss.addSheet('STARTER_CHECKLIST.data')
-  loadHeaders(qData, HEADERS['STARTER_CHECKLIST.data']!)
-  for (let i = 0; i < n; i++) {
-    const row = LAYOUT_603.quick.dataFirstRow + i
-    const line: CellValue[] = [i + 1] // Dex # in A
-    for (let c = 2; c <= 12; c++) line.push(synth(row, c))
-    qData.load(row, 1, [line])
+  const quickData = spreadsheet.addSheet('STARTER_CHECKLIST.data')
+  loadHeaders(quickData, HEADERS['STARTER_CHECKLIST.data']!)
+  for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+    const row = LAYOUT_603.quick.dataFirstRow + rowOffset
+    const line: CellValue[] = [rowOffset + 1] // Dex # in A
+    for (let col = 2; col <= 12; col++) line.push(syntheticValue(row, col))
+    quickData.load(row, 1, [line])
   }
-  const qDisp = ss.addSheet('Quick Checklist')
-  loadHeaders(qDisp, HEADERS['Quick Checklist (migrated)']!.slice(0, 11))
-  for (let i = 0; i < n; i++) {
-    const row = LAYOUT_603.quick.displayFirstRow + i
+  const quickDisplay = spreadsheet.addSheet('Quick Checklist')
+  loadHeaders(quickDisplay, HEADERS['Quick Checklist (migrated)']!.slice(0, 11))
+  for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+    const row = LAYOUT_603.quick.displayFirstRow + rowOffset
     const line: CellValue[] = [
-      i + 1,
+      rowOffset + 1,
       '',
-      String(i + 1).padStart(4, '0'),
-      'Mon ' + (i + 1),
+      String(rowOffset + 1).padStart(4, '0'),
+      'Mon ' + (rowOffset + 1),
       '#REF!',
     ]
-    for (let c = 6; c <= 16; c++) line.push('☑')
-    qDisp.load(row, 1, [line])
+    for (let col = 6; col <= 16; col++) line.push('☑')
+    quickDisplay.load(row, 1, [line])
   }
 
   // --- Dex sheets ------------------------------------------------------------
-  const dex = (
+  const addDexPair = (
     dataName: string,
     displayName: string,
-    L: {
+    layout: {
       dataFirstRow: number
       displayFirstRow: number
       dataFoughtFlagCol: number
       dataLastCol: number
     },
   ): void => {
-    const d = ss.addSheet(dataName)
-    loadHeaders(d, HEADERS[dataName]!)
-    for (let i = 0; i < n; i++) {
-      const row = L.dataFirstRow + i
+    const dataSheet = spreadsheet.addSheet(dataName)
+    loadHeaders(dataSheet, HEADERS[dataName]!)
+    for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+      const row = layout.dataFirstRow + rowOffset
       const line: CellValue[] = []
-      for (let c = L.dataFoughtFlagCol; c <= L.dataLastCol; c++)
-        line.push(synth(row, c))
-      d.load(row, L.dataFoughtFlagCol, [line])
+      for (let col = layout.dataFoughtFlagCol; col <= layout.dataLastCol; col++)
+        line.push(syntheticValue(row, col))
+      dataSheet.load(row, layout.dataFoughtFlagCol, [line])
     }
-    const v = ss.addSheet(displayName)
-    loadHeaders(v, HEADERS[displayName]!)
-    for (let i = 0; i < n; i++) {
-      const row = L.displayFirstRow + i
-      const line: CellValue[] = [i + 1, 'MON' + (i + 1), 3]
-      for (let c = 4; c <= 135; c++) line.push('☑')
-      v.load(row, 1, [line])
+    const displaySheet = spreadsheet.addSheet(displayName)
+    loadHeaders(displaySheet, HEADERS[displayName]!)
+    for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+      const row = layout.displayFirstRow + rowOffset
+      const line: CellValue[] = [rowOffset + 1, 'MON' + (rowOffset + 1), 3]
+      for (let col = 4; col <= 135; col++) line.push('☑')
+      displaySheet.load(row, 1, [line])
     }
   }
-  dex('STARTER_DEX.data', 'Starter DEX Checklist', LAYOUT_603.starter)
-  dex('FULL_DEX.data', 'Full DEX Checklist', LAYOUT_603.full)
+  addDexPair('STARTER_DEX.data', 'Starter DEX Checklist', LAYOUT_603.starter)
+  addDexPair('FULL_DEX.data', 'Full DEX Checklist', LAYOUT_603.full)
 
-  return ss
+  return spreadsheet
 }

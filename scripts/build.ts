@@ -16,13 +16,14 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const ENTRY = join(REPO_ROOT, 'src', 'lib', 'index.ts')
-const OUT = join(REPO_ROOT, 'library', 'Code.js')
-const GLOBAL = '__OfflineDexLib'
+const ENTRY_FILE = join(REPO_ROOT, 'src', 'lib', 'index.ts')
+const OUTPUT_FILE = join(REPO_ROOT, 'library', 'Code.js')
+const BUNDLE_GLOBAL = '__OfflineDexLib'
 
+/** Sorted names of everything src/lib/index.ts exports (each becomes a public library function). */
 async function exportNames(): Promise<string[]> {
   const result = await build({
-    entryPoints: [ENTRY],
+    entryPoints: [ENTRY_FILE],
     bundle: true,
     write: false,
     format: 'esm',
@@ -30,19 +31,19 @@ async function exportNames(): Promise<string[]> {
     logLevel: 'silent',
   })
   const outputs = Object.values(result.metafile.outputs)
-  const names = outputs.flatMap((o) => o.exports ?? [])
-  if (names.length === 0) throw new Error('No exports found in ' + ENTRY)
+  const names = outputs.flatMap((output) => output.exports ?? [])
+  if (names.length === 0) throw new Error('No exports found in ' + ENTRY_FILE)
   return names.sort()
 }
 
 async function bundle(): Promise<string> {
   const names = await exportNames()
   const result = await build({
-    entryPoints: [ENTRY],
+    entryPoints: [ENTRY_FILE],
     bundle: true,
     write: false,
     format: 'iife',
-    globalName: GLOBAL,
+    globalName: BUNDLE_GLOBAL,
     target: 'es2020',
     platform: 'neutral',
     legalComments: 'none',
@@ -53,36 +54,38 @@ async function bundle(): Promise<string> {
     },
     logLevel: 'silent',
   })
-  const code = result.outputFiles[0]?.text ?? ''
-  const stubs = names
+  const bundledCode = result.outputFiles[0]?.text ?? ''
+  const forwardingStubs = names
     .map(
-      (n) =>
-        `/** OfflineDexLib.${n} — see src/lib/index.ts */\n` +
-        `function ${n}() { return ${GLOBAL}.${n}.apply(null, arguments) }`,
+      (exportName) =>
+        `/** OfflineDexLib.${exportName} — see src/lib/index.ts */\n` +
+        `function ${exportName}() { return ${BUNDLE_GLOBAL}.${exportName}.apply(null, arguments) }`,
     )
     .join('\n')
-  return code + '\n' + stubs + '\n'
+  return bundledCode + '\n' + forwardingStubs + '\n'
 }
 
 async function main(): Promise<void> {
-  const check = process.argv.includes('--check')
-  const out = await bundle()
-  if (check) {
-    const current = existsSync(OUT) ? readFileSync(OUT, 'utf8') : ''
-    if (current !== out) {
-      console.error(`  ✗ ${OUT} is out of date — run \`npm run build\``)
+  const checkOnly = process.argv.includes('--check')
+  const bundled = await bundle()
+  if (checkOnly) {
+    const onDisk = existsSync(OUTPUT_FILE)
+      ? readFileSync(OUTPUT_FILE, 'utf8')
+      : ''
+    if (onDisk !== bundled) {
+      console.error(`  ✗ ${OUTPUT_FILE} is out of date — run \`npm run build\``)
       process.exitCode = 1
       return
     }
     console.log('  ✓ library/Code.js is up to date')
     return
   }
-  writeFileSync(OUT, out)
-  const kb = (Buffer.byteLength(out) / 1024).toFixed(1)
-  console.log(`  ✓ wrote library/Code.js (${kb} kB)`)
+  writeFileSync(OUTPUT_FILE, bundled)
+  const sizeKb = (Buffer.byteLength(bundled) / 1024).toFixed(1)
+  console.log(`  ✓ wrote library/Code.js (${sizeKb} kB)`)
 }
 
-main().catch((e: unknown) => {
-  console.error(e)
+main().catch((error: unknown) => {
+  console.error(error)
   process.exitCode = 1
 })

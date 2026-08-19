@@ -70,8 +70,8 @@ export type ResolvedTracker = {
   dataBand: unknown[][]
 }
 
-export function normalizeLabel(s: unknown): string {
-  return String(s ?? '')
+export function normalizeLabel(text: unknown): string {
+  return String(text ?? '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()
@@ -85,11 +85,12 @@ export function findLabel(
   band: unknown[][],
   text: string,
 ): { row: number; col: number } | null {
-  const want = normalizeLabel(text)
-  for (let r = 0; r < band.length; r++) {
-    const row = band[r] ?? []
-    for (let c = 0; c < row.length; c++) {
-      if (normalizeLabel(row[c]) === want) return { row: r + 1, col: c + 1 }
+  const wantedLabel = normalizeLabel(text)
+  for (let rowIndex = 0; rowIndex < band.length; rowIndex++) {
+    const row = band[rowIndex] ?? []
+    for (let columnIndex = 0; columnIndex < row.length; columnIndex++) {
+      if (normalizeLabel(row[columnIndex]) === wantedLabel)
+        return { row: rowIndex + 1, col: columnIndex + 1 }
     }
   }
   return null
@@ -98,16 +99,16 @@ export function findLabel(
 function mustFind(
   band: unknown[][],
   text: string,
-  where: string,
+  sheetDescription: string,
 ): { row: number; col: number } {
-  const hit = findLabel(band, text)
-  if (!hit) {
+  const found = findLabel(band, text)
+  if (!found) {
     throw new Error(
-      `Layout: could not find the header "${text}" in the first ${band.length} rows of ${where}. ` +
+      `Layout: could not find the header "${text}" in the first ${band.length} rows of ${sheetDescription}. ` +
         'The creator may have renamed or moved it — update the tracker spec (src/lib/layout.ts).',
     )
   }
-  return hit
+  return found
 }
 
 /** First non-blank cell of `row` (1-based, from the band) right of `fixedColumns`; 1-based column. */
@@ -115,14 +116,19 @@ export function firstNonBlankRightOf(
   band: unknown[][],
   row: number,
   fixedColumns: number,
-  where: string,
+  sheetDescription: string,
 ): number {
-  const line = band[row - 1] ?? []
-  for (let c = fixedColumns; c < line.length; c++) {
-    if (String(line[c] ?? '').trim() !== '') return c + 1
+  const rowValues = band[row - 1] ?? []
+  for (
+    let columnIndex = fixedColumns;
+    columnIndex < rowValues.length;
+    columnIndex++
+  ) {
+    if (String(rowValues[columnIndex] ?? '').trim() !== '')
+      return columnIndex + 1
   }
   throw new Error(
-    `Layout: row ${row} of ${where} is blank right of column ${fixedColumns}; cannot locate the data block.`,
+    `Layout: row ${row} of ${sheetDescription} is blank right of column ${fixedColumns}; cannot locate the data block.`,
   )
 }
 
@@ -136,43 +142,49 @@ export function resolveFromBands(
   dataBand: unknown[][],
   displayBand: unknown[][],
 ): ResolvedTracker {
-  const dataWhere = `"${spec.dataSheet}"`
-  const displayWhere = `"${spec.displaySheet}"`
+  const dataSheetName = `"${spec.dataSheet}"`
+  const displaySheetName = `"${spec.displaySheet}"`
 
-  const dataBlockStart = mustFind(dataBand, spec.dataBlockAnchor, dataWhere)
-  const displayBlockStart =
+  const dataBlockStart = mustFind(dataBand, spec.dataBlockAnchor, dataSheetName)
+  const displayBlockStartColumn =
     spec.displayAnchor.kind === 'label'
-      ? mustFind(displayBand, spec.displayAnchor.text, displayWhere).col
+      ? mustFind(displayBand, spec.displayAnchor.text, displaySheetName).col
       : firstNonBlankRightOf(
           displayBand,
           spec.displayAnchor.locatorRow,
           spec.displayAnchor.fixedColumns,
-          displayWhere,
+          displaySheetName,
         )
-  const shift = displayBlockStart - dataBlockStart.col
+  const shift = displayBlockStartColumn - dataBlockStart.col
 
   // Tracked range, by label, on the same header row as the block anchor.
-  const from = mustFind(dataBand, spec.trackFrom, dataWhere)
-  const headerRow = dataBand[from.row - 1] ?? []
-  let to: number
+  const trackFrom = mustFind(dataBand, spec.trackFrom, dataSheetName)
+  const headerRow = dataBand[trackFrom.row - 1] ?? []
+  let trackToColumn: number
   if (spec.trackTo) {
-    to = mustFind(dataBand, spec.trackTo, dataWhere).col
+    trackToColumn = mustFind(dataBand, spec.trackTo, dataSheetName).col
   } else {
-    to = headerRow.length
-    while (to > from.col && String(headerRow[to - 1] ?? '').trim() === '') to--
+    trackToColumn = headerRow.length
+    while (
+      trackToColumn > trackFrom.col &&
+      String(headerRow[trackToColumn - 1] ?? '').trim() === ''
+    )
+      trackToColumn--
   }
-  if (to < from.col)
+  if (trackToColumn < trackFrom.col)
     throw new Error(
-      `Layout: "${spec.trackTo}" is left of "${spec.trackFrom}" in ${dataWhere}`,
+      `Layout: "${spec.trackTo}" is left of "${spec.trackFrom}" in ${dataSheetName}`,
     )
 
   if (spec.crossCheck) {
-    const d = mustFind(dataBand, spec.crossCheck, dataWhere)
-    const expectCol = d.col + shift
-    const got = displayBand.map((r) => normalizeLabel(r[expectCol - 1]))
-    if (!got.includes(normalizeLabel(spec.crossCheck))) {
+    const crossCheckInData = mustFind(dataBand, spec.crossCheck, dataSheetName)
+    const expectedDisplayColumn = crossCheckInData.col + shift
+    const displayLabelsAtColumn = displayBand.map((row) =>
+      normalizeLabel(row[expectedDisplayColumn - 1]),
+    )
+    if (!displayLabelsAtColumn.includes(normalizeLabel(spec.crossCheck))) {
       throw new Error(
-        `Layout: "${spec.crossCheck}" is at column ${d.col} in ${dataWhere} so it should be at column ${expectCol} in ${displayWhere} (shift ${shift}), but that column's header is "${displayBand[d.row - 1]?.[expectCol - 1] ?? ''}". Layout changed; nothing highlighted.`,
+        `Layout: "${spec.crossCheck}" is at column ${crossCheckInData.col} in ${dataSheetName} so it should be at column ${expectedDisplayColumn} in ${displaySheetName} (shift ${shift}), but that column's header is "${displayBand[crossCheckInData.row - 1]?.[expectedDisplayColumn - 1] ?? ''}". Layout changed; nothing highlighted.`,
       )
     }
   }
@@ -180,30 +192,32 @@ export function resolveFromBands(
   // exclude/increment name the FIRST column carrying that label in the
   // tracked header row (labels can repeat further right — e.g. "Friendship"
   // is both an ability attribute and, 90 columns later, a challenge flag).
-  const firstColOf = (name: string): number => {
-    const want = normalizeLabel(name)
-    for (let c = from.col; c <= to; c++) {
-      if (normalizeLabel(headerRow[c - 1]) === want) return c
+  const firstTrackedColumnLabelled = (label: string): number => {
+    const wantedLabel = normalizeLabel(label)
+    for (let column = trackFrom.col; column <= trackToColumn; column++) {
+      if (normalizeLabel(headerRow[column - 1]) === wantedLabel) return column
     }
     throw new Error(
-      `Layout: tracked column "${name}" not found in the header of ${dataWhere}; update the tracker spec.`,
+      `Layout: tracked column "${label}" not found in the header of ${dataSheetName}; update the tracker spec.`,
     )
   }
-  const excluded = new Set(spec.exclude.map(firstColOf))
-  const increment = new Set(spec.increment.map(firstColOf))
+  const excludedColumns = new Set(spec.exclude.map(firstTrackedColumnLabelled))
+  const incrementColumns = new Set(
+    spec.increment.map(firstTrackedColumnLabelled),
+  )
 
   const labels: Record<number, string> = {}
   const cells: ResolvedTracker['cells'] = []
   const dataCols: number[] = []
-  for (let c = from.col; c <= to; c++) {
-    labels[c] = String(headerRow[c - 1] ?? '')
-    dataCols.push(c)
+  for (let column = trackFrom.col; column <= trackToColumn; column++) {
+    labels[column] = String(headerRow[column - 1] ?? '')
+    dataCols.push(column)
     cells.push({
-      dataCol: c,
-      displayCol: c + shift,
-      color: excluded.has(c)
+      dataCol: column,
+      displayCol: column + shift,
+      color: excludedColumns.has(column)
         ? null
-        : increment.has(c)
+        : incrementColumns.has(column)
           ? spec.incrementColor
           : spec.color,
     })
@@ -213,10 +227,10 @@ export function resolveFromBands(
     spec,
     shift,
     dataCols,
-    minDataCol: from.col,
-    maxDataCol: to,
-    minDisplayCol: from.col + shift,
-    maxDisplayCol: to + shift,
+    minDataCol: trackFrom.col,
+    maxDataCol: trackToColumn,
+    minDisplayCol: trackFrom.col + shift,
+    maxDisplayCol: trackToColumn + shift,
     cells,
     labels,
     dataBand,
@@ -224,29 +238,37 @@ export function resolveFromBands(
 }
 
 /** Human-readable summary of a resolved tracker, for logs and the dry run. */
-export function describeResolved(r: ResolvedTracker): string {
-  const a1 = (c: number): string => columnLetter(c)
-  const first = r.cells[0]!
-  const last = r.cells[r.cells.length - 1]!
-  const excluded = r.cells
-    .filter((c) => c.color === null)
-    .map((c) => `${r.labels[c.dataCol]}→${a1(c.displayCol)}`)
-  const inc = r.cells
-    .filter((c) => c.color === r.spec.incrementColor)
-    .map((c) => `${r.labels[c.dataCol]}→${a1(c.displayCol)}`)
+export function describeResolved(tracker: ResolvedTracker): string {
+  const firstCell = tracker.cells[0]!
+  const lastCell = tracker.cells[tracker.cells.length - 1]!
+  const neverHighlighted = tracker.cells
+    .filter((cell) => cell.color === null)
+    .map(
+      (cell) =>
+        `${tracker.labels[cell.dataCol]}→${columnLetter(cell.displayCol)}`,
+    )
+  const incremented = tracker.cells
+    .filter((cell) => cell.color === tracker.spec.incrementColor)
+    .map(
+      (cell) =>
+        `${tracker.labels[cell.dataCol]}→${columnLetter(cell.displayCol)}`,
+    )
   return (
-    `${r.spec.key}: data ${a1(first.dataCol)}–${a1(last.dataCol)} (${r.labels[first.dataCol]} … ${r.labels[last.dataCol]}) → display ${a1(first.displayCol)}–${a1(last.displayCol)} (shift ${r.shift >= 0 ? '+' : ''}${r.shift})` +
-    (inc.length ? `; increment: ${inc.join(', ')}` : '') +
-    (excluded.length ? `; never highlighted: ${excluded.join(', ')}` : '')
+    `${tracker.spec.key}: data ${columnLetter(firstCell.dataCol)}–${columnLetter(lastCell.dataCol)} (${tracker.labels[firstCell.dataCol]} … ${tracker.labels[lastCell.dataCol]}) → display ${columnLetter(firstCell.displayCol)}–${columnLetter(lastCell.displayCol)} (shift ${tracker.shift >= 0 ? '+' : ''}${tracker.shift})` +
+    (incremented.length ? `; increment: ${incremented.join(', ')}` : '') +
+    (neverHighlighted.length
+      ? `; never highlighted: ${neverHighlighted.join(', ')}`
+      : '')
   )
 }
 
-export function columnLetter(col: number): string {
-  let s = ''
-  while (col > 0) {
-    const m = (col - 1) % 26
-    s = String.fromCharCode(65 + m) + s
-    col = Math.floor((col - 1) / 26)
+export function columnLetter(column: number): string {
+  let letters = ''
+  let remaining = column
+  while (remaining > 0) {
+    const remainder = (remaining - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    remaining = Math.floor((remaining - 1) / 26)
   }
-  return s
+  return letters
 }

@@ -22,8 +22,8 @@ const cases: [string, number, number, string][] = [
   ["='It''s'!F1+F1", 5, 1, "='It''s'!F1+G1"],
 ]
 
-for (const [input, from, offset, expected] of cases) {
-  test(`shift ${input} from col ${from} by ${offset}`, () => {
-    assert.equal(shiftFormulaColumns(input, from, offset), expected)
+for (const [input, fromColumn, offset, expected] of cases) {
+  test(`shift ${input} from col ${fromColumn} by ${offset}`, () => {
+    assert.equal(shiftFormulaColumns(input, fromColumn, offset), expected)
   })
 }

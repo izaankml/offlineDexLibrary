@@ -44,50 +44,50 @@ test('timingRows: one row per step plus a TOTAL row', () => {
 })
 
 test('a flow writes _timings once, hidden, with a header, and closes', () => {
-  const ss = buildWorkbook({ rows: 3 })
-  setActiveSpreadsheet(ss)
+  const spreadsheet = buildWorkbook({ rows: 3 })
+  setActiveSpreadsheet(spreadsheet)
   resetToastProgress('upload')
-  startStep(ss as never, 'one')
+  startStep(spreadsheet as never, 'one')
   finishStep()
-  startStep(ss as never, 'two')
-  finishFlow(ss as never, 'Done')
+  startStep(spreadsheet as never, 'two')
+  finishFlow(spreadsheet as never, 'Done')
   assert.equal(flowActive(), false)
-  const t = ss.getSheetByName(TIMINGS_SHEET)!
-  assert.ok(t.hidden)
-  assert.deepEqual(t.grid()[0], ['when', 'sheet', 'flow', 'step', 'ms'])
-  assert.equal(t.getLastRow(), 4) // header + 2 steps + TOTAL
+  const timings = spreadsheet.getSheetByName(TIMINGS_SHEET)!
+  assert.ok(timings.hidden)
+  assert.deepEqual(timings.grid()[0], ['when', 'sheet', 'flow', 'step', 'ms'])
+  assert.equal(timings.getLastRow(), 4) // header + 2 steps + TOTAL
   assert.equal(
-    calls.filter((c) => c.startsWith('_timings.setValues')).length,
+    calls.filter((call) => call.startsWith('_timings.setValues')).length,
     2,
   ) // header + rows
   assert.equal(toasts.at(-1)!.title.startsWith('Done in'), true)
 })
 
 test('failFlow shows a non-sticky error toast and still records timings', () => {
-  const ss = buildWorkbook({ rows: 3 })
-  setActiveSpreadsheet(ss)
+  const spreadsheet = buildWorkbook({ rows: 3 })
+  setActiveSpreadsheet(spreadsheet)
   resetToastProgress('upload')
-  startStep(ss as never, 'boom')
-  failFlow(ss as never, new Error('kaput'))
-  const last = toasts.at(-1)!
-  assert.equal(last.title, 'Something went wrong')
-  assert.equal(last.body, 'kaput')
-  assert.ok(last.timeout > 0)
-  const rows = ss.getSheetByName(TIMINGS_SHEET)!.grid()
+  startStep(spreadsheet as never, 'boom')
+  failFlow(spreadsheet as never, new Error('kaput'))
+  const lastToast = toasts.at(-1)!
+  assert.equal(lastToast.title, 'Something went wrong')
+  assert.equal(lastToast.body, 'kaput')
+  assert.ok(lastToast.timeout > 0)
+  const rows = spreadsheet.getSheetByName(TIMINGS_SHEET)!.grid()
   assert.equal(rows.at(-1)![3], 'TOTAL (error: kaput)')
   assert.equal(flowActive(), false)
 })
 
 test('runStandaloneIfNeeded nests inside an open flow, stands alone otherwise', () => {
-  const ss = buildWorkbook({ rows: 3 })
-  setActiveSpreadsheet(ss)
-  let ran = 0
-  runStandaloneIfNeeded(ss as never, 'Solo', () => ran++)
-  assert.equal(ran, 1)
+  const spreadsheet = buildWorkbook({ rows: 3 })
+  setActiveSpreadsheet(spreadsheet)
+  let runCount = 0
+  runStandaloneIfNeeded(spreadsheet as never, 'Solo', () => runCount++)
+  assert.equal(runCount, 1)
   assert.equal(flowActive(), false)
   resetToastProgress('outer')
-  runStandaloneIfNeeded(ss as never, 'Inner', () => ran++)
-  assert.equal(ran, 2)
+  runStandaloneIfNeeded(spreadsheet as never, 'Inner', () => runCount++)
+  assert.equal(runCount, 2)
   assert.equal(flowActive(), true) // outer flow still open
-  finishFlow(ss as never, 'Outer done')
+  finishFlow(spreadsheet as never, 'Outer done')
 })

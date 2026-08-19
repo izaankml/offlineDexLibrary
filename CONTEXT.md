@@ -141,7 +141,7 @@ is a **plan → preview → apply** pipeline on the Sheets advanced service (She
    `Quick Checklist!1:10`, `Daily Mode!B16:M131`, `L12:M14`, the `N2` landmark) and 2 on
    the destination (sheet list + banding + CF rules + merges; the Quick Checklist header
    and the `M2:N2` landmark cells). No `openById`, no temp sheets, no `copyTo`.
-2. **Plan** (`buildPlan`, pure, tested with hand-built API responses) — a list of `Op`s
+2. **Plan** (`buildPlan`, pure, tested with hand-built API responses) — a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
    (Daily Mode landmark at neither M2 nor N2; Quick Checklist row 10 blank; destination
    block left of the source's), so nothing is touched on an unknown layout.

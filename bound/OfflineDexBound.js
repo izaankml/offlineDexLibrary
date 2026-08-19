@@ -68,8 +68,8 @@ function offlineDexOpenUploadDialogKeepBaseline() {
 }
 
 function offlineDexShowUploadDialog() {
-  const html = HtmlService.createHtmlOutputFromFile('OfflineDexUpload')
-  SpreadsheetApp.getUi().showModalDialog(html, 'Upload File')
+  const dialog = HtmlService.createHtmlOutputFromFile('OfflineDexUpload')
+  SpreadsheetApp.getUi().showModalDialog(dialog, 'Upload File')
 }
 
 /**
@@ -77,19 +77,19 @@ function offlineDexShowUploadDialog() {
  * → parseJsonContent → writeJsonToSheet, all in LoadPlayerData.js), then the
  * library's highlight/snapshot flow. Called by OfflineDexUpload.html; the
  * creator's uploadFile() is left untouched.
- * @param {{fileName: string, mimeType: string, data: string}} obj
+ * @param {{fileName: string, mimeType: string, data: string}} uploadedFile
  */
-function uploadFileTracked(obj) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
-  const props = PropertiesService.getDocumentProperties()
+function uploadFileTracked(uploadedFile) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
+  const docProps = PropertiesService.getDocumentProperties()
   const skipSnapshot =
-    props.getProperty(OFFLINEDEX_SKIP_SNAPSHOT_PROPERTY) === 'true'
-  props.deleteProperty(OFFLINEDEX_SKIP_SNAPSHOT_PROPERTY)
+    docProps.getProperty(OFFLINEDEX_SKIP_SNAPSHOT_PROPERTY) === 'true'
+  docProps.deleteProperty(OFFLINEDEX_SKIP_SNAPSHOT_PROPERTY)
 
   OfflineDexLib.resetToastProgress('upload')
-  OfflineDexLib.startStep(ss, 'Importing Save Data')
+  OfflineDexLib.startStep(spreadsheet, 'Importing Save Data')
 
-  const blob = createBlob(obj)
+  const blob = createBlob(uploadedFile)
   const plaintext = decryptFile(blob)
   const jsonContent = parseJsonContent(plaintext)
   writeJsonToSheet(jsonContent)
@@ -104,9 +104,9 @@ function uploadFileTracked(obj) {
     } else {
       OfflineDexLib.processChanges()
     }
-  } catch (e) {
+  } catch (error) {
     // The library has already shown the error toast and logged the timings.
-    Logger.log('processChanges failed: ' + e.message)
+    Logger.log('processChanges failed: ' + error.message)
   }
 }
 

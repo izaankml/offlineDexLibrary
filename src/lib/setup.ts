@@ -40,14 +40,14 @@ export const MIGRATED_FROM_PROPERTY = 'OFFLINEDEX_MIGRATED_FROM'
  */
 export function prepareNextVersion(): void {
   const ui = SpreadsheetApp.getUi()
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
 
   let publicFile: GoogleAppsScript.Drive.File
   try {
     publicFile = DriveApp.getFileById(PUBLIC_SHEET_FILE_ID)
-  } catch (e) {
+  } catch (error) {
     ui.alert(
-      `Couldn't open the creator's public sheet (${PUBLIC_SHEET_FILE_ID}). If the creator moved it, update PUBLIC_SHEET_FILE_ID in src/shared/naming.ts.\n\n${e instanceof Error ? e.message : e}`,
+      `Couldn't open the creator's public sheet (${PUBLIC_SHEET_FILE_ID}). If the creator moved it, update PUBLIC_SHEET_FILE_ID in src/shared/naming.ts.\n\n${error instanceof Error ? error.message : error}`,
     )
     return
   }
@@ -62,40 +62,40 @@ export function prepareNextVersion(): void {
   }
   const newCopyName = copyName(newVersion)
 
-  const currentVersion = versionFromName(ss.getName())
+  const currentVersion = versionFromName(spreadsheet.getName())
   if (currentVersion && compareVersions(currentVersion, newVersion) >= 0) {
-    const go = ui.alert(
+    const copyAnyway = ui.alert(
       'Prepare Next Version',
       `The public sheet is still on ${newVersion} and this sheet is ${currentVersion} — nothing newer to prepare.\n\nMake a copy of ${newVersion} anyway?`,
       ui.ButtonSet.YES_NO,
     )
-    if (go !== ui.Button.YES) return
+    if (copyAnyway !== ui.Button.YES) return
   }
 
   let copy: GoogleAppsScript.Drive.File | null = null
-  const existing = findExistingCopies(newCopyName)
-  if (existing.length > 0) {
+  const existingCopies = findExistingCopies(newCopyName)
+  if (existingCopies.length > 0) {
     const choice = ui.alert(
       'Prepare Next Version',
-      `You already have a sheet named "${newCopyName}" (created ${existing[0]!.getDateCreated().toLocaleString()}).\n\n` +
+      `You already have a sheet named "${newCopyName}" (created ${existingCopies[0]!.getDateCreated().toLocaleString()}).\n\n` +
         'YES — use it (only if you have NOT pushed your code to it yet)\n' +
         'NO — make a brand-new copy alongside it\n' +
         'CANCEL — stop',
       ui.ButtonSet.YES_NO_CANCEL,
     )
     if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return
-    if (choice === ui.Button.YES) copy = existing[0]!
+    if (choice === ui.Button.YES) copy = existingCopies[0]!
   }
 
   if (!copy) {
-    ss.toast(`Copying "${publicName}"…`, 'Prepare Next Version', -1)
-    const folder = firstParentFolder(ss.getId())
+    spreadsheet.toast(`Copying "${publicName}"…`, 'Prepare Next Version', -1)
+    const folder = firstParentFolder(spreadsheet.getId())
     copy = folder
       ? publicFile.makeCopy(newCopyName, folder)
       : publicFile.makeCopy(newCopyName)
   }
 
-  ss.toast('', 'Ready', 3)
+  spreadsheet.toast('', 'Ready', 3)
   showPrepareDialog(ui, {
     copyName: newCopyName,
     copyUrl: copy.getUrl(),
@@ -110,19 +110,22 @@ function firstParentFolder(
   try {
     const parents = DriveApp.getFileById(fileId).getParents()
     return parents.hasNext() ? parents.next() : null
-  } catch (e) {
-    Logger.log('firstParentFolder: ' + (e instanceof Error ? e.message : e))
+  } catch (error) {
+    Logger.log(
+      'firstParentFolder: ' + (error instanceof Error ? error.message : error),
+    )
     return null
   }
 }
 
 /** Non-trashed spreadsheets with exactly this name (newest-created first). */
 function findExistingCopies(name: string): GoogleAppsScript.Drive.File[] {
-  const out = findSpreadsheetsNamed(name)
-  out.sort(
-    (a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime(),
+  const copies = findSpreadsheetsNamed(name)
+  copies.sort(
+    (fileA, fileB) =>
+      fileB.getDateCreated().getTime() - fileA.getDateCreated().getTime(),
   )
-  return out
+  return copies
 }
 
 /** HTML for the hand-off dialog (pure; tested for the Script-ID extraction). */
@@ -131,8 +134,8 @@ export function prepareDialogHtml(info: {
   copyUrl: string
   version: string
 }): string {
-  const esc = (s: string): string =>
-    String(s)
+  const escapeHtml = (text: string): string =>
+    String(text)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/"/g, '&quot;')
@@ -146,9 +149,9 @@ export function prepareDialogHtml(info: {
     'button.primary{background:#1a73e8;color:#fff;border-color:#1a73e8}button:disabled{opacity:.5;cursor:default}' +
     '.muted{color:#5f6368;font-size:12px}' +
     '</style>' +
-    `<h3>Copy ready: ${esc(info.copyName)}</h3>` +
+    `<h3>Copy ready: ${escapeHtml(info.copyName)}</h3>` +
     '<ol>' +
-    `<li><a href="${esc(info.copyUrl)}" target="_blank">Open the new sheet</a>, then <b>Extensions → Apps Script</b>.</li>` +
+    `<li><a href="${escapeHtml(info.copyUrl)}" target="_blank">Open the new sheet</a>, then <b>Extensions → Apps Script</b>.</li>` +
     '<li>Copy the browser URL of the script editor and paste it below.</li>' +
     '<li>Copy the command and run it in the repo. When it finishes, open the new sheet and run <b>RogueDex Functions → Finish Setup</b>.</li>' +
     '</ol>' +
@@ -156,15 +159,15 @@ export function prepareDialogHtml(info: {
     '<div class="row"><input id="cmd" readonly placeholder="npm run update -- <script id>"><button class="primary" id="copy" onclick="copyCmd()" disabled>Copy</button></div>' +
     '<p class="muted" id="status">&nbsp;</p>' +
     '<script>' +
-    'function build(){var u=document.getElementById("url").value.trim();' +
-    'var m=u.match(/\\/projects\\/([A-Za-z0-9_-]{20,})/)||u.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)||u.match(/^([A-Za-z0-9_-]{20,})$/);' +
-    'var cmd=document.getElementById("cmd"),btn=document.getElementById("copy"),st=document.getElementById("status");' +
-    'if(m){cmd.value="npm run update -- "+m[1];btn.disabled=false;st.textContent="Ready to copy.";}' +
-    'else{cmd.value="";btn.disabled=true;st.textContent=u?"That doesn\'t contain a Script ID yet.":"";}}' +
-    'function copyCmd(){var i=document.getElementById("cmd");i.select();i.setSelectionRange(0,99999);' +
-    'var ok=false;try{ok=document.execCommand("copy")}catch(e){}' +
-    'if(navigator.clipboard){navigator.clipboard.writeText(i.value).then(function(){done(true)},function(){done(ok)})}else{done(ok)}}' +
-    'function done(ok){document.getElementById("status").textContent=ok?"Copied — paste it into your terminal.":"Select the command and copy it manually."}' +
+    'function build(){var url=document.getElementById("url").value.trim();' +
+    'var match=url.match(/\\/projects\\/([A-Za-z0-9_-]{20,})/)||url.match(/[?&]scriptId=([A-Za-z0-9_-]{20,})/)||url.match(/^([A-Za-z0-9_-]{20,})$/);' +
+    'var cmd=document.getElementById("cmd"),copyButton=document.getElementById("copy"),status=document.getElementById("status");' +
+    'if(match){cmd.value="npm run update -- "+match[1];copyButton.disabled=false;status.textContent="Ready to copy.";}' +
+    'else{cmd.value="";copyButton.disabled=true;status.textContent=url?"That doesn\'t contain a Script ID yet.":"";}}' +
+    'function copyCmd(){var cmd=document.getElementById("cmd");cmd.select();cmd.setSelectionRange(0,99999);' +
+    'var copied=false;try{copied=document.execCommand("copy")}catch(e){}' +
+    'if(navigator.clipboard){navigator.clipboard.writeText(cmd.value).then(function(){done(true)},function(){done(copied)})}else{done(copied)}}' +
+    'function done(copied){document.getElementById("status").textContent=copied?"Copied — paste it into your terminal.":"Select the command and copy it manually."}' +
     '</script>'
   )
 }
@@ -187,18 +190,20 @@ function showPrepareDialog(
  */
 export function nudgeFinishSetupIfFresh(): void {
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet()
-    const props = PropertiesService.getDocumentProperties()
-    if (props.getProperty(MIGRATED_FROM_PROPERTY)) return
-    if (ss.getSheetByName(snapshotSheetName(TRACKER_SPECS[0]!.key))) return
-    ss.toast(
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
+    const docProps = PropertiesService.getDocumentProperties()
+    if (docProps.getProperty(MIGRATED_FROM_PROPERTY)) return
+    if (spreadsheet.getSheetByName(snapshotSheetName(TRACKER_SPECS[0]!.key)))
+      return
+    spreadsheet.toast(
       'This looks like a fresh copy. Run RogueDex Functions → Finish Setup to bring over your customizations and load your save.',
       'New version',
       15,
     )
-  } catch (e) {
+  } catch (error) {
     Logger.log(
-      'nudgeFinishSetupIfFresh: ' + (e instanceof Error ? e.message : e),
+      'nudgeFinishSetupIfFresh: ' +
+        (error instanceof Error ? error.message : error),
     )
   }
 }
@@ -212,25 +217,25 @@ export function nudgeFinishSetupIfFresh(): void {
  */
 export function finishSetup(): boolean {
   const ui = SpreadsheetApp.getUi()
-  const ss = SpreadsheetApp.getActiveSpreadsheet()
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
 
-  const destVersion = versionFromName(ss.getName())
+  const destVersion = versionFromName(spreadsheet.getName())
   if (!destVersion) {
     ui.alert(
-      `Could not determine this sheet's version from its name "${ss.getName()}". Expected "${copyName('X.YY')}".`,
+      `Could not determine this sheet's version from its name "${spreadsheet.getName()}". Expected "${copyName('X.YY')}".`,
     )
     return false
   }
 
-  const props = PropertiesService.getDocumentProperties()
-  const already = props.getProperty(MIGRATED_FROM_PROPERTY)
-  if (already) {
-    const again = ui.alert(
+  const docProps = PropertiesService.getDocumentProperties()
+  const alreadyMigratedFrom = docProps.getProperty(MIGRATED_FROM_PROPERTY)
+  if (alreadyMigratedFrom) {
+    const runAgain = ui.alert(
       'Finish Setup',
-      `This sheet was already migrated from ${already}. Run the migration again?`,
+      `This sheet was already migrated from ${alreadyMigratedFrom}. Run the migration again?`,
       ui.ButtonSet.YES_NO,
     )
-    if (again !== ui.Button.YES) return false
+    if (runAgain !== ui.Button.YES) return false
   }
 
   let sourceVersion: string | null = detectPreviousVersion(destVersion)
@@ -263,40 +268,40 @@ export function finishSetup(): boolean {
 
   // Plan first (reads only). A layout that doesn't fit stops here, before anything is written.
   resetToastProgress('migration')
-  startStep(ss, 'Planning migration')
+  startStep(spreadsheet, 'Planning migration')
   let plan
   try {
     plan = planForVersions(sourceVersion, destVersion)
-  } catch (e) {
-    finishFlow(ss, 'Migration not started', 10)
+  } catch (error) {
+    finishFlow(spreadsheet, 'Migration not started', 10)
     ui.alert(
       'Finish Setup: cannot migrate',
-      `The layout check failed, so nothing was changed:\n\n${e instanceof Error ? e.message : e}\n\nSee UPDATING.md → Caveats.`,
+      `The layout check failed, so nothing was changed:\n\n${error instanceof Error ? error.message : error}\n\nSee UPDATING.md → Caveats.`,
       ui.ButtonSet.OK,
     )
     return false
   }
-  const go = ui.alert(
+  const proceed = ui.alert(
     `Finish Setup: ${copyName(sourceVersion)} → ${destVersion}`,
     `These changes will be applied in one atomic update:\n\n${describePlan(plan)}\n\nProceed?`,
     ui.ButtonSet.YES_NO,
   )
-  if (go !== ui.Button.YES) {
-    finishFlow(ss, 'Migration cancelled', 5)
+  if (proceed !== ui.Button.YES) {
+    finishFlow(spreadsheet, 'Migration cancelled', 5)
     return false
   }
 
-  const results = applyPlanWithProgress(plan)
-  const failed = results.filter((r) => !r.ok)
-  if (failed.length) {
+  const stepResults = applyPlanWithProgress(plan)
+  const failedSteps = stepResults.filter((result) => !result.ok)
+  if (failedSteps.length) {
     ui.alert(
       'Finish Setup: migration failed',
-      `The update was rejected as a whole, so the sheet is unchanged. This copy has NOT been marked as migrated.\n\n${failed[0]!.error}\n\n${formatResults(results)}`,
+      `The update was rejected as a whole, so the sheet is unchanged. This copy has NOT been marked as migrated.\n\n${failedSteps[0]!.error}\n\n${formatResults(stepResults)}`,
       ui.ButtonSet.OK,
     )
     return false
   }
-  props.setProperty(MIGRATED_FROM_PROPERTY, sourceVersion)
+  docProps.setProperty(MIGRATED_FROM_PROPERTY, sourceVersion)
   return true
 }
 
@@ -305,12 +310,12 @@ export function finishSetup(): boolean {
  * than `destVersion`. Ignores the creator's PUBLIC_ file and trashed files.
  */
 export function detectPreviousVersion(destVersion: string): string | null {
-  const it = DriveApp.searchFiles(
+  const fileIterator = DriveApp.searchFiles(
     "title contains 'Offline RogueDex' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false",
   )
-  const names: string[] = []
-  while (it.hasNext()) names.push(it.next().getName())
-  return newestVersionBelow(names, destVersion)
+  const fileNames: string[] = []
+  while (fileIterator.hasNext()) fileNames.push(fileIterator.next().getName())
+  return newestVersionBelow(fileNames, destVersion)
 }
 
 /** Pure core of detectPreviousVersion (tested). */
@@ -318,13 +323,13 @@ export function newestVersionBelow(
   names: string[],
   destVersion: string,
 ): string | null {
-  let best: string | null = null
+  let newest: string | null = null
   for (const name of names) {
-    const m = name.match(COPY_NAME_RE)
-    if (!m) continue
-    const v = m[1]!
-    if (compareVersions(v, destVersion) >= 0) continue
-    if (!best || compareVersions(v, best) > 0) best = v
+    const match = name.match(COPY_NAME_RE)
+    if (!match) continue
+    const version = match[1]!
+    if (compareVersions(version, destVersion) >= 0) continue
+    if (!newest || compareVersions(version, newest) > 0) newest = version
   }
-  return best
+  return newest
 }

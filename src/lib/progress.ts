@@ -25,18 +25,18 @@ const TIMINGS_MAX_ROWS = 2000
 type Step = { label: string; ms: number }
 type Flow = {
   name: string
-  start: number
+  startedAt: number
   steps: Step[]
-  current: { label: string; start: number } | null
+  currentStep: { label: string; startedAt: number } | null
 }
 
-let flow: Flow | null = null
+let activeFlow: Flow | null = null
 
 /** Last completed step, for the toast body. */
 function lastStepText(): string {
-  const last = flow?.steps[flow.steps.length - 1]
-  return last
-    ? `${last.label} completed in ${(last.ms / 1000).toFixed(1)}s`
+  const lastStep = activeFlow?.steps[activeFlow.steps.length - 1]
+  return lastStep
+    ? `${lastStep.label} completed in ${(lastStep.ms / 1000).toFixed(1)}s`
     : ''
 }
 
@@ -47,12 +47,12 @@ function lastStepText(): string {
  *   "migration", ...).
  */
 export function resetToastProgress(name: string): void {
-  flow = { name, start: Date.now(), steps: [], current: null }
+  activeFlow = { name, startedAt: Date.now(), steps: [], currentStep: null }
 }
 
 /** True while a flow is open (used to nest standalone entry points). */
 export function flowActive(): boolean {
-  return flow !== null
+  return activeFlow !== null
 }
 
 /**
@@ -60,42 +60,42 @@ export function flowActive(): boolean {
  * new step's label and whose body summarizes the previous step's timing.
  * Finishes any step still open (so a forgotten finishStep can't lose data).
  */
-export function startStep(ss: Spreadsheet, label: string): void {
-  if (!flow) resetToastProgress('flow')
+export function startStep(spreadsheet: Spreadsheet, label: string): void {
+  if (!activeFlow) resetToastProgress('flow')
   finishStep()
-  ss.toast(lastStepText(), label, -1)
-  flow!.current = { label, start: Date.now() }
+  spreadsheet.toast(lastStepText(), label, -1)
+  activeFlow!.currentStep = { label, startedAt: Date.now() }
 }
 
 /** Record how long the in-progress step took. No-op if none is open. */
 export function finishStep(): void {
-  if (!flow?.current) return
-  const { label, start } = flow.current
-  flow.steps.push({ label, ms: Date.now() - start })
-  flow.current = null
+  if (!activeFlow?.currentStep) return
+  const { label, startedAt } = activeFlow.currentStep
+  activeFlow.steps.push({ label, ms: Date.now() - startedAt })
+  activeFlow.currentStep = null
 }
 
 /**
- * Run `fn` as part of an outer flow if one exists, otherwise as a self-managed
+ * Run `work` as part of an outer flow if one exists, otherwise as a self-managed
  * standalone flow (reset before, completion toast + timing log after).
  */
 export function runStandaloneIfNeeded(
-  ss: Spreadsheet,
+  spreadsheet: Spreadsheet,
   label: string,
-  fn: () => void,
+  work: () => void,
 ): void {
-  if (flow) {
-    fn()
+  if (activeFlow) {
+    work()
     return
   }
   resetToastProgress(label.toLowerCase())
   try {
-    fn()
-  } catch (e) {
-    failFlow(ss, e)
-    throw e
+    work()
+  } catch (error) {
+    failFlow(spreadsheet, error)
+    throw error
   }
-  finishFlow(ss, `${label} done`)
+  finishFlow(spreadsheet, `${label} done`)
 }
 
 /**
@@ -104,91 +104,106 @@ export function runStandaloneIfNeeded(
  * @param timeoutSeconds - how long the toast stays up (default 5)
  */
 export function finishFlow(
-  ss: Spreadsheet,
+  spreadsheet: Spreadsheet,
   title: string,
   timeoutSeconds = 5,
 ): void {
-  if (!flow) return
+  if (!activeFlow) return
   finishStep()
-  const total = Date.now() - flow.start
-  ss.toast(
+  const totalMs = Date.now() - activeFlow.startedAt
+  spreadsheet.toast(
     lastStepText(),
-    `${title} in ${(total / 1000).toFixed(1)}s`,
+    `${title} in ${(totalMs / 1000).toFixed(1)}s`,
     timeoutSeconds,
   )
-  writeTimings(ss, flow, total, 'ok')
-  flow = null
+  writeTimings(spreadsheet, activeFlow, totalMs, 'ok')
+  activeFlow = null
 }
 
 /**
  * Close the flow after an error: a visible (non-sticky) error toast, a log
  * line, and the timings so far are still written. Never throws.
  */
-export function failFlow(ss: Spreadsheet, error: unknown): void {
+export function failFlow(spreadsheet: Spreadsheet, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
   try {
-    ss.toast(message, 'Something went wrong', 20)
+    spreadsheet.toast(message, 'Something went wrong', 20)
   } catch {
     /* toast is best-effort */
   }
-  Logger.log(`${flow?.name ?? 'flow'} failed: ${message}`)
-  if (!flow) return
+  Logger.log(`${activeFlow?.name ?? 'flow'} failed: ${message}`)
+  if (!activeFlow) return
   finishStep()
-  const total = Date.now() - flow.start
+  const totalMs = Date.now() - activeFlow.startedAt
   try {
-    writeTimings(ss, flow, total, `error: ${message}`)
-  } catch (e) {
-    Logger.log('timing log failed: ' + (e instanceof Error ? e.message : e))
+    writeTimings(spreadsheet, activeFlow, totalMs, `error: ${message}`)
+  } catch (writeError) {
+    Logger.log(
+      'timing log failed: ' +
+        (writeError instanceof Error ? writeError.message : writeError),
+    )
   }
-  flow = null
+  activeFlow = null
 }
 
 /** The rows a finished flow contributes to `_timings` (pure; tested). */
 export function timingRows(
-  f: Pick<Flow, 'name' | 'steps'>,
+  flow: Pick<Flow, 'name' | 'steps'>,
   totalMs: number,
   outcome: string,
   when: Date,
   sheetName: string,
 ): (string | number)[][] {
-  const stamp = when.toISOString()
-  const rows: (string | number)[][] = f.steps.map((s) => [
-    stamp,
+  const timestamp = when.toISOString()
+  const rows: (string | number)[][] = flow.steps.map((step) => [
+    timestamp,
     sheetName,
-    f.name,
-    s.label,
-    s.ms,
+    flow.name,
+    step.label,
+    step.ms,
   ])
-  rows.push([stamp, sheetName, f.name, `TOTAL (${outcome})`, totalMs])
+  rows.push([timestamp, sheetName, flow.name, `TOTAL (${outcome})`, totalMs])
   return rows
 }
 
 function writeTimings(
-  ss: Spreadsheet,
-  f: Flow,
+  spreadsheet: Spreadsheet,
+  flow: Flow,
   totalMs: number,
   outcome: string,
 ): void {
-  let sheet = ss.getSheetByName(TIMINGS_SHEET)
-  if (!sheet) {
-    sheet = ss.insertSheet(TIMINGS_SHEET)
-    sheet.hideSheet()
-    sheet.getRange(1, 1, 1, TIMINGS_HEADER.length).setValues([TIMINGS_HEADER])
+  let timingsSheet = spreadsheet.getSheetByName(TIMINGS_SHEET)
+  if (!timingsSheet) {
+    timingsSheet = spreadsheet.insertSheet(TIMINGS_SHEET)
+    timingsSheet.hideSheet()
+    timingsSheet
+      .getRange(1, 1, 1, TIMINGS_HEADER.length)
+      .setValues([TIMINGS_HEADER])
   }
   // Column widths, once per workbook (also fixes sheets created before widths existed).
-  const props = PropertiesService.getDocumentProperties()
-  if (props.getProperty(TIMINGS_WIDTHS_PROPERTY) !== '1') {
-    TIMINGS_COLUMN_WIDTHS.forEach((w, i) => sheet!.setColumnWidth(i + 1, w))
-    props.setProperty(TIMINGS_WIDTHS_PROPERTY, '1')
+  const docProps = PropertiesService.getDocumentProperties()
+  if (docProps.getProperty(TIMINGS_WIDTHS_PROPERTY) !== '1') {
+    TIMINGS_COLUMN_WIDTHS.forEach((width, index) =>
+      timingsSheet!.setColumnWidth(index + 1, width),
+    )
+    docProps.setProperty(TIMINGS_WIDTHS_PROPERTY, '1')
   }
   // Newest flow on top: its rows go right under the header, followed by a
   // blank separator row so consecutive flows are easy to tell apart.
-  const rows = timingRows(f, totalMs, outcome, new Date(), ss.getName())
+  const rows = timingRows(
+    flow,
+    totalMs,
+    outcome,
+    new Date(),
+    spreadsheet.getName(),
+  )
   const block: (string | number)[][] = [...rows, TIMINGS_HEADER.map(() => '')]
-  sheet.insertRowsBefore(2, block.length)
-  sheet.getRange(2, 1, block.length, TIMINGS_HEADER.length).setValues(block)
-  const lastRow = sheet.getLastRow()
+  timingsSheet.insertRowsBefore(2, block.length)
+  timingsSheet
+    .getRange(2, 1, block.length, TIMINGS_HEADER.length)
+    .setValues(block)
+  const lastRow = timingsSheet.getLastRow()
   if (lastRow > TIMINGS_MAX_ROWS) {
-    sheet.deleteRows(TIMINGS_MAX_ROWS + 1, lastRow - TIMINGS_MAX_ROWS)
+    timingsSheet.deleteRows(TIMINGS_MAX_ROWS + 1, lastRow - TIMINGS_MAX_ROWS)
   }
 }
