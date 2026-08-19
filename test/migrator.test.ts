@@ -344,8 +344,9 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
   ])
   assert.deepEqual(notes, [])
 
-  // Quick Checklist: source 15 cols + offset 1 = 16 needed; dest has 16 → no append.
+  // Quick Checklist: ported up to the block end (E..O = 15) + offset 1 = 16 needed; dest has 16 → no append.
   assert.equal(reqOf(ops, 'appendDimension').length, 0)
+  assert.match(ops[0]!.note!, /row heights 20\/21\/22h\/23/)
   const cellWrites = reqOf(ops, 'updateCells').map(
     (r) =>
       r['updateCells'] as {

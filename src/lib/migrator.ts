@@ -305,11 +305,10 @@ export function planQuickChecklist(
       `Quick Checklist: destination data block starts at column ${dstFirst}, left of the source's ${srcFirst}; layout unknown, nothing ported`,
     )
   }
-  const srcCols = Math.max(
-    sSheet.properties.gridProperties?.columnCount ?? 0,
-    sGrid?.columnMetadata?.length ?? 0,
-    ...(sGrid?.rowData ?? []).map((r) => r.values?.length ?? 0),
-  )
+  // Port up to the end of the data block (Ribbons); nothing of ours lives to
+  // the right of it, and the source's grid may be wider for stale reasons
+  // (e.g. the old SaveTracker marker column) that must not be carried over.
+  const srcCols = srcFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1
   const neededCols = srcCols + offset
   const dstCols = dMeta.properties.gridProperties?.columnCount ?? 0
   const lastData = dstFirst + QUICK_CHECKLIST_DATA_COLUMNS - 1
@@ -436,12 +435,20 @@ export function planQuickChecklist(
     },
   })
 
+  const heights = Array.from(
+    { length: QUICK_CHECKLIST_HEADER_ROWS },
+    (_, r) => {
+      const m = sGrid?.rowMetadata?.[r] ?? {}
+      return `${m.pixelSize ?? '?'}${m.hiddenByUser ? 'h' : ''}`
+    },
+  ).join('/')
   ops.push({
     label: 'Quick Checklist header (rows 1–10)',
     note:
-      offset > 0
+      (offset > 0
         ? `source block at column ${srcFirst}, destination at ${dstFirst}: formulas shifted right by ${offset}; Ribbons (col ${lastData}) hidden`
-        : `block at column ${dstFirst} in both; Ribbons (col ${lastData}) hidden`,
+        : `block at column ${dstFirst} in both; Ribbons (col ${lastData}) hidden`) +
+      `; row heights ${heights}px (h = hidden)`,
     requests,
   })
 
