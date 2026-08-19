@@ -781,7 +781,3 @@ export function describeLayout(client: SheetsClient = liveSheets): string {
     return 'ERROR ' + (e instanceof Error ? e.message : String(e))
   }
 }
-
-// ---------------------------------------------------------------------------
-// Housekeeping
-// ---------------------------------------------------------------------------
