@@ -300,18 +300,6 @@ export function finishSetup(): boolean {
   return true
 }
 
-/** Dry run for the menu: the plan as text, or the reason it can't be built. */
-export function previewMigration(
-  sourceVersion: string,
-  destVersion: string,
-): string {
-  try {
-    return describePlan(planForVersions(sourceVersion, destVersion))
-  } catch (e) {
-    return 'Cannot migrate: ' + (e instanceof Error ? e.message : String(e))
-  }
-}
-
 /**
  * The newest of your "Offline RogueDex X.YY" copies whose version is lower
  * than `destVersion`. Ignores the creator's PUBLIC_ file and trashed files.

@@ -17,8 +17,6 @@ export const HEADERS: Record<string, string[][]> = JSON.parse(
 export type WorkbookOptions = {
   /** Number of Pokémon rows per sheet (default 25). */
   rows?: number
-  /** Use the creator's fresh Quick Checklist header (labels in row 1) instead of the migrated one. */
-  freshQuickChecklist?: boolean
   /** Sheet name for the workbook (drives version detection). */
   name?: string
 }
@@ -79,14 +77,7 @@ export function buildWorkbook(opts: WorkbookOptions = {}): FakeSpreadsheet {
     qData.load(row, 1, [line])
   }
   const qDisp = ss.addSheet('Quick Checklist')
-  loadHeaders(
-    qDisp,
-    HEADERS[
-      opts.freshQuickChecklist
-        ? 'Quick Checklist (fresh PUBLIC)'
-        : 'Quick Checklist (migrated)'
-    ]!.slice(0, 11),
-  )
+  loadHeaders(qDisp, HEADERS['Quick Checklist (migrated)']!.slice(0, 11))
   for (let i = 0; i < n; i++) {
     const row = LAYOUT_603.quick.displayFirstRow + i
     const line: CellValue[] = [

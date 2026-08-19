@@ -8,11 +8,9 @@
  * carries "Caught flag … Ribbons"), so a creator reshuffle either resolves
  * correctly or fails loudly with the header that was actually found.
  *
- * Pure functions take header grids (string[][]) so they can be tested with the
- * captured 6.03 fixtures; `resolveTracker` does the (small) sheet reads.
+ * Pure: takes header grids (string[][]) — the SaveTracker reads them through
+ * the Sheets API — so it can be tested with the captured 6.03 fixtures.
  */
-
-type Sheet = GoogleAppsScript.Spreadsheet.Sheet
 
 /** How many top rows to scan for header anchors. */
 export const HEADER_BAND_ROWS = 10
@@ -223,21 +221,6 @@ export function resolveFromBands(
     labels,
     dataBand,
   }
-}
-
-/** Read the header band of a sheet (rows 1..HEADER_BAND_ROWS, full used width). One call. */
-export function readBand(sheet: Sheet, rows = HEADER_BAND_ROWS): string[][] {
-  const width = Math.max(sheet.getLastColumn(), 1)
-  return sheet.getRange(1, 1, rows, width).getDisplayValues()
-}
-
-/** Resolve a tracker against live sheets (two header reads). */
-export function resolveTracker(
-  spec: TrackerSpec,
-  data: Sheet,
-  display: Sheet,
-): ResolvedTracker {
-  return resolveFromBands(spec, readBand(data), readBand(display))
 }
 
 /** Human-readable summary of a resolved tracker, for logs and the dry run. */

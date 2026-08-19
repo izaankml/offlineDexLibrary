@@ -227,16 +227,6 @@ export function padValues(
   return out
 }
 
-/** API Color → '#rrggbb' (used by tests / logs). */
-export function colorToHex(c: Color | undefined): string | null {
-  if (!c) return null
-  const h = (x: number | undefined): string =>
-    Math.round((x ?? 0) * 255)
-      .toString(16)
-      .padStart(2, '0')
-  return '#' + h(c.red) + h(c.green) + h(c.blue)
-}
-
 export function a1(row1: number, col1: number): string {
   let s = ''
   let c = col1

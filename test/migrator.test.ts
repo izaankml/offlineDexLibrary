@@ -346,7 +346,6 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
 
   // Quick Checklist: ported up to the block end (E..O = 15) + offset 1 = 16 needed; dest has 16 → no append.
   assert.equal(reqOf(ops, 'appendDimension').length, 0)
-  assert.match(ops[0]!.note!, /row heights 20\/fit\/22h\/23/)
   const autoFit = reqOf(ops, 'autoResizeDimensions').map(
     (r) =>
       (r['autoResizeDimensions'] as { dimensions: { startIndex: number } })

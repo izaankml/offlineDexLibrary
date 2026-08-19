@@ -455,25 +455,12 @@ export function planQuickChecklist(
     },
   })
 
-  const heights = Array.from(
-    { length: QUICK_CHECKLIST_HEADER_ROWS },
-    (_, r) => {
-      const m = sGrid?.rowMetadata?.[r] ?? {}
-      const px = m.pixelSize ?? DEFAULT_ROW_HEIGHT
-      return m.hiddenByUser
-        ? `${px}h`
-        : px === DEFAULT_ROW_HEIGHT
-          ? 'fit'
-          : `${px}`
-    },
-  ).join('/')
   ops.push({
     label: 'Quick Checklist header (rows 1–10)',
     note:
-      (offset > 0
+      offset > 0
         ? `source block at column ${srcFirst}, destination at ${dstFirst}: formulas shifted right by ${offset}; Ribbons (col ${lastData}) hidden`
-        : `block at column ${dstFirst} in both; Ribbons (col ${lastData}) hidden`) +
-      `; row heights ${heights}px (h = hidden)`,
+        : `block at column ${dstFirst} in both; Ribbons (col ${lastData}) hidden`,
     requests,
   })
 

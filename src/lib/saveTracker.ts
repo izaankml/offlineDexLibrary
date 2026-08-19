@@ -30,6 +30,7 @@
  */
 
 import {
+  HEADER_BAND_ROWS,
   type ResolvedTracker,
   type TrackerSpec,
   describeResolved,
@@ -78,9 +79,6 @@ const LEGACY_MARKER_COLUMNS: Record<string, number> = {
   StarterDex: 136,
   FullDex: 136,
 }
-
-/** Rows of the header band read for the layout probe. */
-const HEADER_BAND_ROWS = 10
 
 // ---------------------------------------------------------------------------
 // Tracker specs — header labels, not column numbers. See src/lib/layout.ts.
@@ -243,15 +241,10 @@ export function diffBlocks(
 
 /** True when the key column is not in ascending (numbers first, then text) order. */
 export function outOfOrder(keys: CellValue[]): boolean {
-  return firstInversion(keys) !== null
-}
-
-/** Index i of the first pair (i-1, i) that is out of order, or null. */
-export function firstInversion(keys: CellValue[]): number | null {
   for (let i = 1; i < keys.length; i++) {
-    if (compareKeys(keys[i - 1]!, keys[i]!) > 0) return i
+    if (compareKeys(keys[i - 1]!, keys[i]!) > 0) return true
   }
-  return null
+  return false
 }
 
 /**
@@ -699,12 +692,7 @@ function prepareSnapshotSheets(ss: Spreadsheet, loaded: Loaded[]): void {
  * row offset, so the display must be in the data sheet's canonical order.
  */
 export function ensureDisplayOrder(ss: Spreadsheet, l: Loaded): boolean {
-  const inv = l.keys.length > 1 ? firstInversion(l.keys) : null
-  if (inv === null) return false
-  const show = (v: CellValue): string => `${JSON.stringify(v)} (${typeof v})`
-  Logger.log(
-    `${l.r.spec.key}: key column out of order at display row ${l.r.spec.displayFirstRow + inv}: ${show(l.keys[inv - 1]!)} then ${show(l.keys[inv]!)}; ${l.keys.length} keys, first ${show(l.keys[0]!)}, last ${show(l.keys[l.keys.length - 1]!)}`,
-  )
+  if (l.keys.length <= 1 || !outOfOrder(l.keys)) return false
   const display = ss.getSheetByName(l.r.spec.displaySheet)!
   const lastCol = display.getLastColumn()
   display

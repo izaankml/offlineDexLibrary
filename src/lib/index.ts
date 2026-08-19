@@ -25,7 +25,6 @@ export {
   finishSetup,
   nudgeFinishSetupIfFresh,
   prepareNextVersion,
-  previewMigration,
 } from './setup.ts'
 
 export { copyName, versionFromName } from '../shared/naming.ts'

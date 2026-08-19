@@ -13,7 +13,8 @@ import {
 } from './fake-gas.ts'
 import { LAYOUT_603, buildWorkbook } from './fixtures.ts'
 import { TIMINGS_SHEET, resetToastProgress } from '../src/lib/progress.ts'
-import { resolveTracker } from '../src/lib/layout.ts'
+import { resolveFromBands } from '../src/lib/layout.ts'
+import { HEADERS } from './fixtures.ts'
 import {
   DEX_HIGHLIGHT_COLOR,
   INCREMENT_HIGHLIGHT_COLOR,
@@ -59,10 +60,14 @@ test('golden: header-keyed layout reproduces the old index-based mappings on 6.0
   >
   const ss = buildWorkbook({ rows: 3 })
   for (const spec of TRACKER_SPECS) {
-    const r = resolveTracker(
+    const r = resolveFromBands(
       spec,
-      ss.getSheetByName(spec.dataSheet)! as never,
-      ss.getSheetByName(spec.displaySheet)! as never,
+      HEADERS[spec.dataSheet]!,
+      HEADERS[
+        spec.displaySheet === 'Quick Checklist'
+          ? 'Quick Checklist (migrated)'
+          : spec.displaySheet
+      ]!,
     )
     const g = golden[spec.key]!
     assert.equal(spec.dataFirstRow, g.dataFirstRow)
@@ -109,10 +114,14 @@ test('toRuns collapses contiguous offsets', () => {
 test('diffBlocks: only tracked, non-excluded columns paint; only changed rows are returned', () => {
   const ss = buildWorkbook({ rows: 2 })
   const spec = TRACKER_SPECS[1]!
-  const r = resolveTracker(
+  const r = resolveFromBands(
     spec,
-    ss.getSheetByName(spec.dataSheet)! as never,
-    ss.getSheetByName(spec.displaySheet)! as never,
+    HEADERS[spec.dataSheet]!,
+    HEADERS[
+      spec.displaySheet === 'Quick Checklist'
+        ? 'Quick Checklist (migrated)'
+        : spec.displaySheet
+    ]!,
   )
   const width = r.maxDataCol - r.minDataCol + 1
   const row = new Array(width).fill(0)
