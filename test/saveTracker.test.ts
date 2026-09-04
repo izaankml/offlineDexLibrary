@@ -39,9 +39,11 @@ const QUICK = LAYOUT_603.quick
 beforeEach(() => resetFakes())
 
 /**
- * The header-keyed probe must reproduce exactly the column maps the old
- * index-based TRACKERS produced for the 6.03 layout (golden-mappings.json was
- * generated from that code before the rewrite).
+ * The header-keyed probe must reproduce the column maps the old index-based
+ * TRACKERS produced for the 6.03 layout (golden-mappings.json was generated
+ * from that code before the rewrite). One deliberate divergence since: the dex
+ * sheets' "Total" (Egg Move Attributes, display AG) is an increment counter, so
+ * it is purple in the golden file rather than green.
  */
 test('golden: header-keyed layout reproduces the old index-based mappings on 6.03', () => {
   const golden = JSON.parse(

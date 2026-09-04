@@ -81,6 +81,11 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
   assert.equal(colorByDisplayCol[35], null, 'AI Friendship excluded')
   assert.equal(colorByDisplayCol[14], '#b4a7d6', 'N Caught Count increment')
   assert.equal(colorByDisplayCol[28], '#b4a7d6', 'AB Hatched Count increment')
+  assert.equal(
+    colorByDisplayCol[33],
+    '#b4a7d6',
+    'AG Total (Egg Move Attributes) increment',
+  )
   assert.equal(colorByDisplayCol[41], '#b4a7d6', 'AO Classic Wins increment')
   assert.equal(colorByDisplayCol[4], '#93c47d')
 
@@ -93,6 +98,14 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
   assert.equal(full.minDataCol, 8)
   assert.equal(full.maxDataCol, 139)
   assert.equal(full.maxDisplayCol, 135)
+  const fullColorByDisplayCol = Object.fromEntries(
+    full.cells.map((cell) => [cell.displayCol, cell.color]),
+  )
+  assert.equal(
+    fullColorByDisplayCol[33],
+    '#b4a7d6',
+    'AG Total (Egg Move Attributes) increment',
+  )
 })
 
 test('a creator column insert in the display is absorbed; a renamed anchor fails loudly', () => {

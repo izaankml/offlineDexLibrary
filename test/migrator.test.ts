@@ -8,12 +8,14 @@ import {
   buildPlan,
   describePlan,
   planQuickChecklist,
-  shiftMergeForInsert,
+  shiftMergeForColumnInsert,
+  shiftMergeForRowInsert,
 } from '../src/lib/migrator.ts'
 import type {
   CellData,
   CellFormat,
   GridData,
+  GridRange,
   Request,
   SheetInfo,
   SheetsClient,
@@ -128,26 +130,55 @@ function migratedDestQuickGrid(): GridData {
 
 const LANDMARK = 'Missing Gym Leader Voucher…'
 
+const range = (
+  sheetId: number,
+  startRowIndex: number,
+  endRowIndex: number,
+  startColumnIndex: number,
+  endColumnIndex: number,
+): GridRange => ({
+  sheetId,
+  startRowIndex,
+  endRowIndex,
+  startColumnIndex,
+  endColumnIndex,
+})
+
+/**
+ * Daily Mode merges of a source (or already-migrated) copy: the three header
+ * blocks run to row 15, the creator's wiki-link row sits at 16, and the map
+ * image is B17:M132. B8:K10 is outside the ported region.
+ */
+const sourceDailyMerges = (sheetId: number): GridRange[] => [
+  range(sheetId, 7, 10, 1, 11), // B8:K10, above the ported region
+  range(sheetId, 11, 15, 1, 5), // B12:E15
+  range(sheetId, 11, 15, 5, 8), // F12:H15
+  range(sheetId, 11, 15, 8, 11), // I12:K15
+  range(sheetId, 15, 16, 1, 10), // B16:J16, the creator's wiki link
+  range(sheetId, 16, 132, 1, 13), // B17:M132, the map image
+]
+
 function source(): SourceInfo {
-  const dailyB16: CellData[][] = []
+  const dailyImage: CellData[][] = []
   for (let rowIndex = 0; rowIndex < 116; rowIndex++)
-    dailyB16.push(
+    dailyImage.push(
       Array.from({ length: 12 }, () => ({ userEnteredFormat: fmt('daily') })),
     )
-  dailyB16[0]![0] = {
+  dailyImage[0]![0] = {
     ...formula('=IMAGE("https://wiki/daily.jpg",4,L12,M12)', ''),
-    userEnteredFormat: fmt('b16'),
+    userEnteredFormat: fmt('b17'),
   }
   const inputs: CellData[][] = [
     [num(1), num(2)],
     [str('w'), str('h')],
     [formula('=L12*2'), empty()],
+    [str('Rows'), num(24)],
   ]
   return {
     meta: {
       sheets: [
         sheet('Quick Checklist', 1, { columnCount: 15 }),
-        sheet('Daily Mode', 2),
+        sheet('Daily Mode', 2, { merges: sourceDailyMerges(2) }),
         sheet('newJSON', 3, { hidden: true }),
         sheet('IMPORT:data.SPECIES', 4, { hidden: true }),
         sheet('_snapshot_QuickChecklist', 5, { hidden: true }),
@@ -161,12 +192,14 @@ function source(): SourceInfo {
         }),
         sheet('Daily Mode', 2, {
           data: [
-            grid(15, 1, dailyB16, {
+            grid(16, 1, dailyImage, {
               columnMetadata: Array.from({ length: 12 }, (_, colIndex) => ({
                 pixelSize: 50 + colIndex,
               })),
             }),
-            grid(11, 11, inputs),
+            grid(11, 11, inputs, {
+              rowMetadata: [{}, {}, {}, { pixelSize: 42 }],
+            }),
             grid(1, 13, [[str(LANDMARK)]]),
           ],
         }),
@@ -194,15 +227,17 @@ function freshDest(): DestInfo {
             },
           ],
         }),
+        // Creator coordinates: no custom column L, no custom row 15, so the
+        // header blocks stop at row 14, the wiki link is at 15 and the image
+        // merge starts at B16 (running to L, which the insert widens to M).
         sheet('Daily Mode', 12, {
           merges: [
-            {
-              sheetId: 12,
-              startRowIndex: 15,
-              endRowIndex: 131,
-              startColumnIndex: 1,
-              endColumnIndex: 12,
-            },
+            range(12, 7, 10, 1, 11), // B8:K10
+            range(12, 11, 14, 1, 5), // B12:E14
+            range(12, 11, 14, 5, 8), // F12:H14
+            range(12, 11, 14, 8, 11), // I12:K14
+            range(12, 14, 15, 1, 10), // B15:J15
+            range(12, 15, 131, 1, 12), // B16:L131
           ],
         }),
         sheet('newJSON', 13),
@@ -302,15 +337,7 @@ function migratedDest(): DestInfo {
       },
     },
   ]
-  dest.meta.sheets![1]!.merges = [
-    {
-      sheetId: 12,
-      startRowIndex: 15,
-      endRowIndex: 131,
-      startColumnIndex: 1,
-      endColumnIndex: 13,
-    },
-  ]
+  dest.meta.sheets![1]!.merges = sourceDailyMerges(12)
   dest.meta.sheets![3]!.properties.hidden = true
   dest.meta.sheets![2]!.properties.hidden = true
   dest.meta.sheets![4]!.conditionalFormats = [
@@ -336,12 +363,13 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     'Quick Checklist title',
     'Quick Checklist banding over the image column',
     'Daily Mode: insert custom column L',
-    'Daily Mode: formats of B16:M131',
-    'Daily Mode: formats of L12:M14',
-    'Daily Mode: widths of columns L and M',
-    'Daily Mode: merge B16:M131',
-    'Daily Mode: B16 formula',
-    'Daily Mode: L12:M14 inputs',
+    'Daily Mode: insert custom row 15',
+    'Daily Mode: formats of B17:M132',
+    'Daily Mode: formats of L12:M15',
+    'Daily Mode: widths of columns L and M, height of row 15',
+    'Daily Mode: 5 merge(s) in B12:M132',
+    'Daily Mode: B17 formula',
+    'Daily Mode: L12:M15 inputs',
     'Hide 1 sheet(s)',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
@@ -474,36 +502,72 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
   }
   assert.equal(band.bandedRange.range['startColumnIndex'], 1)
   assert.equal(requestsOfKind(ops, 'repeatCell').length, 1)
-  // Daily Mode: insert at L (0-based 11); creator's B16:L131 merge is widened by the insert → unmerged, then merged as B16:M131.
-  const insert = requestsOfKind(ops, 'insertDimension')[0]![
-    'insertDimension'
-  ] as {
-    range: Record<string, unknown>
-  }
-  assert.equal(insert.range['startIndex'], 11)
-  const unmerge = requestsOfKind(ops, 'unmergeCells')[0]!['unmergeCells'] as {
-    range: Record<string, number>
-  }
-  assert.equal(unmerge.range['endColumnIndex'], 13)
-  const merge = requestsOfKind(ops, 'mergeCells')[0]!['mergeCells'] as {
-    range: Record<string, number>
-  }
-  assert.deepEqual(
-    [
-      merge.range['startRowIndex'],
-      merge.range['endRowIndex'],
-      merge.range['startColumnIndex'],
-      merge.range['endColumnIndex'],
-    ],
-    [15, 131, 1, 13],
+  // Daily Mode: column L inserted at 0-based 11, row 15 at 0-based 14.
+  const inserts = requestsOfKind(ops, 'insertDimension').map(
+    (request) =>
+      (request['insertDimension'] as { range: Record<string, unknown> }).range,
   )
-  // B16 formula copied, top-aligned; L12:M14 values.
-  const b16 = cellWrites.find(
+  assert.deepEqual(
+    inserts.map((insert) => [insert['dimension'], insert['startIndex']]),
+    [
+      ['COLUMNS', 11],
+      ['ROWS', 14],
+    ],
+  )
+  assert.ok(
+    dimensionUpdates.some(
+      (update) =>
+        update.range['dimension'] === 'ROWS' &&
+        update.range['startIndex'] === 14 &&
+        update.properties['pixelSize'] === 42,
+    ),
+    "the inserted row gets the source's height",
+  )
+  // Every destination merge overlapping one of the five ported ones is
+  // unmerged in post-insert coordinates (B8:K10 is outside and survives);
+  // then the source's merges are applied.
+  const asTuple = (range: Record<string, number>): number[] => [
+    range['startRowIndex']!,
+    range['endRowIndex']!,
+    range['startColumnIndex']!,
+    range['endColumnIndex']!,
+  ]
+  assert.deepEqual(
+    requestsOfKind(ops, 'unmergeCells').map((request) =>
+      asTuple(
+        (request['unmergeCells'] as { range: Record<string, number> }).range,
+      ),
+    ),
+    [
+      [11, 14, 1, 5], // B12:E14
+      [11, 14, 5, 8], // F12:H14
+      [11, 14, 8, 11], // I12:K14
+      [15, 16, 1, 10], // B15:J15 → B16:J16
+      [16, 132, 1, 13], // B16:L131 → B17:M132 (widened by the column insert)
+    ],
+  )
+  assert.deepEqual(
+    requestsOfKind(ops, 'mergeCells').map((request) =>
+      asTuple(
+        (request['mergeCells'] as { range: Record<string, number> }).range,
+      ),
+    ),
+    [
+      [11, 15, 1, 5], // B12:E15
+      [11, 15, 5, 8], // F12:H15
+      [11, 15, 8, 11], // I12:K15
+      [15, 16, 1, 10], // B16:J16
+      [16, 132, 1, 13], // B17:M132
+    ],
+  )
+  // B17 formula copied, top-aligned; L12:M15 values.
+  const imageCell = cellWrites.find(
     (write) =>
       write.fields === 'userEnteredValue,userEnteredFormat.verticalAlignment',
   )!
+  assert.equal(imageCell.range['startRowIndex'], 16)
   assert.match(
-    b16.rows[0]!.values[0]!.userEnteredValue!.formulaValue!,
+    imageCell.rows[0]!.values[0]!.userEnteredValue!.formulaValue!,
     /^=IMAGE/,
   )
   const inputs = cellWrites.find(
@@ -512,11 +576,13 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
       write.range['startRowIndex'] === 11 &&
       write.range['startColumnIndex'] === 11,
   )!
+  assert.equal(inputs.range['endRowIndex'], 15)
   assert.equal(
     inputs.rows[2]!.values[0]!.userEnteredValue!.formulaValue,
     '=L12*2',
   )
   assert.deepEqual(inputs.rows[2]!.values[1], {})
+  assert.equal(inputs.rows[3]!.values[1]!.userEnteredValue!.numberValue, 24)
   // Hidden sheets: newJSON gets hidden; IMPORT already hidden; _snapshot_ has no counterpart.
   const hide = requestsOfKind(ops, 'updateSheetProperties')
   assert.equal(hide.length, 1)
@@ -603,6 +669,14 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
   )
   assert.ok(
     notes.some((note) =>
+      note.startsWith('Daily Mode: custom row 15 already present'),
+    ),
+  )
+  // The merges already match the source's: each is unmerged and re-applied.
+  assert.equal(requestsOfKind(ops, 'unmergeCells').length, 5)
+  assert.equal(requestsOfKind(ops, 'mergeCells').length, 5)
+  assert.ok(
+    notes.some((note) =>
       note.includes('no "= 31" rule on "Starter DEX Checklist"'),
     ),
   )
@@ -642,6 +716,23 @@ test('planning refuses unknown layouts before anything is written', () => {
   assert.throws(
     () => buildPlan(source(), noLandmark, '6.03'),
     /landmark "Missing Gym Leader Voucher…" is at neither N2 nor M2/,
+  )
+
+  // The map image block is located by the merge it is; without one, nothing is ported.
+  const sourceWithoutImageMerge = source()
+  sourceWithoutImageMerge.meta.sheets![1]!.merges = sourceDailyMerges(2).filter(
+    (merge) => merge.startRowIndex !== 16,
+  )
+  assert.throws(
+    () => buildPlan(sourceWithoutImageMerge, freshDest(), '6.03'),
+    /no merged cell starts at B17 in the source/,
+  )
+
+  const destImageMergeMoved = freshDest()
+  destImageMergeMoved.meta.sheets![1]!.merges = [range(12, 20, 40, 1, 12)]
+  assert.throws(
+    () => buildPlan(source(), destImageMergeMoved, '6.03'),
+    /map image merge starts at neither B17 nor B16 in the destination/,
   )
 
   const blankRow10 = freshDest()
@@ -694,25 +785,52 @@ test('applyPlan sends every request in one batchUpdate to the destination', () =
   )
 })
 
-test('shiftMergeForInsert', () => {
+test('shiftMergeForColumnInsert', () => {
   const merge = { sheetId: 1, startColumnIndex: 1, endColumnIndex: 12 }
-  assert.deepEqual(shiftMergeForInsert(merge, 11), {
+  assert.deepEqual(shiftMergeForColumnInsert(merge, 11), {
     sheetId: 1,
     startColumnIndex: 1,
     endColumnIndex: 13,
   })
   assert.deepEqual(
-    shiftMergeForInsert(
+    shiftMergeForColumnInsert(
       { sheetId: 1, startColumnIndex: 12, endColumnIndex: 14 },
       11,
     ),
     { sheetId: 1, startColumnIndex: 13, endColumnIndex: 15 },
   )
   assert.deepEqual(
-    shiftMergeForInsert(
+    shiftMergeForColumnInsert(
       { sheetId: 1, startColumnIndex: 0, endColumnIndex: 11 },
       11,
     ),
     { sheetId: 1, startColumnIndex: 0, endColumnIndex: 11 },
+  )
+})
+
+test('shiftMergeForRowInsert', () => {
+  // Starts at or below the inserted row: moves down whole (B15:J15 → B16:J16).
+  assert.deepEqual(
+    shiftMergeForRowInsert(
+      { sheetId: 1, startRowIndex: 14, endRowIndex: 15 },
+      14,
+    ),
+    { sheetId: 1, startRowIndex: 15, endRowIndex: 16 },
+  )
+  // Ends exactly at the inserted row: untouched (B12:E14 stays B12:E14).
+  assert.deepEqual(
+    shiftMergeForRowInsert(
+      { sheetId: 1, startRowIndex: 11, endRowIndex: 14 },
+      14,
+    ),
+    { sheetId: 1, startRowIndex: 11, endRowIndex: 14 },
+  )
+  // Spans the inserted row: grows by one.
+  assert.deepEqual(
+    shiftMergeForRowInsert(
+      { sheetId: 1, startRowIndex: 11, endRowIndex: 16 },
+      14,
+    ),
+    { sheetId: 1, startRowIndex: 11, endRowIndex: 17 },
   )
 })

@@ -4,9 +4,9 @@
  * Ports your customizations from an old OfflineDex spreadsheet to a new one.
  *
  * Since 2026-08 this is a plan → preview → apply pipeline on the Sheets API:
- *   1. read the source (2 GETs: sheet list; formats/values of the customized
- *      ranges) and the destination (2 GETs: sheet list + banding/CF/merges;
- *      the locator cells) — no `openById`, no temp sheets;
+ *   1. read the source (2 GETs: sheet list + merges; formats/values of the
+ *      customized ranges) and the destination (2 GETs: sheet list +
+ *      banding/CF/merges; the locator cells) — no `openById`, no temp sheets;
  *   2. build a list of migration ops (human label + batchUpdate requests) —
  *      pure, tested; planning THROWS if a landmark doesn't fit, so nothing is
  *      touched when the creator's layout changed;
@@ -50,14 +50,29 @@ export const QUICK_CHECKLIST_IMAGE_COLUMN = 2
 /** Sheets' default row height; a non-hidden row at this height is treated as "Fit to data". */
 const DEFAULT_ROW_HEIGHT = 21
 
-// Daily Mode: custom column L (map-size inputs L12:M14 feed the IMAGE formula
-// in B16). Presence is detected by the creator's "Missing Gym Leader
-// Voucher…" landmark: N2 when L exists (source), M2 when it doesn't (fresh copy).
+// Daily Mode carries two structural customizations of ours, both of which a
+// fresh copy lacks and both of which shift everything after them:
+//
+//   * custom COLUMN L — the map-size inputs (L12:M15) the IMAGE formula reads.
+//     Detected by the creator's "Missing Gym Leader Voucher…" landmark: N2 when
+//     L exists (the source), M2 when it doesn't (a fresh copy).
+//   * custom ROW 15 — a blank row above the creator's wiki-link row so the
+//     "Rows" input gets a line of its own instead of sharing the link's row.
+//     Detected by where the map-image merge starts: B17 once the row exists,
+//     B16 in a fresh copy.
+//
+// The source has both, so SOURCE coordinates are also the destination's FINAL
+// coordinates; every format/value/merge write below is in those coordinates and
+// the two inserts run first in the same batch.
 export const DAILY_MODE_SHEET = 'Daily Mode'
 export const DAILY_MODE_CUSTOM_COLUMN = 12 // L
+export const DAILY_MODE_CUSTOM_ROW = 15
 export const DAILY_MODE_LANDMARK_ROW = 2
 export const DAILY_MODE_LANDMARK_COL_WITH_L = 14 // N
 export const DAILY_MODE_LANDMARK_COL_WITHOUT_L = 13 // M
+export const DAILY_MODE_IMAGE_COLUMN = 2 // B
+export const DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW = 17
+export const DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW = 16
 
 /** A rectangular block in 1-based, inclusive sheet coordinates. */
 type Block = {
@@ -66,20 +81,22 @@ type Block = {
   lastRow: number
   lastColumn: number
 }
-/** B16:M131 — the merged cell holding the daily map IMAGE formula. */
-export const DAILY_MODE_IMAGE_BLOCK: Block = {
-  firstRow: 16,
-  firstColumn: 2,
-  lastRow: 131,
-  lastColumn: 13,
-}
-/** L12:M14 — the map-size inputs the IMAGE formula reads. */
+/** L12:M15 — the map-size inputs the IMAGE formula reads (Map Width/Height/Scale/Rows). */
 export const DAILY_MODE_INPUTS_BLOCK: Block = {
   firstRow: 12,
   firstColumn: 12,
-  lastRow: 14,
+  lastRow: 15,
   lastColumn: 13,
 }
+/**
+ * B12:M<image bottom> — the region whose merges are made to match the source's
+ * (the input rows, the creator's wiki-link row, and the map-image block). Every
+ * source merge inside it is ported; anything of the destination's overlapping
+ * one of them is unmerged first.
+ */
+export const DAILY_MODE_MERGE_FIRST_ROW = 12
+export const DAILY_MODE_MERGE_FIRST_COLUMN = 2 // B
+export const DAILY_MODE_MERGE_LAST_COLUMN = 13 // M
 
 // IV conditional formatting on the dex checklists.
 export const DEX_IV_HIGHLIGHT_SHEETS = [
@@ -212,12 +229,14 @@ export function readSource(
   sourceSpreadsheetId: string,
 ): SourceInfo {
   const meta = client.get(sourceSpreadsheetId, {
-    fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
+    fields: 'sheets(properties(sheetId,title,hidden,gridProperties),merges)',
   })
+  // The map-image block is however big the source's merge is, so the metadata
+  // read has to come first: its size decides which range we ask for here.
   const grid = client.get(sourceSpreadsheetId, {
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
-      blockRange(DAILY_MODE_SHEET, DAILY_MODE_IMAGE_BLOCK),
+      blockRange(DAILY_MODE_SHEET, dailyModeImageBlock(meta)),
       blockRange(DAILY_MODE_SHEET, DAILY_MODE_INPUTS_BLOCK),
       `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
     ],
@@ -766,10 +785,82 @@ export function dailyModeHasCustomColumn(
   )
 }
 
+/** The merged cell of a Daily Mode sheet whose top-left is `row`/`column` (1-based), or null. */
+function dailyModeMergeAt(
+  info: SpreadsheetInfo,
+  spreadsheetRole: string,
+  row: number,
+  column: number,
+): GridRange | null {
+  const sheet = requireFound(
+    sheetByTitle(info, DAILY_MODE_SHEET),
+    `Daily Mode not found in the ${spreadsheetRole}`,
+  )
+  return (
+    (sheet.merges ?? []).find(
+      (merge) =>
+        (merge.startRowIndex ?? 0) === row - 1 &&
+        (merge.startColumnIndex ?? 0) === column - 1,
+    ) ?? null
+  )
+}
+
 /**
- * Daily Mode: insert custom column L when missing; formats for B16:M131 and
- * L12:M14; widths of L and M; merge B16:M131 (unmerging whatever overlaps);
- * B16 formula/value top-aligned; L12:M14 formulas/values.
+ * The source's map-image block, taken from the merge it actually is (its bottom
+ * row follows the map's aspect ratio, so it is not a constant). Throws when the
+ * source has no merge at B17 — either it is not one of my copies, or the
+ * creator moved the block; nothing is ported on an unknown layout.
+ */
+export function dailyModeImageBlock(sourceMeta: SpreadsheetInfo): Block {
+  const anchor = a1(
+    DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
+    DAILY_MODE_IMAGE_COLUMN,
+  )
+  const merge = dailyModeMergeAt(
+    sourceMeta,
+    'source',
+    DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
+    DAILY_MODE_IMAGE_COLUMN,
+  )
+  if (!merge) {
+    throw new Error(
+      `Daily Mode: no merged cell starts at ${anchor} in the source, so the map image block cannot be located; layout changed, nothing ported`,
+    )
+  }
+  return {
+    firstRow: DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
+    firstColumn: DAILY_MODE_IMAGE_COLUMN,
+    lastRow: merge.endRowIndex ?? DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
+    lastColumn: merge.endColumnIndex ?? DAILY_MODE_IMAGE_COLUMN,
+  }
+}
+
+/**
+ * Structural check on the destination: true = our custom row 15 is already
+ * there (the map-image merge starts at B17), false = insert it (it starts at
+ * B16, a fresh copy). Throws when it starts at neither.
+ */
+export function dailyModeHasCustomRow(dest: DestInfo): boolean {
+  const startsAt = (row: number): boolean =>
+    dailyModeMergeAt(dest.meta, 'destination', row, DAILY_MODE_IMAGE_COLUMN) !==
+    null
+  if (startsAt(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW)) return true
+  if (startsAt(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW)) return false
+  throw new Error(
+    `Daily Mode: the map image merge starts at neither ${a1(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} nor ${a1(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} in the destination; layout changed, Daily Mode not touched`,
+  )
+}
+
+/** 'B16:M131' — a block as A1, for op labels. */
+function blockLabel(block: Block): string {
+  return `${a1(block.firstRow, block.firstColumn)}:${a1(block.lastRow, block.lastColumn)}`
+}
+
+/**
+ * Daily Mode: insert custom column L and custom row 15 when missing; formats
+ * for the map-image block and the L12:M15 inputs; height of row 15 and widths
+ * of L and M; make the merges of B12:M<image bottom> match the source's;
+ * the image formula/value top-aligned; L12:M15 formulas/values.
  */
 export function planDailyMode(
   source: SourceInfo,
@@ -785,10 +876,15 @@ export function planDailyMode(
     'Daily Mode not found in the destination',
   )
   const sheetId = destSheetMeta.properties.sheetId
+  const imageBlock = dailyModeImageBlock(source.meta)
   const hasCustomColumn = dailyModeHasCustomColumn(source, dest)
+  const hasCustomRow = dailyModeHasCustomRow(dest)
   const ops: MigrationOp[] = []
   const customColumnIndex = DAILY_MODE_CUSTOM_COLUMN - 1 // 0-based
+  const customRowIndex = DAILY_MODE_CUSTOM_ROW - 1 // 0-based
 
+  // Both inserts go first: everything after them is in post-insert (= source)
+  // coordinates, and the batch applies its requests in order.
   if (!hasCustomColumn) {
     ops.push({
       label: 'Daily Mode: insert custom column L',
@@ -809,6 +905,29 @@ export function planDailyMode(
     })
   } else {
     notes.push('Daily Mode: custom column L already present (landmark at N2)')
+  }
+  if (!hasCustomRow) {
+    ops.push({
+      label: `Daily Mode: insert custom row ${DAILY_MODE_CUSTOM_ROW}`,
+      note: `map image merge found at ${a1(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} (fresh copy)`,
+      requests: [
+        {
+          insertDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: customRowIndex,
+              endIndex: customRowIndex + 1,
+            },
+            inheritFromBefore: false,
+          },
+        },
+      ],
+    })
+  } else {
+    notes.push(
+      `Daily Mode: custom row ${DAILY_MODE_CUSTOM_ROW} already present (map image merge at ${a1(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)})`,
+    )
   }
 
   const formatBlockOp = (block: Block, label: string): MigrationOp => {
@@ -848,29 +967,33 @@ export function planDailyMode(
     }
   }
   ops.push(
-    formatBlockOp(DAILY_MODE_IMAGE_BLOCK, 'Daily Mode: formats of B16:M131'),
+    formatBlockOp(
+      imageBlock,
+      `Daily Mode: formats of ${blockLabel(imageBlock)}`,
+    ),
   )
   ops.push(
-    formatBlockOp(DAILY_MODE_INPUTS_BLOCK, 'Daily Mode: formats of L12:M14'),
+    formatBlockOp(
+      DAILY_MODE_INPUTS_BLOCK,
+      `Daily Mode: formats of ${blockLabel(DAILY_MODE_INPUTS_BLOCK)}`,
+    ),
   )
 
-  // Column widths L, M from the source (its B16:M131 block carries columnMetadata for B..M).
+  // Column widths L, M from the source (its image block carries columnMetadata for B..M).
   const sourceImageBlockGrid = gridAt(
     sourceSheet,
-    DAILY_MODE_IMAGE_BLOCK.firstRow - 1,
-    DAILY_MODE_IMAGE_BLOCK.firstColumn - 1,
+    imageBlock.firstRow - 1,
+    imageBlock.firstColumn - 1,
   )
-  const widthRequests: Request[] = []
+  const dimensionRequests: Request[] = []
   for (const column of [
     DAILY_MODE_CUSTOM_COLUMN,
     DAILY_MODE_CUSTOM_COLUMN + 1,
   ]) {
     const columnMeta =
-      sourceImageBlockGrid?.columnMetadata?.[
-        column - DAILY_MODE_IMAGE_BLOCK.firstColumn
-      ]
+      sourceImageBlockGrid?.columnMetadata?.[column - imageBlock.firstColumn]
     if (!columnMeta?.pixelSize) continue
-    widthRequests.push({
+    dimensionRequests.push({
       updateDimensionProperties: {
         range: {
           sheetId,
@@ -883,47 +1006,106 @@ export function planDailyMode(
       },
     })
   }
-  if (widthRequests.length)
+  // Height of the row we insert: a fresh insert would otherwise inherit a
+  // neighbour's. The inputs block spans it, so its rowMetadata carries it.
+  const sourceInputsGrid = gridAt(
+    sourceSheet,
+    DAILY_MODE_INPUTS_BLOCK.firstRow - 1,
+    DAILY_MODE_INPUTS_BLOCK.firstColumn - 1,
+  )
+  const customRowMeta =
+    sourceInputsGrid?.rowMetadata?.[
+      DAILY_MODE_CUSTOM_ROW - DAILY_MODE_INPUTS_BLOCK.firstRow
+    ]
+  if (customRowMeta?.pixelSize) {
+    dimensionRequests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: 'ROWS',
+          startIndex: customRowIndex,
+          endIndex: customRowIndex + 1,
+        },
+        properties: { pixelSize: customRowMeta.pixelSize },
+        fields: 'pixelSize',
+      },
+    })
+  }
+  if (dimensionRequests.length)
     ops.push({
-      label: 'Daily Mode: widths of columns L and M',
-      requests: widthRequests,
+      label: `Daily Mode: widths of columns L and M, height of row ${DAILY_MODE_CUSTOM_ROW}`,
+      requests: dimensionRequests,
     })
 
-  // Merge B16:M131 — first unmerge anything overlapping it (in post-insert coordinates).
-  const targetMerge: GridRange = {
-    sheetId,
-    startRowIndex: DAILY_MODE_IMAGE_BLOCK.firstRow - 1,
-    endRowIndex: DAILY_MODE_IMAGE_BLOCK.lastRow,
-    startColumnIndex: DAILY_MODE_IMAGE_BLOCK.firstColumn - 1,
-    endColumnIndex: DAILY_MODE_IMAGE_BLOCK.lastColumn,
+  // Merges of B12:M<image bottom> ← the source's. The map image block, the
+  // header blocks whose bottom row moved with the custom row, and the creator's
+  // wiki-link row all live here, so rather than reconstructing each one the
+  // whole region is made to match: unmerge whatever of the destination's
+  // overlaps a source merge (in post-insert coordinates), then merge the
+  // source's. Re-running plans the same unmerge/merge pair, so it is idempotent.
+  // Widened to the image block if that ever reaches past M, so it is always inside.
+  const mergedRegion: Block = {
+    firstRow: DAILY_MODE_MERGE_FIRST_ROW,
+    firstColumn: DAILY_MODE_MERGE_FIRST_COLUMN,
+    lastRow: imageBlock.lastRow,
+    lastColumn: Math.max(DAILY_MODE_MERGE_LAST_COLUMN, imageBlock.lastColumn),
   }
-  const existingMerges = (destSheetMeta.merges ?? []).map((merge) =>
-    hasCustomColumn ? merge : shiftMergeForInsert(merge, customColumnIndex),
+  const sourceSheetMeta = requireFound(
+    sheetByTitle(source.meta, DAILY_MODE_SHEET),
+    'Daily Mode not found in the source',
   )
+  const targetMerges = (sourceSheetMeta.merges ?? [])
+    .filter((merge) =>
+      rangeContains(
+        {
+          sheetId,
+          startRowIndex: mergedRegion.firstRow - 1,
+          endRowIndex: mergedRegion.lastRow,
+          startColumnIndex: mergedRegion.firstColumn - 1,
+          endColumnIndex: mergedRegion.lastColumn,
+        },
+        merge,
+      ),
+    )
+    .map((merge) => ({ ...merge, sheetId }))
+    .sort(
+      (mergeA, mergeB) =>
+        (mergeA.startRowIndex ?? 0) - (mergeB.startRowIndex ?? 0) ||
+        (mergeA.startColumnIndex ?? 0) - (mergeB.startColumnIndex ?? 0),
+    )
+  const existingMerges = (destSheetMeta.merges ?? [])
+    .map((merge) =>
+      hasCustomColumn
+        ? merge
+        : shiftMergeForColumnInsert(merge, customColumnIndex),
+    )
+    .map((merge) =>
+      hasCustomRow ? merge : shiftMergeForRowInsert(merge, customRowIndex),
+    )
   const overlappingMerges = existingMerges.filter((merge) =>
-    rangesOverlap(merge, targetMerge),
+    targetMerges.some((target) => rangesOverlap(merge, target)),
   )
   const mergeRequests: Request[] = overlappingMerges.map((merge) => ({
     unmergeCells: { range: { ...merge, sheetId } },
   }))
-  mergeRequests.push({
-    mergeCells: { range: targetMerge, mergeType: 'MERGE_ALL' },
-  })
+  for (const merge of targetMerges)
+    mergeRequests.push({ mergeCells: { range: merge, mergeType: 'MERGE_ALL' } })
   ops.push({
-    label: 'Daily Mode: merge B16:M131',
-    ...(overlappingMerges.length
-      ? {
-          note: `unmerging ${overlappingMerges.length} existing merge(s) first`,
-        }
-      : {}),
+    label: `Daily Mode: ${targetMerges.length} merge(s) in ${blockLabel(mergedRegion)}`,
+    note:
+      `map image ${blockLabel(imageBlock)}` +
+      (overlappingMerges.length
+        ? `; unmerging ${overlappingMerges.length} existing merge(s) first`
+        : ''),
     requests: mergeRequests,
   })
 
-  // B16 value/formula, top-aligned.
-  const sourceB16Cell = cellAt(sourceImageBlockGrid, 0, 0)
+  // The image cell's value/formula, top-aligned.
+  const sourceImageCell = cellAt(sourceImageBlockGrid, 0, 0)
+  const imageAnchor = a1(imageBlock.firstRow, imageBlock.firstColumn)
   ops.push({
-    label: 'Daily Mode: B16 formula',
-    note: sourceB16Cell.userEnteredValue?.formulaValue
+    label: `Daily Mode: ${imageAnchor} formula`,
+    note: sourceImageCell.userEnteredValue?.formulaValue
       ? 'formula copied from the source'
       : 'value copied from the source',
     requests: [
@@ -931,16 +1113,16 @@ export function planDailyMode(
         updateCells: {
           range: {
             sheetId,
-            startRowIndex: DAILY_MODE_IMAGE_BLOCK.firstRow - 1,
-            endRowIndex: DAILY_MODE_IMAGE_BLOCK.firstRow,
-            startColumnIndex: DAILY_MODE_IMAGE_BLOCK.firstColumn - 1,
-            endColumnIndex: DAILY_MODE_IMAGE_BLOCK.firstColumn,
+            startRowIndex: imageBlock.firstRow - 1,
+            endRowIndex: imageBlock.firstRow,
+            startColumnIndex: imageBlock.firstColumn - 1,
+            endColumnIndex: imageBlock.firstColumn,
           },
           rows: [
             {
               values: [
                 {
-                  userEnteredValue: sourceB16Cell.userEnteredValue ?? {},
+                  userEnteredValue: sourceImageCell.userEnteredValue ?? {},
                   userEnteredFormat: { verticalAlignment: 'TOP' },
                 },
               ],
@@ -952,18 +1134,13 @@ export function planDailyMode(
     ],
   })
 
-  // L12:M14 formulas/values.
-  const sourceInputsGrid = gridAt(
-    sourceSheet,
-    DAILY_MODE_INPUTS_BLOCK.firstRow - 1,
-    DAILY_MODE_INPUTS_BLOCK.firstColumn - 1,
-  )
+  // L12:M15 formulas/values.
   const inputRowCount =
     DAILY_MODE_INPUTS_BLOCK.lastRow - DAILY_MODE_INPUTS_BLOCK.firstRow + 1
   const inputColumnCount =
     DAILY_MODE_INPUTS_BLOCK.lastColumn - DAILY_MODE_INPUTS_BLOCK.firstColumn + 1
   ops.push({
-    label: 'Daily Mode: L12:M14 inputs',
+    label: `Daily Mode: ${blockLabel(DAILY_MODE_INPUTS_BLOCK)} inputs`,
     requests: [
       {
         updateCells: {
@@ -996,7 +1173,7 @@ export function planDailyMode(
 }
 
 /** How a merge (pre-insert coordinates) looks after a column is inserted at 0-based `insertedColumnIndex`. */
-export function shiftMergeForInsert(
+export function shiftMergeForColumnInsert(
   merge: GridRange,
   insertedColumnIndex: number,
 ): GridRange {
@@ -1013,12 +1190,40 @@ export function shiftMergeForInsert(
   return merge
 }
 
+/** How a merge (pre-insert coordinates) looks after a row is inserted at 0-based `insertedRowIndex`. */
+export function shiftMergeForRowInsert(
+  merge: GridRange,
+  insertedRowIndex: number,
+): GridRange {
+  const startRowIndex = merge.startRowIndex ?? 0
+  const endRowIndex = merge.endRowIndex ?? 0
+  if (startRowIndex >= insertedRowIndex)
+    return {
+      ...merge,
+      startRowIndex: startRowIndex + 1,
+      endRowIndex: endRowIndex + 1,
+    }
+  if (endRowIndex > insertedRowIndex)
+    return { ...merge, endRowIndex: endRowIndex + 1 } // insertion inside the merge grows it
+  return merge
+}
+
 export function rangesOverlap(rangeA: GridRange, rangeB: GridRange): boolean {
   return (
     (rangeA.startRowIndex ?? 0) < (rangeB.endRowIndex ?? Infinity) &&
     (rangeB.startRowIndex ?? 0) < (rangeA.endRowIndex ?? Infinity) &&
     (rangeA.startColumnIndex ?? 0) < (rangeB.endColumnIndex ?? Infinity) &&
     (rangeB.startColumnIndex ?? 0) < (rangeA.endColumnIndex ?? Infinity)
+  )
+}
+
+/** True when `inner` lies entirely within `outer`. */
+export function rangeContains(outer: GridRange, inner: GridRange): boolean {
+  return (
+    (inner.startRowIndex ?? 0) >= (outer.startRowIndex ?? 0) &&
+    (inner.endRowIndex ?? Infinity) <= (outer.endRowIndex ?? Infinity) &&
+    (inner.startColumnIndex ?? 0) >= (outer.startColumnIndex ?? 0) &&
+    (inner.endColumnIndex ?? Infinity) <= (outer.endColumnIndex ?? Infinity)
   )
 }
 

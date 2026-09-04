@@ -175,10 +175,16 @@ brings it along.)
 - **"A creator baseline for X is already recorded"** — you already ran the update for
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
-- **Daily Mode column L** — whether to insert it is decided by a landmark label in the
-  creator's layout (`DAILY_MODE_LANDMARK_*` in `src/lib/migrator.ts`). If the creator moves or
-  renames it, the Daily Mode steps fail with an `ERR` in the log (fix the constants,
-  redo from a fresh copy) — eyeball that sheet after migrating.
+- **Daily Mode column L and row 15** — the two structural bits the port inserts. Column L
+  is decided by a landmark label in the creator's layout (`DAILY_MODE_LANDMARK_*` in
+  `src/lib/migrator.ts`), row 15 by where the map-image merge starts
+  (`DAILY_MODE_IMAGE_ROW_*`). If the creator moves or renames either, planning stops with
+  the reason and nothing is written (fix the constants, run Finish Setup again) — eyeball
+  that sheet after migrating.
+- **Daily Mode merges** — everything merged in `B12:M<image bottom>` is copied from your
+  previous version, so the header blocks (B12/F12/I12), the creator's wiki-link row and
+  the map image all come across as you had them. Change a merge there in your current
+  sheet and the next migration reproduces it; no constant to update.
 - **Quick Checklist columns** — the creator's layout is kept; the port finds the data
   block by row 10 and shifts your header formulas to match. The SaveTracker finds its
   columns the same way (plus header labels — see `TRACKER_SPECS` in

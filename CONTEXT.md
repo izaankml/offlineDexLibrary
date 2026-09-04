@@ -73,7 +73,8 @@ Since 2026-08 a tracker is a **spec of header labels, not column numbers**
   dataBlockAnchor: 'Fought Flag', displayAnchor: { kind: 'label', text: 'Fought Flag' },
   trackFrom: 'Fought Flag', trackTo: null,            // through the last labelled column
   exclude: ['Fought Count', 'Candy Count', 'Friendship'],   // auto-calculated, never painted
-  increment: ['Caught Count', 'Hatched Count', 'Classic Wins'], // purple: counters
+  increment: ['Caught Count', 'Hatched Count', 'Total', 'Classic Wins'], // purple: counters
+                                            // 'Total' = Egg Move Attributes total, display AG
   crossCheck: 'Classic Wins', sortDisplayColumn: 1, ... }
 ```
 
@@ -137,10 +138,13 @@ order the display is painted against.
 Ports customizations from an old version of the spreadsheet to a new one. Since 2026-08 it
 is a **plan → preview → apply** pipeline on the Sheets advanced service (Sheets API v4):
 
-1. **Read** — 2 GETs on the source (sheet list; formats/formulas of the customized ranges:
-   `Quick Checklist!1:10`, `Daily Mode!B16:M131`, `L12:M14`, the `N2` landmark) and 2 on
-   the destination (sheet list + banding + CF rules + merges; the Quick Checklist header
-   and the `M2:N2` landmark cells). No `openById`, no temp sheets, no `copyTo`.
+1. **Read** — 2 GETs on the source (sheet list + merges; formats/formulas of the
+   customized ranges: `Quick Checklist!1:10`, the Daily Mode map-image block,
+   `Daily Mode!L12:M15`, the `N2` landmark) and 2 on the destination (sheet list + banding
+   + CF rules + merges; the Quick Checklist header and the `M2:N2` landmark cells). No
+   `openById`, no temp sheets, no `copyTo`. The source's merge list comes first because
+   the map-image block is however tall the source's merge is (it follows the map's aspect
+   ratio), so it decides which range the second GET asks for.
 2. **Plan** (`buildPlan`, pure, tested with hand-built API responses) — a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
    (Daily Mode landmark at neither M2 nor N2; Quick Checklist row 10 blank; destination
@@ -159,10 +163,18 @@ is a **plan → preview → apply** pipeline on the Sheets advanced service (She
   A1 is a formula.
 - *Banding over the image column*: `updateBanding` stretches the C-start banding to B (merging
   an A-only banding), `repeatCell` clears B's fills; falls back to widening row-parity CF.
-- *Daily Mode*: `insertDimension` for column L when the landmark says it's missing;
-  `updateCells` formats for B16:M131 and L12:M14; widths of L/M; `unmergeCells` for every
-  existing merge overlapping B16:M131 (in post-insert coordinates) then `mergeCells`;
-  B16 formula/value top-aligned; L12:M14 inputs.
+- *Daily Mode*: two structural customizations, each inserted when the destination lacks
+  it — column **L** (the map-size inputs), decided by the "Missing Gym Leader Voucher…"
+  landmark at N2 (present) vs M2 (fresh); and blank row **15**, so the "Rows" input has a
+  line of its own instead of sharing the creator's wiki-link row, decided by where the
+  map-image merge starts (B17 present, B16 fresh). Both inserts go first in the batch, so
+  everything after them is in source coordinates. Then `updateCells` formats for the image
+  block and L12:M15; widths of L/M and the height of row 15; the merges of
+  `B12:M<image bottom>` are made to match the source's (`unmergeCells` for every existing
+  merge overlapping one of them, in post-insert coordinates, then `mergeCells` for each) —
+  that is what carries the B12/F12/I12 header blocks now running to row 15, the creator's
+  wiki row, and the image block itself; the image cell's formula/value top-aligned;
+  L12:M15 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
 
