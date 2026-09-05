@@ -146,8 +146,11 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
 
 1. **Read**: 2 GETs on the source (sheet list + merges; formats/formulas of the
    customized ranges: `Quick Checklist!1:10`, the Daily Mode map-image block,
-   `Daily Mode!L12:M15`, the `N2` landmark) and 2 on the destination (sheet list + banding
-   + CF rules + merges; the Quick Checklist header and the `M2:N2` landmark cells). No
+   `Daily Mode!L12:M15`, the `N2` landmark, `Daily Mode Unlocks!AG3`) and 2 on the
+   destination (sheet list + banding + CF rules + merges; the Quick Checklist header, the
+   `M2:N2` landmark cells and `Daily Mode Unlocks!A1:AG3`). The Daily Mode Unlocks ranges
+   are asked for only when the sheet list has that sheet, since an unknown range fails the
+   whole GET. No
    `openById`, no temp sheets, no `copyTo`. The source's merge list comes first because
    the map-image block is however tall the source's merge is (it follows the map's aspect
    ratio), so it decides which range the second GET asks for.
@@ -183,6 +186,15 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   L12:M15 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
+- *Unlock map highlight*: one "text contains `[`" rule → light green 2 over the Daily Unlock
+  Map's biome grid (E2 to the grid's end), added at index 0 and skipped when already there.
+  The map strings carry a bracketed category marker (`[Shiny]`, `[Caught]`, …) for every
+  unlock type except nature, set by the AG3 formula on Daily Mode Unlocks.
+- *Daily Mode Unlocks formula*: copy the source's `AG3` ArrayFormula (the map strings) into
+  the destination, skipped when they already match. Planning throws when one of the header
+  labels the formula reads (`DAILY_UNLOCKS_LANDMARKS`: D1:L1 filters, M2/P2/R2/S2/T2) is not
+  where expected or the destination's AG3 holds no formula, since the column references
+  would then point at the wrong data.
 
 Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
 notes what was already done).

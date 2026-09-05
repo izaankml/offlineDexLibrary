@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import './fake-gas.ts'
 import {
+  DAILY_UNLOCKS_LANDMARKS,
   type DestInfo,
   type SourceInfo,
   applyPlan,
@@ -130,6 +131,23 @@ function migratedDestQuickGrid(): GridData {
 
 const LANDMARK = 'Missing Gym Leader Voucher…'
 
+/** The creator's AG3 on Daily Mode Unlocks, and ours with the category marker. */
+const CREATOR_AG_FORMULA =
+  '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P))'
+const USER_AG_FORMULA =
+  '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P & IF(D3:D<>"", " [Caught]", "")))'
+
+/** Daily Mode Unlocks A1:AG3: the header landmarks in rows 1-2, the map-string formula at AG3. */
+function dailyUnlocksHeaderGrid(agFormula: string): GridData {
+  const rows: CellData[][] = Array.from({ length: 3 }, () =>
+    Array.from({ length: 33 }, () => empty()),
+  )
+  for (const landmark of DAILY_UNLOCKS_LANDMARKS)
+    rows[landmark.row - 1]![landmark.column - 1] = str(landmark.label)
+  rows[2]![32] = formula(agFormula)
+  return grid(0, 0, rows)
+}
+
 const range = (
   sheetId: number,
   startRowIndex: number,
@@ -182,6 +200,7 @@ function source(): SourceInfo {
         sheet('newJSON', 3, { hidden: true }),
         sheet('IMPORT:data.SPECIES', 4, { hidden: true }),
         sheet('_snapshot_QuickChecklist', 5, { hidden: true }),
+        sheet('Daily Mode Unlocks', 6, { columnCount: 40 }),
       ],
     },
     grid: {
@@ -202,6 +221,10 @@ function source(): SourceInfo {
             }),
             grid(1, 13, [[str(LANDMARK)]]),
           ],
+        }),
+        sheet('Daily Mode Unlocks', 6, {
+          columnCount: 40,
+          data: [grid(2, 32, [[formula(USER_AG_FORMULA)]])],
         }),
       ],
     },
@@ -305,6 +328,8 @@ function freshDest(): DestInfo {
             },
           ],
         }),
+        sheet('Daily Unlock Map', 17, { columnCount: 10 }),
+        sheet('Daily Mode Unlocks', 18, { columnCount: 40 }),
       ],
     },
     grid: {
@@ -315,6 +340,10 @@ function freshDest(): DestInfo {
         }),
         sheet('Daily Mode', 12, {
           data: [grid(1, 12, [[str(LANDMARK), empty()]])],
+        }),
+        sheet('Daily Mode Unlocks', 18, {
+          columnCount: 40,
+          data: [dailyUnlocksHeaderGrid(CREATOR_AG_FORMULA)],
         }),
       ],
     },
@@ -344,6 +373,27 @@ function migratedDest(): DestInfo {
     dest.meta.sheets![4]!.conditionalFormats![0]!,
   ]
   dest.meta.sheets![5]!.conditionalFormats = []
+  dest.meta.sheets![6]!.conditionalFormats = [
+    {
+      ranges: [
+        {
+          sheetId: 17,
+          startRowIndex: 1,
+          endRowIndex: 1000,
+          startColumnIndex: 4,
+          endColumnIndex: 10,
+        },
+      ],
+      booleanRule: {
+        condition: {
+          type: 'TEXT_CONTAINS',
+          values: [{ userEnteredValue: '[' }],
+        },
+        format: { backgroundColor: { red: 0.72, green: 0.88, blue: 0.8 } },
+      },
+    },
+  ]
+  dest.grid.sheets![2]!.data = [dailyUnlocksHeaderGrid(USER_AG_FORMULA)]
   return dest
 }
 
@@ -373,8 +423,77 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     'Hide 1 sheet(s)',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
+    'Daily Unlock Map: highlight cells with a bracketed unlock',
+    'Daily Mode Unlocks: AG3 formula',
   ])
   assert.deepEqual(notes, [])
+
+  // Daily Mode Unlocks: our AG3 formula replaces the creator's, nothing else on that sheet.
+  const unlocksWrites = requestsOfKind(ops, 'updateCells')
+    .map(
+      (request) =>
+        request['updateCells'] as {
+          range: GridRange
+          rows: { values: CellData[] }[]
+          fields: string
+        },
+    )
+    .filter((write) => write.range.sheetId === 18)
+  assert.equal(unlocksWrites.length, 1)
+  assert.deepEqual(unlocksWrites[0]!.range, {
+    sheetId: 18,
+    startRowIndex: 2,
+    endRowIndex: 3,
+    startColumnIndex: 32,
+    endColumnIndex: 33,
+  })
+  assert.equal(unlocksWrites[0]!.fields, 'userEnteredValue')
+  assert.equal(
+    unlocksWrites[0]!.rows[0]!.values[0]!.userEnteredValue!.formulaValue,
+    USER_AG_FORMULA,
+  )
+
+  // Unlock map: one "text contains [" rule at index 0 over E2 to the grid's end.
+  const unlockMapRules = requestsOfKind(ops, 'addConditionalFormatRule')
+    .map(
+      (request) =>
+        request['addConditionalFormatRule'] as {
+          index: number
+          rule: {
+            ranges: GridRange[]
+            booleanRule: {
+              condition: {
+                type: string
+                values: { userEnteredValue: string }[]
+              }
+              format: { backgroundColor: Record<string, number> }
+            }
+          }
+        },
+    )
+    .filter(({ rule }) => rule.ranges[0]!.sheetId === 17)
+  assert.equal(unlockMapRules.length, 1)
+  const unlockMapRule = unlockMapRules[0]!
+  assert.equal(unlockMapRule.index, 0)
+  assert.deepEqual(unlockMapRule.rule.ranges, [
+    {
+      sheetId: 17,
+      startRowIndex: 1,
+      endRowIndex: 1000,
+      startColumnIndex: 4,
+      endColumnIndex: 10,
+    },
+  ])
+  assert.equal(unlockMapRule.rule.booleanRule.condition.type, 'TEXT_CONTAINS')
+  assert.equal(
+    unlockMapRule.rule.booleanRule.condition.values[0]!.userEnteredValue,
+    '[',
+  )
+  assert.ok(
+    unlockMapRule.rule.booleanRule.format.backgroundColor['green']! >
+      unlockMapRule.rule.booleanRule.format.backgroundColor['red']!,
+    'tint is green',
+  )
 
   // Quick Checklist: ported up to the block end (E..O = 15) + offset 1 = 16 needed; dest has 16 → no append.
   assert.equal(requestsOfKind(ops, 'appendDimension').length, 0)
@@ -592,17 +711,22 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     13,
   )
   // IV: Starter rule index 1 (2 ranges) → delete 1 + add 2; Full rule index 0 (1 range) → delete 1 + add 1.
+  // The unlock map's own added rule (sheet 17) is checked above.
   assert.equal(requestsOfKind(ops, 'deleteConditionalFormatRule').length, 2)
-  const addedRules = requestsOfKind(ops, 'addConditionalFormatRule').map(
-    (request) =>
-      request['addConditionalFormatRule'] as {
-        index: number
-        rule: {
-          ranges: Record<string, number>[]
-          booleanRule: { condition: { values: { userEnteredValue: string }[] } }
-        }
-      },
-  )
+  const addedRules = requestsOfKind(ops, 'addConditionalFormatRule')
+    .map(
+      (request) =>
+        request['addConditionalFormatRule'] as {
+          index: number
+          rule: {
+            ranges: Record<string, number>[]
+            booleanRule: {
+              condition: { values: { userEnteredValue: string }[] }
+            }
+          }
+        },
+    )
+    .filter((added) => added.rule.ranges[0]!['sheetId'] !== 17)
   assert.equal(addedRules.length, 3)
   assert.deepEqual(
     addedRules.map((added) => added.index),
@@ -683,6 +807,24 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
   assert.ok(
     notes.some((note) => note.startsWith('Hidden sheets: nothing to hide')),
   )
+  assert.equal(requestsOfKind(ops, 'addConditionalFormatRule').length, 0)
+  assert.ok(
+    notes.some((note) =>
+      note.startsWith('Unlock map highlight: rule already present'),
+    ),
+  )
+  assert.ok(
+    notes.some((note) =>
+      note.startsWith('Daily Mode Unlocks: AG3 formula already matching'),
+    ),
+  )
+  assert.equal(
+    requestsOfKind(ops, 'updateCells').filter(
+      (request) =>
+        (request['updateCells'] as { range: GridRange }).range.sheetId === 18,
+    ).length,
+    0,
+  )
 })
 
 test('a 6.03 → 6.03 port (same layout, block at F in both) needs no formula shift', () => {
@@ -754,6 +896,57 @@ test('planning refuses unknown layouts before anything is written', () => {
   assert.throws(
     () => buildPlan(srcRight, freshDest(), '6.03'),
     /left of the source's/,
+  )
+
+  // Daily Mode Unlocks: a moved header, or no creator formula at AG3, stops the port.
+  const waveMoved = freshDest()
+  waveMoved.grid.sheets![2]!.data![0]!.rowData![1]!.values![12] = str('Floor')
+  assert.throws(
+    () => buildPlan(source(), waveMoved, '6.03'),
+    /Daily Mode Unlocks: expected "Wave" at M2 in the destination, found "Floor"/,
+  )
+  const noCreatorFormula = freshDest()
+  noCreatorFormula.grid.sheets![2]!.data![0]!.rowData![2]!.values![32] =
+    str('w13 Dartrix')
+  assert.throws(
+    () => buildPlan(source(), noCreatorFormula, '6.03'),
+    /AG3 holds no formula in the destination/,
+  )
+})
+
+test('Daily Mode Unlocks formula: skipped with a note when either side lacks the sheet or the formula', () => {
+  const sourceWithoutSheet = source()
+  sourceWithoutSheet.grid.sheets = sourceWithoutSheet.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode Unlocks',
+  )
+  let { ops, notes } = buildPlan(sourceWithoutSheet, freshDest(), '6.03')
+  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
+  assert.ok(
+    notes.some((note) =>
+      note.startsWith('Daily Mode Unlocks: not found in the source'),
+    ),
+  )
+
+  const sourceWithoutFormula = source()
+  sourceWithoutFormula.grid.sheets![2]!.data = [grid(2, 32, [[str('')]])]
+  ;({ ops, notes } = buildPlan(sourceWithoutFormula, freshDest(), '6.03'))
+  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
+  assert.ok(
+    notes.some((note) =>
+      note.startsWith('Daily Mode Unlocks: AG3 holds no formula in the source'),
+    ),
+  )
+
+  const destWithoutSheet = freshDest()
+  destWithoutSheet.grid.sheets = destWithoutSheet.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode Unlocks',
+  )
+  ;({ ops, notes } = buildPlan(source(), destWithoutSheet, '6.03'))
+  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
+  assert.ok(
+    notes.some((note) =>
+      note.startsWith('Daily Mode Unlocks: not found in the destination'),
+    ),
   )
 })
 

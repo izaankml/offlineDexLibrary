@@ -185,6 +185,11 @@ brings it along.)
   previous version, so the header blocks (B12/F12/I12), the creator's wiki-link row and
   the map image all come across as you had them. Change a merge there in your current
   sheet and the next migration reproduces it; no constant to update.
+- **Daily Mode Unlocks AG3.** The map-string formula (with the bracketed unlock markers) is
+  copied from your previous version as is, so edit it in your current sheet and the next
+  migration carries the edit. The headers it reads (D1:L1, M2, P2, R2, S2, T2; see
+  `DAILY_UNLOCKS_LANDMARKS` in `src/lib/migrator.ts`) are checked first; if the creator
+  moves one, planning stops with the reason and nothing is written.
 - **Quick Checklist columns.** The creator's layout is kept; the port finds the data
   block by row 10 and shifts your header formulas to match. The SaveTracker finds its
   columns the same way, plus header labels (see `TRACKER_SPECS` in

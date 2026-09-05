@@ -32,6 +32,7 @@ import {
   hexToColor,
   liveSheets,
   sheetByTitle,
+  sheetRange,
 } from './sheetsApi.ts'
 
 // Quick Checklist: columns A-D (#, image, Dex#, name) are fixed; where the
@@ -103,6 +104,43 @@ export const DEX_IV_HIGHLIGHT_SHEETS = [
 ]
 export const DEX_IV_PERFECT_VALUE = '31'
 export const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
+
+// Daily Unlock Map: the per-unlock strings carry a bracketed category marker
+// ("[Shiny]", "[Caught]", …) for everything but nature unlocks; cells holding
+// one are tinted so they stand out on the map. The biome grid starts at E2,
+// the same cell CLEAR_ON_UPLOAD wipes from.
+export const UNLOCK_MAP_SHEET = 'Daily Unlock Map'
+export const UNLOCK_MAP_GRID_FIRST_ROW = 2
+export const UNLOCK_MAP_GRID_FIRST_COLUMN = 5 // E
+export const UNLOCK_MAP_MARKER_TEXT = '['
+export const UNLOCK_MAP_MARKER_COLOR = '#b7e1cd' // light green 2
+
+// Daily Mode Unlocks: AG3 holds the ArrayFormula that builds each unlock's map
+// string (wave, Pokémon, lures, the bracketed category marker). It is a hand
+// edit, so the source's formula is copied as is. The headers it reads are
+// checked first, so a reshaped creator layout stops the plan.
+export const DAILY_UNLOCKS_SHEET = 'Daily Mode Unlocks'
+export const DAILY_UNLOCKS_FORMULA_ROW = 3
+export const DAILY_UNLOCKS_FORMULA_COLUMN = 33 // AG
+export const DAILY_UNLOCKS_LANDMARKS: {
+  row: number
+  column: number
+  label: string
+}[] = [
+  { row: 1, column: 4, label: 'New Caught' }, // D1
+  { row: 1, column: 5, label: 'New Fought' }, // E1
+  { row: 1, column: 6, label: 'New Shiny' }, // F1
+  { row: 1, column: 7, label: 'New Ability' }, // G1
+  { row: 1, column: 8, label: 'New Hidden Ability' }, // H1
+  { row: 1, column: 10, label: 'New Form' }, // J1
+  { row: 1, column: 11, label: 'New Gender' }, // K1
+  { row: 1, column: 12, label: 'New IVs' }, // L1
+  { row: 2, column: 13, label: 'Wave' }, // M2
+  { row: 2, column: 16, label: 'Pokemon' }, // P2
+  { row: 2, column: 18, label: 'Lures' }, // R2
+  { row: 2, column: 19, label: 'Charms' }, // S2
+  { row: 2, column: 20, label: 'Shiny' }, // T2
+]
 
 /** One human-visible migration step and the batchUpdate requests that implement it. */
 export type MigrationOp = { label: string; requests: Request[]; note?: string }
@@ -237,11 +275,21 @@ export function readSource(
       blockRange(DAILY_MODE_SHEET, dailyModeImageBlock(meta)),
       blockRange(DAILY_MODE_SHEET, DAILY_MODE_INPUTS_BLOCK),
       `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
+      ...dailyUnlocksRange(
+        meta,
+        `${a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN)}`,
+      ),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
   })
   return { meta, grid }
+}
+
+/** The Daily Mode Unlocks range to read, or nothing when the sheet is absent (an unknown range fails the whole GET). */
+function dailyUnlocksRange(meta: SpreadsheetInfo, a1Range: string): string[] {
+  const sheet = sheetByTitle(meta, DAILY_UNLOCKS_SHEET)
+  return sheet ? [sheetRange(sheet.properties.title, a1Range)] : []
 }
 
 export function readDestination(
@@ -256,6 +304,11 @@ export function readDestination(
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
       `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)}:${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
+      // The landmark headers and the formula cell, read as one block from A1.
+      ...dailyUnlocksRange(
+        meta,
+        `A1:${a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN)}`,
+      ),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
@@ -279,6 +332,8 @@ export function buildPlan(
   ops.push(...planDailyMode(source, dest, notes))
   ops.push(...planHiddenSheets(source, dest, notes))
   ops.push(...planDexIvHighlight(dest, notes))
+  ops.push(...planUnlockMapHighlight(dest, notes))
+  ops.push(...planDailyUnlocksFormula(source, dest, notes))
   return { ops, notes }
 }
 
@@ -1327,6 +1382,169 @@ export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
     (condition.type === 'TEXT_EQ' || condition.type === 'NUMBER_EQ') &&
     conditionValue === DEX_IV_PERFECT_VALUE
   )
+}
+
+/**
+ * Tint every Daily Unlock Map cell whose text holds a bracketed unlock marker.
+ * One "text contains [" rule over the biome grid, added at index 0 so it wins
+ * over any creator rule on the same cells; skipped when the sheet already has it.
+ */
+export function planUnlockMapHighlight(
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const sheet = sheetByTitle(dest.meta, UNLOCK_MAP_SHEET)
+  if (!sheet) {
+    notes.push(
+      `Unlock map highlight: "${UNLOCK_MAP_SHEET}" not found, skipping`,
+    )
+    return []
+  }
+  if ((sheet.conditionalFormats ?? []).some(isUnlockMarkerRule)) {
+    notes.push('Unlock map highlight: rule already present')
+    return []
+  }
+  const sheetId = sheet.properties.sheetId
+  const gridProperties = sheet.properties.gridProperties ?? {}
+  const range: GridRange = {
+    sheetId,
+    startRowIndex: UNLOCK_MAP_GRID_FIRST_ROW - 1,
+    startColumnIndex: UNLOCK_MAP_GRID_FIRST_COLUMN - 1,
+    ...(gridProperties.rowCount
+      ? { endRowIndex: gridProperties.rowCount }
+      : {}),
+    ...(gridProperties.columnCount
+      ? { endColumnIndex: gridProperties.columnCount }
+      : {}),
+  }
+  return [
+    {
+      label: `${UNLOCK_MAP_SHEET}: highlight cells with a bracketed unlock`,
+      note: `light green from ${a1(UNLOCK_MAP_GRID_FIRST_ROW, UNLOCK_MAP_GRID_FIRST_COLUMN)}`,
+      requests: [
+        {
+          addConditionalFormatRule: {
+            index: 0,
+            rule: {
+              ranges: [range],
+              booleanRule: {
+                condition: {
+                  type: 'TEXT_CONTAINS',
+                  values: [{ userEnteredValue: UNLOCK_MAP_MARKER_TEXT }],
+                },
+                format: {
+                  backgroundColor: hexToColor(UNLOCK_MAP_MARKER_COLOR),
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+  ]
+}
+
+export function isUnlockMarkerRule(rule: ConditionalFormatRule): boolean {
+  const condition = rule.booleanRule?.condition
+  return (
+    condition?.type === 'TEXT_CONTAINS' &&
+    condition.values?.[0]?.userEnteredValue === UNLOCK_MAP_MARKER_TEXT
+  )
+}
+
+/**
+ * Copy the AG3 map-string formula from the source's Daily Mode Unlocks to the
+ * destination's. Whatever the source holds wins, so later hand edits carry
+ * forward too. Throws when a header the formula reads is not where expected.
+ */
+export function planDailyUnlocksFormula(
+  source: SourceInfo,
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const formulaCell = a1(
+    DAILY_UNLOCKS_FORMULA_ROW,
+    DAILY_UNLOCKS_FORMULA_COLUMN,
+  )
+  const sourceSheet = sheetByTitle(source.grid, DAILY_UNLOCKS_SHEET)
+  if (!sourceSheet) {
+    notes.push(
+      `${DAILY_UNLOCKS_SHEET}: not found in the source, ${formulaCell} formula not ported`,
+    )
+    return []
+  }
+  const sourceFormula = cellAt(
+    gridAt(
+      sourceSheet,
+      DAILY_UNLOCKS_FORMULA_ROW - 1,
+      DAILY_UNLOCKS_FORMULA_COLUMN - 1,
+    ),
+    0,
+    0,
+  ).userEnteredValue?.formulaValue
+  if (sourceFormula === undefined) {
+    notes.push(
+      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the source, nothing to port`,
+    )
+    return []
+  }
+  const destSheet = sheetByTitle(dest.grid, DAILY_UNLOCKS_SHEET)
+  if (!destSheet) {
+    notes.push(
+      `${DAILY_UNLOCKS_SHEET}: not found in the destination, ${formulaCell} formula not ported`,
+    )
+    return []
+  }
+  const destGrid = gridAt(destSheet, 0, 0)
+  for (const landmark of DAILY_UNLOCKS_LANDMARKS) {
+    const found = displayText(
+      cellAt(destGrid, landmark.row - 1, landmark.column - 1),
+    ).trim()
+    if (found !== landmark.label)
+      throw new Error(
+        `${DAILY_UNLOCKS_SHEET}: expected "${landmark.label}" at ${a1(landmark.row, landmark.column)} in the destination, found "${found}"; layout changed, ${formulaCell} formula not ported`,
+      )
+  }
+  const destFormula = cellAt(
+    destGrid,
+    DAILY_UNLOCKS_FORMULA_ROW - 1,
+    DAILY_UNLOCKS_FORMULA_COLUMN - 1,
+  ).userEnteredValue?.formulaValue
+  if (destFormula === undefined)
+    throw new Error(
+      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the destination; the map-string column moved, formula not ported`,
+    )
+  if (destFormula === sourceFormula) {
+    notes.push(
+      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} formula already matching`,
+    )
+    return []
+  }
+  return [
+    {
+      label: `${DAILY_UNLOCKS_SHEET}: ${formulaCell} formula`,
+      note: 'copied from the source',
+      requests: [
+        {
+          updateCells: {
+            range: {
+              sheetId: destSheet.properties.sheetId,
+              startRowIndex: DAILY_UNLOCKS_FORMULA_ROW - 1,
+              endRowIndex: DAILY_UNLOCKS_FORMULA_ROW,
+              startColumnIndex: DAILY_UNLOCKS_FORMULA_COLUMN - 1,
+              endColumnIndex: DAILY_UNLOCKS_FORMULA_COLUMN,
+            },
+            rows: [
+              {
+                values: [{ userEnteredValue: { formulaValue: sourceFormula } }],
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+    },
+  ]
 }
 
 // ---------------------------------------------------------------------------
