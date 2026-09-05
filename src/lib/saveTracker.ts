@@ -134,8 +134,6 @@ export function snapshotSheetName(key: string): string {
 export type ClearTarget = { sheet: string; fromCell: string }
 
 export const CLEAR_ON_UPLOAD: ClearTarget[] = [
-  // The biome grid starts at E2; B2:C15 is the creator's description block.
-  { sheet: 'Daily Unlock Map', fromCell: 'E2' },
   // Row 1 holds the group headers, row 2 the column labels; entries start at row 3.
   { sheet: 'Party Checklist', fromCell: 'A3' },
 ]

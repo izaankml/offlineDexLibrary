@@ -108,10 +108,11 @@ API instead:
    changed rows (`updateCells` with `backgroundColor` per row of the tracked block, `{}`
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
    the display is physically re-sorted first; otherwise there is no sort. The same batch
-   wipes the hand-made highlights on the `CLEAR_ON_UPLOAD` sheets (`Daily Unlock Map` from
-   E2, `Party Checklist` from A3: one `repeatCell` blanking the backgrounds from that cell
-   to the grid's end, so the creator's header fills above and left of it stay). A missing
-   sheet is logged and skipped; *Check Layout* shows whether each one was found.
+   wipes the hand-made highlights on the `CLEAR_ON_UPLOAD` sheets (`Party Checklist` from
+   A3: one `repeatCell` blanking the backgrounds from that cell to the grid's end, so the
+   creator's header fills above it stay). A missing sheet is logged and skipped; *Check
+   Layout* shows whether each one was found. The Daily Unlock Map was on this list until
+   2026-09-05; its marked cells are now tinted by a conditional format rule instead.
 3. *Snapshotting*: ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
    few cells** of the hidden `_snapshot_<key>` sheet (A1 = metadata `{v, firstRow,
    minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). A

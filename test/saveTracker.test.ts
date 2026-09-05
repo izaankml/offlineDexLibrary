@@ -86,31 +86,22 @@ test('describeLayout reports every tracker (or the error) without throwing', () 
   const text = describeLayout()
   assert.match(text, /QuickChecklist: data D–K/)
   assert.match(text, /StarterDex: data L–EM .* → display D–EE \(shift -8\)/)
-  assert.match(text, /clear on upload: "Daily Unlock Map" from E2 \(\d+ rows/)
-  assert.match(text, /clear on upload: "Party Checklist" from A3/)
+  assert.match(text, /clear on upload: "Party Checklist" from A3 \(\d+ rows/)
   spreadsheet.deleteSheet(spreadsheet.getSheetByName('FULL_DEX.data')!)
   assert.match(describeLayout(), /ERROR FULL_DEX.data not found/)
 })
 
-test('an upload wipes the hand-made highlights on the Daily Unlock Map and Party Checklist; their headers and everything left of the grid stay', () => {
+test('an upload wipes the hand-made highlights on the Party Checklist; its header rows stay', () => {
   const spreadsheet = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(spreadsheet)
-  const unlockMap = spreadsheet.getSheetByName('Daily Unlock Map')!
-  unlockMap.writeBackgrounds(1, 5, [['#999999']]) // wave-number header row
-  unlockMap.writeBackgrounds(2, 2, [['#999999']]) // the creator's description block
-  unlockMap.writeBackgrounds(2, 5, [['#ffff00', '#ffff00']]) // today's route
-  unlockMap.writeBackgrounds(9, 9, [['#ff9900']])
   const partyChecklist = spreadsheet.getSheetByName('Party Checklist')!
   partyChecklist.writeBackgrounds(1, 1, [['#999999'], ['#999999']]) // both header rows
   partyChecklist.writeBackgrounds(3, 2, [['#00ff00']])
+  partyChecklist.writeBackgrounds(9, 6, [['#ff9900']])
   resetToastProgress('upload')
   processChanges()
-  assert.equal(unlockMap.backgroundAt(2, 5), null)
-  assert.equal(unlockMap.backgroundAt(2, 6), null)
-  assert.equal(unlockMap.backgroundAt(9, 9), null)
-  assert.equal(unlockMap.backgroundAt(1, 5), '#999999', 'header row kept')
-  assert.equal(unlockMap.backgroundAt(2, 2), '#999999', 'description kept')
   assert.equal(partyChecklist.backgroundAt(3, 2), null)
+  assert.equal(partyChecklist.backgroundAt(9, 6), null)
   assert.equal(partyChecklist.backgroundAt(1, 1), '#999999', 'header row kept')
   assert.equal(partyChecklist.backgroundAt(2, 1), '#999999', 'label row kept')
   assert.deepEqual(
@@ -125,7 +116,7 @@ test('an upload wipes the hand-made highlights on the Daily Unlock Map and Party
   )
   assert.ok(
     logs.some((line) =>
-      line.includes('Daily Unlock Map: cleared highlights from E2'),
+      line.includes('Party Checklist: cleared highlights from A3'),
     ),
   )
 })
@@ -134,16 +125,16 @@ test('Highlight Changes keeps the hand-made highlights; Clear Highlights wipes t
   const spreadsheet = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(spreadsheet)
   snapshot()
-  const unlockMap = spreadsheet.getSheetByName('Daily Unlock Map')!
-  unlockMap.writeBackgrounds(3, 6, [['#ffff00']])
+  const partyChecklist = spreadsheet.getSheetByName('Party Checklist')!
+  partyChecklist.writeBackgrounds(3, 6, [['#ffff00']])
   highlightChanges()
   assert.equal(
-    unlockMap.backgroundAt(3, 6),
+    partyChecklist.backgroundAt(3, 6),
     '#ffff00',
     'a mid-day re-highlight leaves them alone',
   )
   clearHighlights()
-  assert.equal(unlockMap.backgroundAt(3, 6), null)
+  assert.equal(partyChecklist.backgroundAt(3, 6), null)
 })
 
 test('a missing clear-on-upload sheet is noted in the log and in Check Layout, not fatal', () => {
@@ -155,7 +146,7 @@ test('a missing clear-on-upload sheet is noted in the log and in Check Layout, n
     spreadsheet.getSheetByName(TIMINGS_SHEET)!.grid().at(-1)![3],
     'TOTAL (ok)',
   )
-  assert.ok(logs.some((line) => line.includes('"Daily Unlock Map" not found')))
+  assert.ok(logs.some((line) => line.includes('"Party Checklist" not found')))
   assert.match(describeLayout(), /clear on upload: "Party Checklist" NOT FOUND/)
 })
 
