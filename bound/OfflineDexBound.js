@@ -1,5 +1,5 @@
 // ============================================================
-// OFFLINEDEX BOUND GLUE — the only bound file that is ours.
+// OFFLINEDEX BOUND GLUE: the only bound file that is ours.
 //
 // Everything the OfflineDex Library needs from inside the spreadsheet lives
 // here: the menu, the tracked upload path, and thin wrappers for menu items

@@ -8,7 +8,7 @@
  *   npm run update                                is a new creator version out?
  *
  * Given only the fresh copy's bound Script ID (the in-sheet "Prepare Next
- * Version" dialog hands you the exact command), this:
+ * Version" dialog shows you the exact command), this:
  *
  *   1. resolves the ID → parent spreadsheet → name → version, using clasp's
  *      existing login (no second sign-in), and refuses IDs that don't belong to
@@ -64,7 +64,7 @@ const MAIN_BRANCH = 'main'
 const CREATOR_BRANCH = 'creator'
 
 /**
- * The creator's bound files git tracks — the only ones that take part in the
+ * The creator's bound files git tracks, the only ones that take part in the
  * merge. Our own files (OfflineDexBound.js, OfflineDexUpload.html) never
  * exist in the creator's copy, so they never conflict.
  */
@@ -302,7 +302,7 @@ async function resolveScript(scriptId: string): Promise<ScriptInfo> {
   if (!match) {
     fail(
       `That script belongs to "${file.name}", which isn't named like a copy ("Offline RogueDex X.YY"). ` +
-        'Rename the copy first — the migrator finds sheets by that exact name.',
+        'Rename the copy first; the migrator finds sheets by that exact name.',
     )
   }
 
@@ -418,7 +418,7 @@ function checkPreconditions(): void {
   }
   if (treeDirty()) {
     fail(
-      'Working tree is dirty. Commit or stash your changes first — the merge needs a clean tree.',
+      'Working tree is dirty. Commit or stash your changes first; the merge needs a clean tree.',
     )
   }
   run('clasp', ['--version'])
@@ -441,14 +441,13 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
     if (bootstrap) {
       git(['worktree', 'add', '--orphan', '-b', CREATOR_BRANCH, worktreeDir])
       note(
-        `no \`${CREATOR_BRANCH}\` branch yet — bootstrapping it from this copy`,
+        `no \`${CREATOR_BRANCH}\` branch yet; bootstrapping it from this copy`,
       )
     } else {
       git(['worktree', 'add', worktreeDir, CREATOR_BRANCH])
     }
-    // The orphan bootstrap worktree starts empty; without the repo's .gitignore
-    // `git add` would sweep in .clasp.json (a Script ID) and the creator-only
-    // files (ImportDB.js, ...). Older creator branches also predate some rules.
+    // Give the worktree the repo's .gitignore so `git add` skips .clasp.json
+    // and the creator-only files.
     if (!existsSync(join(worktreeDir, '.gitignore'))) {
       copyFileSync(
         join(REPO_ROOT, '.gitignore'),
@@ -466,7 +465,7 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
     run('clasp', ['pull'], { cwd: worktreeBoundDir, inherit: true })
 
     // A fresh creator copy never references the library. If it does, this copy
-    // already had your code pushed to it and must NOT become the baseline.
+    // already had your code pushed to it and must not become the baseline.
     for (const fileName of readdirSync(worktreeBoundDir)) {
       if (!/\.(js|html)$/.test(fileName)) continue
       if (
@@ -475,8 +474,8 @@ function recordCreatorBaseline(scriptId: string, version: string): boolean {
         )
       ) {
         fail(
-          `${fileName} in the pulled code references ${CUSTOM_CODE_MARKER} — this copy already has your code pushed to it, ` +
-            'so it cannot be recorded as the creator baseline. Point at a fresh, untouched copy.',
+          `${fileName} in the pulled code references ${CUSTOM_CODE_MARKER}, so this copy already has your code pushed to it ` +
+            'and cannot be recorded as the creator baseline. Point at a fresh, untouched copy.',
         )
       }
     }
@@ -535,7 +534,7 @@ function mergeCreator(version: string, bootstrap: boolean): boolean {
   args.push(CREATOR_BRANCH)
   const result = git(args, { inherit: true, allowFail: true })
   if (result.code === 0) {
-    step('merged — no conflicts')
+    step('merged, no conflicts')
     return true
   }
   const conflicts = gitOut(['diff', '--name-only', '--diff-filter=U'])
@@ -546,7 +545,7 @@ ${conflicts
   .split('\n')
   .map((fileName) => `    ${fileName}`)
   .join('\n')}
-${bootstrap ? "\n  (First-time bootstrap: whole-file conflicts are expected — combine the\n  creator's current code with your customizations once.)\n" : ''}
+${bootstrap ? "\n  (First-time bootstrap: whole-file conflicts are expected. Combine the\n  creator's current code with your customizations once.)\n" : ''}
   Resolve each file keeping BOTH the creator's update and your edit, then:
     git add <files>
     npm run update -- --continue     # commits the merge and pushes
@@ -604,7 +603,7 @@ async function doUpdate(args: Args): Promise<void> {
   if (previousBaseline === version) {
     fail(
       `A creator baseline for ${version} is already recorded on \`${CREATOR_BRANCH}\`.\n` +
-        `  If the merge already happened, you're done — just \`clasp push -f\` from bound/ if needed.\n` +
+        `  If the merge already happened, you're done; \`clasp push -f\` from bound/ if needed.\n` +
         `  To redo the baseline on purpose: git branch -f ${CREATOR_BRANCH} ${CREATOR_BRANCH}~1  (then re-run).`,
     )
   }
@@ -620,7 +619,7 @@ async function doUpdate(args: Args): Promise<void> {
 
   if (!baselineChanged) {
     note(
-      `creator's bound code is identical to the ${previousBaseline ?? 'previous'} baseline — nothing to merge` +
+      `creator's bound code is identical to the ${previousBaseline ?? 'previous'} baseline; nothing to merge` +
         (previousBaseline
           ? ` (they didn't change any of the tracked files between ${previousBaseline} and ${version})`
           : ''),
@@ -643,7 +642,7 @@ async function doUpdate(args: Args): Promise<void> {
 function doContinue(args: Args): void {
   if (!mergeInProgress()) {
     fail(
-      'No merge in progress — nothing to continue. (Already committed? Then just run `clasp push -f` in bound/.)',
+      'No merge in progress, nothing to continue. (Already committed? Then run `clasp push -f` in bound/.)',
     )
   }
   const unmerged = gitOut(['diff', '--name-only', '--diff-filter=U'])
@@ -665,7 +664,7 @@ function doContinue(args: Args): void {
 }
 
 function doAbort(): void {
-  if (!mergeInProgress()) fail('No merge in progress — nothing to abort.')
+  if (!mergeInProgress()) fail('No merge in progress, nothing to abort.')
   git(['merge', '--abort'])
   step(
     'merge aborted; main is back where it was (the creator baseline commit stays on `creator`)',
@@ -681,7 +680,7 @@ async function doStatus(): Promise<void> {
   }
   if (!localBaseline) {
     console.log(
-      `  no creator baseline recorded locally yet — first update will bootstrap it.`,
+      `  no creator baseline recorded locally yet; the first update will bootstrap it.`,
     )
   } else if (localBaseline === published.version) {
     console.log(`  up to date: your last baseline is ${localBaseline}.`)

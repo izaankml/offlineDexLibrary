@@ -180,7 +180,7 @@ function writeTimings(
       .getRange(1, 1, 1, TIMINGS_HEADER.length)
       .setValues([TIMINGS_HEADER])
   }
-  // Column widths, once per workbook (also fixes sheets created before widths existed).
+  // Column widths, once per workbook.
   const docProps = PropertiesService.getDocumentProperties()
   if (docProps.getProperty(TIMINGS_WIDTHS_PROPERTY) !== '1') {
     TIMINGS_COLUMN_WIDTHS.forEach((width, index) =>

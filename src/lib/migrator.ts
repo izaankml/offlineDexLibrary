@@ -1,19 +1,18 @@
 /**
  * MIGRATOR
  *
- * Ports your customizations from an old OfflineDex spreadsheet to a new one.
+ * Ports your customizations from an old OfflineDex spreadsheet to a new one,
+ * as a plan, preview, apply pipeline on the Sheets API:
+ *   1. read the source (sheet list and merges; formats and values of the
+ *      customized ranges) and the destination (sheet list, banding, CF and
+ *      merges; the locator cells);
+ *   2. build a list of migration ops (human label plus batchUpdate requests).
+ *      This step is pure and tested. Planning throws if a landmark doesn't
+ *      fit, so nothing is touched when the creator's layout changed;
+ *   3. apply everything in one atomic batchUpdate: all steps land or none.
  *
- * Since 2026-08 this is a plan → preview → apply pipeline on the Sheets API:
- *   1. read the source (2 GETs: sheet list + merges; formats/values of the
- *      customized ranges) and the destination (2 GETs: sheet list +
- *      banding/CF/merges; the locator cells) — no `openById`, no temp sheets;
- *   2. build a list of migration ops (human label + batchUpdate requests) —
- *      pure, tested; planning THROWS if a landmark doesn't fit, so nothing is
- *      touched when the creator's layout changed;
- *   3. apply everything in ONE batchUpdate — atomic: all steps land or none.
- *
- * `finishSetup` (setup.ts) drives it: planForVersions → describePlan in the
- * confirm dialog → applyPlanWithProgress.
+ * `finishSetup` (setup.ts) drives it: planForVersions, then describePlan in
+ * the confirm dialog, then applyPlanWithProgress.
  */
 
 import { copyName } from '../shared/naming.ts'
@@ -35,11 +34,11 @@ import {
   sheetByTitle,
 } from './sheetsApi.ts'
 
-// Quick Checklist: columns A-D (#, image, Dex#, name) are fixed; the data
-// block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS wide) starts at E
-// in creator 6.01 and F from 6.03 (hidden junk column E). Each sheet's block
-// is located by the first non-blank cell in row 10 right of D — the creator's
-// stats row on a fresh copy, your "Stats:" row on a migrated one.
+// Quick Checklist: columns A-D (#, image, Dex#, name) are fixed; where the
+// data block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS wide) starts
+// varies by creator version. Each sheet's block is located by the first
+// non-blank cell in row 10 right of D: the creator's stats row on a fresh
+// copy, your "Stats:" row on a migrated one.
 export const QUICK_CHECKLIST_SHEET = 'Quick Checklist'
 export const QUICK_CHECKLIST_FIXED_COLUMNS = 4
 export const QUICK_CHECKLIST_DATA_COLUMNS = 11
@@ -50,20 +49,19 @@ export const QUICK_CHECKLIST_IMAGE_COLUMN = 2
 /** Sheets' default row height; a non-hidden row at this height is treated as "Fit to data". */
 const DEFAULT_ROW_HEIGHT = 21
 
-// Daily Mode carries two structural customizations of ours, both of which a
-// fresh copy lacks and both of which shift everything after them:
+// Daily Mode carries two structural customizations of ours that a fresh copy
+// lacks, and both shift everything after them:
 //
-//   * custom COLUMN L — the map-size inputs (L12:M15) the IMAGE formula reads.
-//     Detected by the creator's "Missing Gym Leader Voucher…" landmark: N2 when
-//     L exists (the source), M2 when it doesn't (a fresh copy).
-//   * custom ROW 15 — a blank row above the creator's wiki-link row so the
-//     "Rows" input gets a line of its own instead of sharing the link's row.
-//     Detected by where the map-image merge starts: B17 once the row exists,
-//     B16 in a fresh copy.
+//   * custom column L: the map-size inputs (L12:M15) the IMAGE formula reads.
+//     Detected by the creator's "Missing Gym Leader Voucher…" landmark, at N2
+//     when L exists and M2 when it doesn't.
+//   * custom row 15: a blank row above the creator's wiki-link row so the
+//     "Rows" input has a line of its own. Detected by where the map-image
+//     merge starts, B17 when the row exists and B16 when it doesn't.
 //
-// The source has both, so SOURCE coordinates are also the destination's FINAL
-// coordinates; every format/value/merge write below is in those coordinates and
-// the two inserts run first in the same batch.
+// The source has both, so source coordinates are also the destination's final
+// coordinates. Every write below uses them, and the two inserts run first in
+// the same batch.
 export const DAILY_MODE_SHEET = 'Daily Mode'
 export const DAILY_MODE_CUSTOM_COLUMN = 12 // L
 export const DAILY_MODE_CUSTOM_ROW = 15
@@ -81,7 +79,7 @@ type Block = {
   lastRow: number
   lastColumn: number
 }
-/** L12:M15 — the map-size inputs the IMAGE formula reads (Map Width/Height/Scale/Rows). */
+/** L12:M15, the map-size inputs the IMAGE formula reads (Map Width/Height/Scale/Rows). */
 export const DAILY_MODE_INPUTS_BLOCK: Block = {
   firstRow: 12,
   firstColumn: 12,
@@ -89,9 +87,9 @@ export const DAILY_MODE_INPUTS_BLOCK: Block = {
   lastColumn: 13,
 }
 /**
- * B12:M<image bottom> — the region whose merges are made to match the source's
- * (the input rows, the creator's wiki-link row, and the map-image block). Every
- * source merge inside it is ported; anything of the destination's overlapping
+ * B12:M<image bottom>, the region whose merges are made to match the source's
+ * (the input rows, the creator's wiki-link row, and the map-image block).
+ * Every source merge inside it is ported; any destination merge overlapping
  * one of them is unmerged first.
  */
 export const DAILY_MODE_MERGE_FIRST_ROW = 12
@@ -162,7 +160,7 @@ export function applyPlan(
   client.batchUpdate(plan.destSpreadsheetId, requests)
 }
 
-/** Apply with a toast step; one result per op (all OK, or all ERR with the same message — the batch is atomic). */
+/** Apply with a toast step; one result per op (all OK, or all ERR with the same message, since the batch is atomic). */
 export function applyPlanWithProgress(
   plan: MigrationPlan,
   client: SheetsClient = liveSheets,
@@ -202,7 +200,7 @@ export function formatResults(results: StepResult[]): string {
 /** Human-readable plan, for the confirm dialog and the log. */
 export function describePlan(plan: MigrationPlan): string {
   const opLines = plan.ops.map(
-    (op) => `• ${op.label}${op.note ? ` — ${op.note}` : ''}`,
+    (op) => `• ${op.label}${op.note ? `\n    ${op.note}` : ''}`,
   )
   const noteLines = plan.notes.map((note) => `· ${note}`)
   return [...opLines, ...noteLines].join('\n')
@@ -355,9 +353,8 @@ export function planQuickChecklist(
       `Quick Checklist: destination data block starts at column ${destFirstDataColumn}, left of the source's ${sourceFirstDataColumn}; layout unknown, nothing ported`,
     )
   }
-  // Port up to the end of the data block (Ribbons); nothing of ours lives to
-  // the right of it, and the source's grid may be wider for stale reasons
-  // (e.g. the old SaveTracker marker column) that must not be carried over.
+  // Port only through the end of the data block (Ribbons); nothing of ours
+  // lives right of it, and stray source columns must not be carried over.
   const sourceLastPortedColumn =
     sourceFirstDataColumn + QUICK_CHECKLIST_DATA_COLUMNS - 1
   const destColumnsNeeded = sourceLastPortedColumn + columnOffset
@@ -419,10 +416,9 @@ export function planQuickChecklist(
     formatRowsRequest(sourceFirstDataColumn, sourceLastPortedColumn),
   )
 
-  // Row heights + hidden rows. A source row at the default height that isn't
-  // hidden is (almost always) "Fit to data" — the API only reports the stored
-  // 21 px, not the rendered height — so those rows are auto-resized in the
-  // destination after the cell contents are written (see below).
+  // Row heights and hidden rows. A visible source row at the default height
+  // is treated as "Fit to data" (the API reports only the stored height), so
+  // it is auto-resized after the cell contents are written below.
   const autoFitRowIndexes: number[] = []
   for (let rowIndex = 0; rowIndex < QUICK_CHECKLIST_HEADER_ROWS; rowIndex++) {
     const rowMeta = sourceGrid?.rowMetadata?.[rowIndex] ?? {}
@@ -465,7 +461,7 @@ export function planQuickChecklist(
     })
   }
 
-  // Row 1 over the data block; row 10 in full — formulas (shifted) or values.
+  // Row 1 over the data block and row 10 in full: formulas (shifted) or values.
   const valuesRequest = (
     row: number,
     fromColumn: number,
@@ -806,10 +802,9 @@ function dailyModeMergeAt(
 }
 
 /**
- * The source's map-image block, taken from the merge it actually is (its bottom
- * row follows the map's aspect ratio, so it is not a constant). Throws when the
- * source has no merge at B17 — either it is not one of my copies, or the
- * creator moved the block; nothing is ported on an unknown layout.
+ * The source's map-image block, taken from the merge it is (its bottom row
+ * follows the map's aspect ratio, so it is not a constant). Throws when the
+ * source has no merge at B17, so nothing is ported on an unknown layout.
  */
 export function dailyModeImageBlock(sourceMeta: SpreadsheetInfo): Block {
   const anchor = a1(
@@ -851,7 +846,7 @@ export function dailyModeHasCustomRow(dest: DestInfo): boolean {
   )
 }
 
-/** 'B16:M131' — a block as A1, for op labels. */
+/** A block as A1 ('B16:M131'), for op labels. */
 function blockLabel(block: Block): string {
   return `${a1(block.firstRow, block.firstColumn)}:${a1(block.lastRow, block.lastColumn)}`
 }
@@ -1037,13 +1032,10 @@ export function planDailyMode(
       requests: dimensionRequests,
     })
 
-  // Merges of B12:M<image bottom> ← the source's. The map image block, the
-  // header blocks whose bottom row moved with the custom row, and the creator's
-  // wiki-link row all live here, so rather than reconstructing each one the
-  // whole region is made to match: unmerge whatever of the destination's
-  // overlaps a source merge (in post-insert coordinates), then merge the
-  // source's. Re-running plans the same unmerge/merge pair, so it is idempotent.
-  // Widened to the image block if that ever reaches past M, so it is always inside.
+  // Make the merges of B12:M<image bottom> match the source's: unmerge any
+  // destination merge overlapping a source merge (post-insert coordinates),
+  // then merge the source's. Re-running plans the same pair, so it is
+  // idempotent. The region widens to the image block if that reaches past M.
   const mergedRegion: Block = {
     firstRow: DAILY_MODE_MERGE_FIRST_ROW,
     firstColumn: DAILY_MODE_MERGE_FIRST_COLUMN,

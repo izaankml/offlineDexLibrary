@@ -1,5 +1,5 @@
 /**
- * SETUP — the Google-side half of a version update.
+ * SETUP: the Google-side half of a version update.
  *
  *   prepareNextVersion()      from your CURRENT sheet: copy the creator's
  *                             public sheet into Drive under the right name and
@@ -56,7 +56,7 @@ export function prepareNextVersion(): void {
   const newVersion = versionFromName(publicName)
   if (!newVersion) {
     ui.alert(
-      `The public sheet is named "${publicName}" — no version number in it, so I can't name your copy. Copy it by hand and name it "Offline RogueDex X.YY".`,
+      `The public sheet is named "${publicName}", which has no version number in it, so I can't name your copy. Copy it by hand and name it "Offline RogueDex X.YY".`,
     )
     return
   }
@@ -66,7 +66,7 @@ export function prepareNextVersion(): void {
   if (currentVersion && compareVersions(currentVersion, newVersion) >= 0) {
     const copyAnyway = ui.alert(
       'Prepare Next Version',
-      `The public sheet is still on ${newVersion} and this sheet is ${currentVersion} — nothing newer to prepare.\n\nMake a copy of ${newVersion} anyway?`,
+      `The public sheet is still on ${newVersion} and this sheet is ${currentVersion}, so there is nothing newer to prepare.\n\nMake a copy of ${newVersion} anyway?`,
       ui.ButtonSet.YES_NO,
     )
     if (copyAnyway !== ui.Button.YES) return
@@ -78,9 +78,9 @@ export function prepareNextVersion(): void {
     const choice = ui.alert(
       'Prepare Next Version',
       `You already have a sheet named "${newCopyName}" (created ${existingCopies[0]!.getDateCreated().toLocaleString()}).\n\n` +
-        'YES — use it (only if you have NOT pushed your code to it yet)\n' +
-        'NO — make a brand-new copy alongside it\n' +
-        'CANCEL — stop',
+        'YES: use it (only if you have NOT pushed your code to it yet)\n' +
+        'NO: make a brand-new copy alongside it\n' +
+        'CANCEL: stop',
       ui.ButtonSet.YES_NO_CANCEL,
     )
     if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return
@@ -167,7 +167,7 @@ export function prepareDialogHtml(info: {
     'function copyCmd(){var cmd=document.getElementById("cmd");cmd.select();cmd.setSelectionRange(0,99999);' +
     'var copied=false;try{copied=document.execCommand("copy")}catch(e){}' +
     'if(navigator.clipboard){navigator.clipboard.writeText(cmd.value).then(function(){done(true)},function(){done(copied)})}else{done(copied)}}' +
-    'function done(copied){document.getElementById("status").textContent=copied?"Copied — paste it into your terminal.":"Select the command and copy it manually."}' +
+    'function done(copied){document.getElementById("status").textContent=copied?"Copied. Paste it into your terminal.":"Select the command and copy it manually."}' +
     '</script>'
   )
 }
@@ -210,10 +210,10 @@ export function nudgeFinishSetupIfFresh(): void {
 
 /**
  * Menu (run in the NEW sheet): migrate customizations from the previous
- * version — auto-detected from your Drive, one confirm — and mark this copy
- * as migrated. Returns true only when every migration step succeeded (so the
- * bound wrapper opens the upload dialog); on any ERR the steps are shown in an
- * alert, the copy is NOT marked migrated, and false is returned.
+ * version (auto-detected from your Drive, one confirm) and mark this copy as
+ * migrated. Returns true only when every migration step succeeded, so the
+ * bound wrapper can open the upload dialog. On any ERR the steps are shown in
+ * an alert, the copy is not marked migrated, and false is returned.
  */
 export function finishSetup(): boolean {
   const ui = SpreadsheetApp.getUi()

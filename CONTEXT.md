@@ -1,6 +1,6 @@
 # OfflineDex Scripts: Project Context
 
-This doc summarizes the design and decisions behind this repo so that any future work (in Claude Code or otherwise) has the full picture without needing to dig through commit history or external chats.
+This doc summarizes the design and decisions behind this repo so that future work (in Claude Code or otherwise) has the context without reading commit history or external chats.
 
 ## What this is
 
@@ -8,7 +8,7 @@ I track my Pokemon collection in a Google Sheets spreadsheet called "Offline Rog
 
 This repo contains two pieces of automation I've added on top of the creator's spreadsheet:
 
-1. **A save tracker** that highlights cells in the spreadsheet that changed since my last save data upload. Lets me see at a glance which Pokemon got newly caught/shiny/etc.
+1. **A save tracker** that highlights cells in the spreadsheet that changed since my last save data upload, so I can see which Pokemon got newly caught/shiny/etc.
 2. **A version migrator** that ports my customizations (formatting, hidden sheets, custom column, specific cell formulas) from an old version of the spreadsheet to a new one.
 
 Both pieces of logic live in a single shared **OfflineDex Library** Apps Script project. Each version's bound script references this library and exposes its functions via menu items.
@@ -79,41 +79,41 @@ Since 2026-08 a tracker is a **spec of header labels, not column numbers**
 ```
 
 `resolveTracker()` reads the first 10 rows of both sheets once, finds the anchors by
-text (case/space-insensitive; first occurrence — labels like "Friendship" repeat further
-right), derives `shift = displayCol − dataCol`, maps exclude/increment names to columns,
-cross-checks a second label, and **throws a precise message** ("could not find the header
-'Fought Flag' in the first 10 rows of 'Starter DEX Checklist'") if the creator's layout
-no longer fits — so a reshuffle stops the paint instead of mis-painting. The Quick
-Checklist display block is located the way the Migrator does it (first non-blank cell of
-row 10 right of the fixed A–D columns), because after migration its row-1 labels are
-replaced by your stat formulas. Verified layouts: 6.01 (shift +3), 6.03 (shift +4);
-`test/fixtures/headers-6.03.json` holds the real header rows and `golden-mappings.json`
-pins the exact per-column mapping the old index-based config produced.
-`describeLayout()` returns the resolved layout as text (dry run).
+text (case/space-insensitive; first occurrence, since labels like "Friendship" repeat
+further right), derives `shift = displayCol − dataCol`, maps exclude/increment names to
+columns, cross-checks a second label, and **throws a precise message** ("could not find
+the header 'Fought Flag' in the first 10 rows of 'Starter DEX Checklist'") if the
+creator's layout no longer fits, so a reshuffle stops the paint instead of mis-painting.
+The Quick Checklist display block is located the way the Migrator does it (first
+non-blank cell of row 10 right of the fixed A–D columns), because after migration its
+row-1 labels are replaced by your stat formulas. Verified layouts: 6.01 (shift +3), 6.03
+(shift +4); `test/fixtures/headers-6.03.json` holds the real header rows and
+`golden-mappings.json` pins the exact per-column mapping the old index-based config
+produced. `describeLayout()` returns the resolved layout as text (dry run).
 
 **Highlight colors:** yellow (`#FFFF00`) on the Quick Checklist, light green (`#93c47d`)
 on the dex sheets, light purple (`#b4a7d6`) for the increment counters.
 
-**The flow on each save upload (`processChanges`)** — measured on 2026-08-18: every
+**The flow on each save upload (`processChanges`).** Measured on 2026-08-18, every
 SpreadsheetApp call in this workbook costs ~1 s (formula-heavy) and a 145k-cell
 `getValues`/`setBackgrounds`/`setValues` 15–25 s, so all bulk I/O goes through the Sheets
 API instead:
 
-1. *Reading sheets* — one `spreadsheets.get` (sheet ids/sizes) and ONE `values.batchGet`
+1. *Reading sheets*: one `spreadsheets.get` (sheet ids/sizes) and ONE `values.batchGet`
    returning the whole data sheets (header band + values), the display header bands and
    key columns, and the v3 snapshots. The layout probe runs on the bands from that read.
-2. *Highlighting changes* — in-memory diff; then ONE `batchUpdate` that clears last
-   upload's highlighted rows (their positions are stored in the snapshot metadata — on the
+2. *Highlighting changes*: in-memory diff; then ONE `batchUpdate` that clears last
+   upload's highlighted rows (their positions are stored in the snapshot metadata; on the
    first run after an upgrade the whole tracked block is cleared once) and paints only the
    changed rows (`updateCells` with `backgroundColor` per row of the tracked block, `{}`
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
-   the display is physically re-sorted first — otherwise no sort.
-3. *Snapshotting* — ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
+   the display is physically re-sorted first; otherwise there is no sort.
+3. *Snapshotting*: ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
    few cells** of the hidden `_snapshot_<key>` sheet (A1 = metadata `{v, firstRow,
    minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). A
    snapshot sheet whose A1 is not that metadata counts as "no baseline" and is wiped on
    the first write. `labels` lets a later upload realign the baseline by header label if
-   the creator inserts a column between uploads (k-th occurrence ↔ k-th occurrence, since
+   the creator inserts a column between uploads (k-th occurrence to k-th occurrence, since
    "SHINY"/"Friendship" repeat).
 
 That is 4 API calls per upload (was ≈100 SpreadsheetApp calls, 4 sorts). The old Form
@@ -126,7 +126,7 @@ and barely needed.
 or the whole block if unknown), *Check Layout* (dry run of the probe).
 
 **Toast progress + timing log (`progress.ts`):** a single replacing toast shows the current
-step; on finish (or failure — `failFlow` shows a non-sticky error toast) every step's
+step; on finish (or failure, where `failFlow` shows a non-sticky error toast) every step's
 duration is appended to the hidden `_timings` sheet in one write.
 
 **Why the data sheets, not the display:** the display cells are formulas resolving through
@@ -136,43 +136,43 @@ order the display is painted against.
 ### migrator.ts (+ sheetsApi.ts, formulaShift.ts)
 
 Ports customizations from an old version of the spreadsheet to a new one. Since 2026-08 it
-is a **plan → preview → apply** pipeline on the Sheets advanced service (Sheets API v4):
+is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets API v4):
 
-1. **Read** — 2 GETs on the source (sheet list + merges; formats/formulas of the
+1. **Read**: 2 GETs on the source (sheet list + merges; formats/formulas of the
    customized ranges: `Quick Checklist!1:10`, the Daily Mode map-image block,
    `Daily Mode!L12:M15`, the `N2` landmark) and 2 on the destination (sheet list + banding
    + CF rules + merges; the Quick Checklist header and the `M2:N2` landmark cells). No
    `openById`, no temp sheets, no `copyTo`. The source's merge list comes first because
    the map-image block is however tall the source's merge is (it follows the map's aspect
    ratio), so it decides which range the second GET asks for.
-2. **Plan** (`buildPlan`, pure, tested with hand-built API responses) — a list of `MigrationOp`s
+2. **Plan** (`buildPlan`, pure, tested with hand-built API responses): a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
    (Daily Mode landmark at neither M2 nor N2; Quick Checklist row 10 blank; destination
    block left of the source's), so nothing is touched on an unknown layout.
-3. **Preview** — Finish Setup shows `describePlan()` in the confirm dialog.
-4. **Apply** — ONE `batchUpdate`; the API applies it atomically (all steps or none).
+3. **Preview**: Finish Setup shows `describePlan()` in the confirm dialog.
+4. **Apply**: ONE `batchUpdate`; the API applies it atomically (all steps or none).
 
 **The ops:**
 
 - *Quick Checklist header (rows 1–10)*: `updateCells` with the source's `userEnteredFormat`
-  for every column (two segments when the destination block starts further right — 6.03's
-  hidden junk column E), `updateDimensionProperties` for row heights/hidden rows and column
-  widths, row 1 (data block) and row 10 formulas/values with same-sheet references shifted
-  by `shiftFormulaColumns` (cross-sheet refs, `$A$10`-style refs left of the block, strings
-  and function names untouched), hide Ribbons, stamp `POKEROGUE DEX <dest>` into A1 unless
-  A1 is a formula.
+  for every column (two segments when the destination block starts further right, as with
+  6.03's hidden junk column E), `updateDimensionProperties` for row heights/hidden rows and
+  column widths, row 1 (data block) and row 10 formulas/values with same-sheet references
+  shifted by `shiftFormulaColumns` (cross-sheet refs, `$A$10`-style refs left of the block,
+  strings and function names untouched), hide Ribbons, stamp `POKEROGUE DEX <dest>` into A1
+  unless A1 is a formula.
 - *Banding over the image column*: `updateBanding` stretches the C-start banding to B (merging
   an A-only banding), `repeatCell` clears B's fills; falls back to widening row-parity CF.
 - *Daily Mode*: two structural customizations, each inserted when the destination lacks
-  it — column **L** (the map-size inputs), decided by the "Missing Gym Leader Voucher…"
-  landmark at N2 (present) vs M2 (fresh); and blank row **15**, so the "Rows" input has a
-  line of its own instead of sharing the creator's wiki-link row, decided by where the
+  it. Column **L** (the map-size inputs) is decided by the "Missing Gym Leader Voucher…"
+  landmark at N2 (present) vs M2 (fresh). Blank row **15**, which gives the "Rows" input a
+  line of its own instead of sharing the creator's wiki-link row, is decided by where the
   map-image merge starts (B17 present, B16 fresh). Both inserts go first in the batch, so
   everything after them is in source coordinates. Then `updateCells` formats for the image
   block and L12:M15; widths of L/M and the height of row 15; the merges of
   `B12:M<image bottom>` are made to match the source's (`unmergeCells` for every existing
-  merge overlapping one of them, in post-insert coordinates, then `mergeCells` for each) —
-  that is what carries the B12/F12/I12 header blocks now running to row 15, the creator's
+  merge overlapping one of them, in post-insert coordinates, then `mergeCells` for each),
+  which is what carries the B12/F12/I12 header blocks now running to row 15, the creator's
   wiki row, and the image block itself; the image cell's formula/value top-aligned;
   L12:M15 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
@@ -185,7 +185,7 @@ notes what was already done).
 
 The Google-side half of a version update (the terminal half is `scripts/update.ts`).
 
-- `prepareNextVersion()` — run from the *current* sheet's menu. The creator publishes
+- `prepareNextVersion()`: run from the *current* sheet's menu. The creator publishes
   every version as **the same Drive file**, renamed per release
   (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`). It reads the version
   from that title, `makeCopy()`s it as `Offline RogueDex <new>` into the current sheet's
@@ -194,20 +194,20 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   `npm run update -- <scriptId>` with a Copy button.
   **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
   with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
-  nothing even with full Drive scope inside Apps Script), so no lookup is attempted —
-  it was removed (the library uses `DriveApp` and the Sheets advanced service; no Drive
-  advanced service, no `UrlFetchApp`).
-- `finishSetup()` — run from the *new* sheet's menu. Reads the destination version from
+  nothing even with full Drive scope inside Apps Script), so no lookup is attempted. The
+  library uses `DriveApp` and the Sheets advanced service; no Drive advanced service, no
+  `UrlFetchApp`.
+- `finishSetup()`: run from the *new* sheet's menu. Reads the destination version from
   the sheet's name, asks `detectPreviousVersion` for the source, shows one YES/NO/CANCEL
   confirm (NO falls back to a typed prompt), builds the migration plan (`planForVersions`),
   shows it (`describePlan`) in a second confirm, applies it (`applyPlanWithProgress`),
   and records `OFFLINEDEX_MIGRATED_FROM` in document properties. Returns `true` when the migration
   ran; the bound wrapper then opens the upload dialog (the dialog HTML lives in the bound
   project, so the library can't open it).
-- `nudgeFinishSetupIfFresh()` — called from `onOpen`: if `OFFLINEDEX_MIGRATED_FROM` is
+- `nudgeFinishSetupIfFresh()`: called from `onOpen`. If `OFFLINEDEX_MIGRATED_FROM` is
   unset *and* no `_snapshot_*` sheet exists (a fresh copy that just received the code),
-  toasts a pointer to Finish Setup.
-- `detectPreviousVersion(dest)` — newest `Offline RogueDex X.YY` in Drive with a version
+  it toasts a pointer to Finish Setup.
+- `detectPreviousVersion(dest)`: newest `Offline RogueDex X.YY` in Drive with a version
   lower than `dest`; used by Finish Setup so you never type the source version.
 - Naming (`copyName`, `versionFromName`, `compareVersions`, `PUBLIC_SHEET_FILE_ID`) lives
   once in `src/shared/naming.ts`, bundled into the library and imported by `scripts/update.ts`.
@@ -225,15 +225,15 @@ Lives inside each spreadsheet copy. Has the creator's original code plus two fil
 Since 2026-08 the creator's files are **pristine except one line**, so the per-version
 3-way merge has almost nothing to conflict on:
 
-- `onOpen.js` — creator's, with the "Upload PokeRogue Data" menu block replaced by a single
+- `onOpen.js`: creator's, with the "Upload PokeRogue Data" menu block replaced by a single
   `offlineDexOnOpen()` call.
-- `LoadPlayerData.js`, `UploadPlayerData.html`, `ImportDB.js`, `Sheet Status Generator.js`
-  — creator's, untouched. The creator's `uploadFile()` still exists (untracked upload);
+- `LoadPlayerData.js`, `UploadPlayerData.html`, `ImportDB.js`, `Sheet Status Generator.js`:
+  creator's, untouched. The creator's `uploadFile()` still exists (untracked upload);
   we never call it.
 - **`OfflineDexBound.js`** (ours; every function prefixed `offlineDex…` so it can't collide
   with a future creator function): builds the *RogueDex Functions* menu, calls
   `OfflineDexLib.nudgeFinishSetupIfFresh()`, holds the menu wrappers (Apps Script menu
-  items can't call library functions directly), and `uploadFileTracked(obj)` — the tracked
+  items can't call library functions directly), and `uploadFileTracked(obj)`, the tracked
   upload path: the creator's `createBlob → decryptFile → parseJsonContent → writeJsonToSheet`,
   `flush`, a 2 s settle, then `OfflineDexLib.processChanges()` (or `…WithoutSnapshot()`
   when the *Keep Baseline* menu item set the `OFFLINEDEX_SKIP_SNAPSHOT` document property).
@@ -247,17 +247,18 @@ Upload)*, *Prepare Next Version*.
 
 ## Per-version update workflow
 
-The full runbook lives in [UPDATING.md](UPDATING.md). Three touches:
+The full runbook lives in [UPDATING.md](UPDATING.md). Three steps:
 
 1. **Old sheet** → RogueDex Functions → **Prepare Next Version**: copies the creator's
-   public sheet into Drive as `Offline RogueDex <new>`, finds the copy's bound Script ID,
-   hands me `npm run update -- <scriptId>` with a Copy button.
+   public sheet into Drive as `Offline RogueDex <new>`, then turns the copy's Apps Script
+   editor URL (pasted by me) into `npm run update -- <scriptId>` with a Copy button.
 2. **Terminal** → `npm run update -- <scriptId>` (`scripts/update.ts`, TypeScript on Node
    24, no dependencies): resolves the ID → sheet → version via clasp's stored login,
    writes `bound/.clasp.json`, pulls the pristine code into a temporary git *worktree* of
    the `creator` branch (my checkout stays on `main`), Prettier-normalizes with the repo's
    `.prettierrc.json`, commits `creator <new>`, `git merge`s into `main`, and on a clean
-   merge runs `clasp push -f`. Conflicts → resolve → `npm run update -- --continue`.
+   merge runs `clasp push -f`. On conflicts, resolve them and run
+   `npm run update -- --continue`.
    Guards: refuses a non-`main`/dirty tree, an in-progress merge, a sheet not named
    `Offline RogueDex X.YY`, an already-recorded baseline for that version, and pulled code
    containing `OfflineDexLib` (= not a pristine copy). `npm run update` with no args reads
@@ -283,11 +284,11 @@ checks out `creator` in the working tree.
 
 ## Things that took some figuring out
 
-- **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. The old workaround (copy the source SHEET into the destination as a temp, copyTo, delete) was replaced in 2026-08 by reading formats through the Sheets API and writing them with `updateCells` — one read, one atomic write, no temp sheets.
-- **Highlights as background fills:** changed cells get a background colour (default per tracker, purple for the increment counters) so the highlights coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to dodge CF overriding backgrounds; that's no longer the approach.)
-- **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows; the painted rows are now remembered in the snapshot metadata instead — and the marker column collided with creator columns (6.03 Ribbons).
+- **Cross-spreadsheet operations:** `Range.copyTo()` only works within one spreadsheet. The old workaround (copy the source SHEET into the destination as a temp, copyTo, delete) was replaced in 2026-08 by reading formats through the Sheets API and writing them with `updateCells`: one read, one atomic write, no temp sheets.
+- **Highlights as background fills:** changed cells get a background colour (default per tracker, purple for the increment counters) so the highlights coexist with the sheets' conditional formatting rather than being hidden by them. (An earlier iteration used thick borders specifically to avoid CF overriding backgrounds; that's no longer the approach.)
+- **No marker column (since 2026-08):** an earlier design stamped `●` into a hidden marker column to clear only highlighted rows. The painted rows are now remembered in the snapshot metadata instead, and the marker column collided with creator columns (6.03 Ribbons).
 - **`getDisplayValues()` returns empty for image cells:** the display sheets use formulas that resolve to inserted images. Apps Script can't read those as text. So we track the upstream data sheets (raw integers) instead.
-- **Bulk I/O through SpreadsheetApp is slow in this workbook** (≈1 s per call, 15–25 s per 145k-cell read/write) and its mutations are applied lazily — after any synchronous Sheets API call. Hence: all bulk reads/writes go through the Sheets API, and the API client flushes SpreadsheetApp before every call.
+- **Bulk I/O through SpreadsheetApp is slow in this workbook** (≈1 s per call, 15–25 s per 145k-cell read/write) and its mutations are applied lazily, after any synchronous Sheets API call. Hence: all bulk reads/writes go through the Sheets API, and the API client flushes SpreadsheetApp before every call.
 - **Dialog closing too fast cancels the request:** need a 500ms `setTimeout` between dispatching `google.script.run` and calling `host.close()`.
 - **Apps Script library scope:** library functions are accessed as `OfflineDexLib.functionName(...)`. Library top-level constants/functions all share scope within the library.
 - **Menu items can't call library functions directly:** must go through bound-script wrapper functions.

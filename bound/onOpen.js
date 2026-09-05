@@ -7,7 +7,7 @@ function onOpen() {
     .addToUi()
 
   // OfflineDex: the "RogueDex Functions" menu (tracked upload, highlights,
-  // version updates) replaces the plain upload menu — see OfflineDexBound.js.
+  // version updates) replaces the plain upload menu; see OfflineDexBound.js.
   offlineDexOnOpen()
 
   const ss = SpreadsheetApp.getActiveSpreadsheet()

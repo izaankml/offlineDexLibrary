@@ -1,7 +1,7 @@
 /**
- * Thin, typed façade over the Sheets advanced service (Sheets API v4) — just
- * the shapes the Migrator reads and writes. Kept minimal on purpose so tests
- * can hand-build responses and record requests without a network.
+ * Thin, typed wrapper over the Sheets advanced service (Sheets API v4), with
+ * just the shapes the library reads and writes. Kept minimal so tests can
+ * hand-build responses and record requests without a network.
  */
 
 export type Color = {
@@ -82,13 +82,13 @@ export type ValueRenderOption =
 export interface SheetsClient {
   get(spreadsheetId: string, params: GetParams): SpreadsheetInfo
   batchUpdate(spreadsheetId: string, requests: Request[]): void
-  /** values.batchGet — one HTTP call for many ranges; result order matches `ranges`. */
+  /** values.batchGet: one HTTP call for many ranges; result order matches `ranges`. */
   valuesBatchGet(
     spreadsheetId: string,
     ranges: string[],
     render: ValueRenderOption,
   ): ValueRange[]
-  /** values.batchUpdate with RAW input — one HTTP call for many ranges. */
+  /** values.batchUpdate with RAW input: one HTTP call for many ranges. */
   valuesBatchUpdate(
     spreadsheetId: string,
     data: { range: string; values: unknown[][] }[],
@@ -97,10 +97,8 @@ export interface SheetsClient {
 
 /**
  * The real service (requires "Sheets" in appsscript.json enabledAdvancedServices).
- * Every call flushes SpreadsheetApp first: its mutations (sort, clear, insertSheet…)
- * are applied lazily at the end of the execution, while API calls run immediately —
- * without the flush a queued sort would move rows AFTER the API painted them, and
- * a queued clear() would wipe a snapshot the API had just written.
+ * Every call flushes SpreadsheetApp first, because its mutations are applied
+ * lazily while API calls run immediately, and the API must see them in order.
  */
 export const liveSheets: SheetsClient = {
   get(spreadsheetId, params) {

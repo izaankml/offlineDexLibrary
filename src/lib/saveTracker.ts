@@ -12,20 +12,19 @@
  *   clearHighlights()                clear highlight backgrounds
  *   describeLayout()                 what the layout probe resolves to (dry run)
  *
- * All bulk I/O goes through the Sheets API, because in this workbook every
- * SpreadsheetApp call costs ~1 s (formula-heavy) and 145k-cell reads/writes
- * cost 15–25 s. Per upload:
+ * All bulk I/O goes through the Sheets API, which is far cheaper than
+ * SpreadsheetApp on this formula-heavy workbook. Per upload:
  *   1 spreadsheets.get   (sheet ids / sizes)
  *   1 values.batchGet    (header bands, display key columns, all data blocks,
- *                         all snapshots — one HTTP call)
+ *                         all snapshots)
  *   1 batchUpdate        (clear last upload's highlighted rows, paint the
- *                         changed rows — only those rows travel)
+ *                         changed rows)
  *   1 values.batchUpdate (snapshots as compact JSON in a few cells)
- * plus, only if a slicer moved rows, a display sort.
+ * plus a display sort only when a slicer moved rows.
  *
- * Snapshot format: `_snapshot_<key>` holds JSON — A1 = metadata (rows,
- * columns, which display rows are currently highlighted), A2… = chunks of
- * rows. A sheet whose A1 is not that metadata is treated as "no baseline".
+ * Snapshot format: `_snapshot_<key>` holds JSON. A1 is the metadata (rows,
+ * columns, which display rows are currently highlighted); A2 onwards are
+ * chunks of rows. A sheet whose A1 is not that metadata counts as no baseline.
  */
 
 import {
@@ -65,7 +64,7 @@ export const INCREMENT_HIGHLIGHT_COLOR = '#b4a7d6' // light purple 2
 const SNAPSHOT_CELL_CHARS = 45000
 
 // ---------------------------------------------------------------------------
-// Tracker specs — header labels, not column numbers. See src/lib/layout.ts.
+// Tracker specs: header labels, not column numbers. See src/lib/layout.ts.
 // ---------------------------------------------------------------------------
 
 function dexSpec(
@@ -84,7 +83,7 @@ function dexSpec(
     trackFrom: 'Fought Flag',
     trackTo: null,
     exclude: ['Fought Count', 'Candy Count', 'Friendship'],
-    // 'Total' is the Egg Move Attributes total (display column AG) — the first
+    // 'Total' is the Egg Move Attributes total (display column AG), the first
     // column labelled 'Total' right of 'Fought Flag'.
     increment: ['Caught Count', 'Hatched Count', 'Total', 'Classic Wins'],
     color: DEX_HIGHLIGHT_COLOR,
@@ -127,7 +126,7 @@ export function snapshotSheetName(key: string): string {
 /** A contiguous run of display rows, as offsets from displayFirstRow. */
 export type Run = { start: number; count: number }
 
-/** Persisted in A1 of each snapshot sheet — field names are part of the on-disk format. */
+/** Persisted in A1 of each snapshot sheet; field names are part of the on-disk format. */
 export type SnapshotMeta = {
   v: 3
   /** Data sheet row of rows[0] and the tracked column span, as they were when written. */
@@ -137,7 +136,7 @@ export type SnapshotMeta = {
   rows: number
   /** Number of chunk cells below A1 (so leftovers can be blanked on rewrite). */
   cells: number
-  /** Header label of each tracked column, in order — lets a later upload realign after a creator column insert. */
+  /** Header label of each tracked column, in order, so a later upload can realign after a creator column insert. */
   labels: string[]
   /** Display rows currently highlighted, as {start,count} offsets from displayFirstRow. */
   painted: Run[]
@@ -244,10 +243,9 @@ export function outOfOrder(keys: CellValue[]): boolean {
 }
 
 /**
- * Sheets' ascending sort order: real numbers first (ascending), then text
- * (case-insensitive; numeric-looking TEXT sorts as text, e.g. "10" < "2"),
- * blanks last. Must match what Range.sort() would produce, or we'd re-sort
- * every upload.
+ * Sheets' ascending sort order: real numbers first, then text
+ * (case-insensitive; numeric-looking text sorts as text, e.g. "10" < "2"),
+ * blanks last. Must match what Range.sort() produces.
  */
 function compareKeys(left: CellValue, right: CellValue): number {
   const leftBlank = left === '' || left === null
@@ -290,9 +288,8 @@ type SheetInfoLite = NonNullable<SpreadsheetInfo['sheets']>[number]
 
 /**
  * Sheet lookup by title. Exact match first, then a whitespace/case-tolerant
- * match, then — because SpreadsheetApp and the API can spell a title
- * differently (non-breaking spaces etc.) — the sheet SpreadsheetApp finds
- * under that name, matched back to the API list by sheetId.
+ * match, then the sheet SpreadsheetApp finds under that name, matched back to
+ * the API list by sheetId (the two can spell a title differently).
  */
 function findSheet(
   info: SpreadsheetInfo,
@@ -516,9 +513,9 @@ function parseMeta(cell: unknown): SnapshotMeta | null {
 
 /**
  * Re-map a snapshot onto the current tracked span when the creator moved
- * columns between uploads: columns are matched by header label (the k-th
- * occurrence of a label maps to the k-th occurrence — "SHINY" and
- * "Friendship" repeat), unmatched columns compare against blank.
+ * columns between uploads. Columns are matched by header label, k-th
+ * occurrence to k-th occurrence since some labels repeat; unmatched columns
+ * compare against blank.
  */
 export function realign(
   rows: CellValue[][],

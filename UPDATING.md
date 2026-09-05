@@ -7,7 +7,7 @@ logged in, `npm install`, the `OfflineDex Library` project pushed, your
 
 ---
 
-## The three touches
+## The three steps
 
 ```
  ┌── old sheet ──────────────┐   ┌── terminal ───────────────────┐   ┌── new sheet ─────────────┐
@@ -26,10 +26,10 @@ In the sheet you're currently using: **RogueDex Functions → Prepare Next Versi
 - It reads the creator's public sheet (a single Drive file the creator renames each
   release, e.g. `PUBLIC_Offline RogueDex 6.03`) and copies it into the same Drive
   folder as your current sheet as **`Offline RogueDex 6.03`**.
-- The dialog then walks you through the one thing Google won't let a script do —
-  bound scripts aren't enumerable through Drive — so: **Open the new sheet →
-  Extensions → Apps Script**, copy the editor's browser URL, paste it into the
-  dialog. It turns that into `npm run update -- <scriptId>`; click **Copy**.
+- The dialog then covers the one step a script cannot do, because bound scripts
+  aren't enumerable through Drive: **Open the new sheet → Extensions → Apps
+  Script**, copy the editor's browser URL, and paste it into the dialog. It turns
+  that into `npm run update -- <scriptId>`; click **Copy**.
 - If a sheet with that name already exists it asks whether to reuse it (only say yes if
   you have *not* pushed your code to it) or make a fresh copy.
 - First run only: Google may ask you to re-authorize (Drive access for the copy).
@@ -41,7 +41,7 @@ In the sheet you're currently using: **RogueDex Functions → Prepare Next Versi
 npm run update -- 1AbC…ScriptId
 ```
 
-What it does (from `main`, clean tree — it checks):
+What it does (from `main` with a clean tree; it checks both):
 
 1. Resolves the Script ID → its parent spreadsheet → the sheet's name → the version,
    using your existing clasp login. Refuses if the sheet isn't named
@@ -75,28 +75,28 @@ npm run update -- <id> --no-push            # everything except clasp push
 
 ### 3. New sheet → **Finish Setup**
 
-Open the new copy (the CLI prints the link), reload once so the menu rebuilds — a
-toast will point you at Finish Setup — then **RogueDex Functions → Finish Setup**.
+Open the new copy (the CLI prints the link) and reload once so the menu rebuilds. A
+toast will point you at Finish Setup. Then run **RogueDex Functions → Finish Setup**.
 
 - It auto-detects your previous version (newest `Offline RogueDex X.YY` in Drive
   below this one) and asks one confirm: *Migrate from 6.01 → 6.03?* (NO lets you
   type a different source.)
 - It then **plans** the migration (reads only) and shows you the exact list of
-  changes — e.g. "Quick Checklist header: source block at column 5, destination at 6:
-  formulas shifted right by 1", "Daily Mode: insert custom column L" — before anything
-  is written. If the creator's layout doesn't fit a landmark, it stops here with the
-  reason and nothing is changed.
+  changes before anything is written, e.g. "Quick Checklist header: source block at
+  column 5, destination at 6: formulas shifted right by 1" or "Daily Mode: insert
+  custom column L". If the creator's layout doesn't fit a landmark, it stops here
+  with the reason and nothing is changed.
 - On YES it applies everything in one atomic update (seconds), records that this copy
   has been migrated, then opens the **Upload Data** dialog so you can load your save
   straight away. If the update is rejected, the sheet is unchanged and you're told why.
 - First run after 2026-08: Google may ask you to re-authorize once (the library now uses
   the Sheets API); accept and run again. The Sheets advanced service must be enabled in
-  BOTH manifests — the library's and the bound script's (`bound/appsscript.json`,
-  `enabledAdvancedServices`) — or you get "Service Google Sheets API has not been enabled
+  BOTH manifests, the library's and the bound script's (`bound/appsscript.json`,
+  `enabledAdvancedServices`), or you get "Service Google Sheets API has not been enabled
   for your Apps Script-managed Cloud Platform project". Give it a minute to propagate.
 
-That's it. The merge commit on `main` is your record of this version's reconciled
-bound code; `bound/.clasp.json` is gitignored.
+The merge commit on `main` is your record of this version's reconciled bound code;
+`bound/.clasp.json` is gitignored.
 
 ---
 
@@ -111,7 +111,7 @@ bound code; `bound/.clasp.json` is gitignored.
 
 ## How the merge works
 
-The repo keeps a **`creator` branch** holding the creator's *pristine* bound code —
+The repo keeps a **`creator` branch** holding the creator's *pristine* bound code:
 one commit per version, exactly as `clasp pull` delivers it (after Prettier), with
 none of your edits. `main` holds your customized code. Each update is a 3-way merge:
 
@@ -135,7 +135,7 @@ pulled bound files with the repo's `.prettierrc.json` (`semi: false`,
 bytes and a creator edit only conflicts when it touches code you customized *in
 substance*.
 
-Only the creator files git tracks in `bound/` take part — `onOpen.js`,
+Only the creator files git tracks in `bound/` take part: `onOpen.js`,
 `LoadPlayerData.js`, `UploadPlayerData.html`, `appsscript.json`. Of these only
 `onOpen.js` carries an edit (one `offlineDexOnOpen()` call); all of our code is in
 `OfflineDexBound.js` / `OfflineDexUpload.html`, which the creator's copy never contains,
@@ -147,7 +147,7 @@ so they can't conflict. Creator files you never touch (`ImportDB.js`,
 If there is no `creator` branch (a fresh clone that never fetched it), the CLI
 creates it as an **orphan** from the pulled code and merges with
 `--allow-unrelated-histories`. With no common ancestor git conflicts on the whole of
-each customized file — reconcile once by hand, `--continue`, and every later update
+each customized file. Reconcile once by hand, run `--continue`, and every later update
 is a clean line-level merge. (This repo's `creator` branch already exists; `git fetch`
 brings it along.)
 
@@ -166,51 +166,51 @@ brings it along.)
 ## Caveats & troubleshooting
 
 - **Why do I have to paste the editor URL?** Google's Drive API doesn't return
-  container-bound scripts (v3, v2, children — all empty, even with full Drive scope),
-  so no script or CLI can discover the copy's Script ID. `npm run update -- <editor URL>`
-  works directly too, without the dialog.
-- **"This copy already has your code pushed to it"** — the CLI found `OfflineDexLib`
+  container-bound scripts (v3, v2 and children all come back empty, even with full
+  Drive scope), so no script or CLI can discover the copy's Script ID.
+  `npm run update -- <editor URL>` works directly too, without the dialog.
+- **"This copy already has your code pushed to it".** The CLI found `OfflineDexLib`
   in the pulled code, so it isn't a pristine copy and can't become the baseline. Run
   Prepare Next Version again and choose NO to make a fresh copy.
-- **"A creator baseline for X is already recorded"** — you already ran the update for
+- **"A creator baseline for X is already recorded".** You already ran the update for
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
-- **Daily Mode column L and row 15** — the two structural bits the port inserts. Column L
-  is decided by a landmark label in the creator's layout (`DAILY_MODE_LANDMARK_*` in
-  `src/lib/migrator.ts`), row 15 by where the map-image merge starts
-  (`DAILY_MODE_IMAGE_ROW_*`). If the creator moves or renames either, planning stops with
-  the reason and nothing is written (fix the constants, run Finish Setup again) — eyeball
-  that sheet after migrating.
-- **Daily Mode merges** — everything merged in `B12:M<image bottom>` is copied from your
+- **Daily Mode column L and row 15.** These are the two structural pieces the port
+  inserts. Column L is decided by a landmark label in the creator's layout
+  (`DAILY_MODE_LANDMARK_*` in `src/lib/migrator.ts`), row 15 by where the map-image
+  merge starts (`DAILY_MODE_IMAGE_ROW_*`). If the creator moves or renames either,
+  planning stops with the reason and nothing is written (fix the constants, run Finish
+  Setup again). Check that sheet after migrating.
+- **Daily Mode merges.** Everything merged in `B12:M<image bottom>` is copied from your
   previous version, so the header blocks (B12/F12/I12), the creator's wiki-link row and
   the map image all come across as you had them. Change a merge there in your current
   sheet and the next migration reproduces it; no constant to update.
-- **Quick Checklist columns** — the creator's layout is kept; the port finds the data
+- **Quick Checklist columns.** The creator's layout is kept; the port finds the data
   block by row 10 and shifts your header formulas to match. The SaveTracker finds its
-  columns the same way (plus header labels — see `TRACKER_SPECS` in
-  `src/lib/saveTracker.ts`), so a moved block is absorbed; a *renamed* header stops the
-  upload with a message naming the label it couldn't find — update the spec then.
-- **Migration ran on the wrong layout** — should no longer happen: the plan is shown
+  columns the same way, plus header labels (see `TRACKER_SPECS` in
+  `src/lib/saveTracker.ts`), so a moved block is absorbed. A *renamed* header stops the
+  upload with a message naming the label it couldn't find; update the spec then.
+- **Migration ran on the wrong layout.** This should no longer happen: the plan is shown
   before applying and landmark mismatches abort it. The steps are idempotent, so
   re-running Finish Setup on the same copy is safe.
-- **"No file found named ..."** — the source/destination filenames don't match
+- **"No file found named ...".** The source/destination filenames don't match
   `Offline RogueDex {v}` exactly, or the file is trashed. Rename to match.
-- **Finish Setup picked the wrong previous version** — it takes the newest copy older
+- **Finish Setup picked the wrong previous version.** It takes the newest copy older
   than this one; answer NO to the confirm and type the version you want. Trash stale
-  duplicates to avoid surprises.
-- **Merge conflict on a file I customized** — expected when you and the creator edited
+  duplicates so the detection picks the right one next time.
+- **Merge conflict on a file I customized.** Expected when you and the creator edited
   the same lines. Keep both, remove the `<<<<<<< ======= >>>>>>>` markers,
   `git add`, `npm run update -- --continue`.
-- **Suddenly lots of formatting-only conflicts** — Prettier didn't run. It's a
+- **Suddenly lots of formatting-only conflicts.** Prettier didn't run. It's a
   devDependency; `npm install` and re-run.
-- **The creator moved the public sheet** — update `PUBLIC_SHEET_FILE_ID` in
+- **The creator moved the public sheet.** Update `PUBLIC_SHEET_FILE_ID` in
   `src/shared/naming.ts` (shared by the CLI and the library).
-- **Library changes not taking effect** — the bound manifest uses
+- **Library changes not taking effect.** The bound manifest uses
   `developmentMode: true`, so building and pushing the library (`npm run build && cd library
   && clasp push`, or automatically on `git push` via the pre-push hook) is enough; no
-  redeploy needed. Note that this also means a bad push reaches every copy at once — run
+  redeploy needed. This also means a bad push reaches every copy at once, so run
   `npm run check` first.
-- **Finish Setup reported errors** — the migration steps that failed are listed in the
+- **Finish Setup reported errors.** The migration steps that failed are listed in the
   alert and the copy is *not* marked as migrated. Every flow also writes per-step timings
   to the hidden `_timings` sheet.
 

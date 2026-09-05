@@ -5,8 +5,7 @@
  * references ('Other'!F1), string literals and function names are untouched.
  *
  * Used by the Migrator to port your Quick Checklist header formulas into a
- * destination whose data block starts further right (creator 6.03 added a
- * column) without the temp-sheet insertColumns trick.
+ * destination whose data block starts further right.
  */
 
 export function columnToIndex(letters: string): number {
@@ -134,8 +133,7 @@ function readRef(formula: string, pos: number): { text: string } {
     /^(\$?[A-Z]{1,3}\$?\d*|\$?\d+)(:(\$?[A-Z]{1,3}\$?\d*|\$?\d+))?(?![A-Za-z0-9_(])/,
   )
   if (!match) return { text: '' }
-  // Reject things like "TRUE" (4 letters get split) — the regex caps at 3 letters
-  // and the negative lookahead refuses a following letter, so "TRUE" never matches.
+  // The 3-letter cap and the lookahead keep words like TRUE from matching.
   return { text: match[0] }
 }
 

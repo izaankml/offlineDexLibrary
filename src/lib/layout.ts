@@ -3,13 +3,11 @@
  *
  * Every column fact the SaveTracker needs is located here at runtime by the
  * creator's own header text instead of being a hard-coded index. The data
- * sheets and the display sheets share header labels (verified on 6.03: the
- * dex sheets' row-2 sub-headers are identical; STARTER_CHECKLIST.data row 1
- * carries "Caught flag … Ribbons"), so a creator reshuffle either resolves
- * correctly or fails loudly with the header that was actually found.
+ * sheets and the display sheets share header labels, so a creator reshuffle
+ * either resolves correctly or throws naming the header that was found.
  *
- * Pure: takes header grids (string[][]) — the SaveTracker reads them through
- * the Sheets API — so it can be tested with the captured 6.03 fixtures.
+ * Pure: takes header grids (string[][]), which the SaveTracker reads through
+ * the Sheets API, so it can be tested with the captured fixtures.
  */
 
 /** How many top rows to scan for header anchors. */
@@ -18,9 +16,9 @@ export const HEADER_BAND_ROWS = 10
 /**
  * Where a display sheet's data block starts. Either a header label to find in
  * the band, or the Quick Checklist rule shared with the Migrator: the first
- * non-blank cell of `locatorRow` right of `fixedColumns` (the creator's stats
- * row on a fresh copy, your "Stats:" row on a migrated one — the header
- * labels themselves are replaced by your stat formulas after migration).
+ * non-blank cell of `locatorRow` right of `fixedColumns`. The Quick Checklist
+ * needs the latter because migration replaces its header labels with your
+ * stat formulas.
  */
 export type DisplayAnchor =
   | { kind: 'label'; text: string }
@@ -105,7 +103,7 @@ function mustFind(
   if (!found) {
     throw new Error(
       `Layout: could not find the header "${text}" in the first ${band.length} rows of ${sheetDescription}. ` +
-        'The creator may have renamed or moved it — update the tracker spec (src/lib/layout.ts).',
+        'The creator may have renamed or moved it; update the tracker spec (src/lib/layout.ts).',
     )
   }
   return found
@@ -189,9 +187,8 @@ export function resolveFromBands(
     }
   }
 
-  // exclude/increment name the FIRST column carrying that label in the
-  // tracked header row (labels can repeat further right — e.g. "Friendship"
-  // is both an ability attribute and, 90 columns later, a challenge flag).
+  // exclude/increment name the first column carrying that label in the
+  // tracked header row; some labels repeat further right.
   const firstTrackedColumnLabelled = (label: string): number => {
     const wantedLabel = normalizeLabel(label)
     for (let column = trackFrom.col; column <= trackToColumn; column++) {

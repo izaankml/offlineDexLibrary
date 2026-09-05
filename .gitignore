@@ -1,7 +1,7 @@
-# clasp — Script IDs, never commit these
+# clasp config holds Script IDs; never commit it
 **/.clasp.json
 
-# Creator's unmodified bound files — pulled by clasp but not ours to track
+# Creator's unmodified bound files: pulled by clasp but not ours to track
 bound/*
 !bound/onOpen.js
 !bound/LoadPlayerData.js
@@ -21,5 +21,5 @@ node_modules/
 
 .claude/
 
-# Built library bundle (npm run build) — clasp pushes it, git doesn't track it
+# Built library bundle (npm run build): clasp pushes it, git doesn't track it
 library/Code.js

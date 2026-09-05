@@ -12,10 +12,9 @@ export type CellValue = string | number | boolean | null
 
 export const calls: string[] = []
 /**
- * SpreadsheetApp mutations are applied lazily in real Apps Script; the fake
- * counts them and the fake Sheets API refuses to run while any are pending
- * (i.e. until SpreadsheetApp.flush() was called) — the bug class that painted
- * the wrong rows on 2026-08-18.
+ * SpreadsheetApp mutations are applied lazily in real Apps Script. The fake
+ * counts them, and the fake Sheets API refuses to run while any are pending,
+ * so a missing SpreadsheetApp.flush() fails the test.
  */
 export let pendingMutations = 0
 export function noteMutation(): void {
@@ -641,7 +640,7 @@ function applyRequest(
 function requireFlushed(method: string): void {
   if (pendingMutations > 0) {
     throw new Error(
-      `fake Sheets: ${method} called with ${pendingMutations} unflushed SpreadsheetApp mutation(s) — call SpreadsheetApp.flush() first (real Apps Script applies them lazily, after the API call)`,
+      `fake Sheets: ${method} called with ${pendingMutations} unflushed SpreadsheetApp mutation(s); call SpreadsheetApp.flush() first (real Apps Script applies them lazily, after the API call)`,
     )
   }
 }
