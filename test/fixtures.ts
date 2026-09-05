@@ -140,11 +140,19 @@ export function buildWorkbook(options: WorkbookOptions = {}): FakeSpreadsheet {
     unlockMap.load(3, 9, [['Swamp']])
     const partyChecklist = spreadsheet.addSheet('Party Checklist')
     partyChecklist.load(1, 1, [
-      ['Dex #', 'Starter', 'Rarity', 'Candy', 'Starter', 'Fought'],
+      ['', '', '', '', 'Fought', 'Fought'],
+      [
+        'Pokemon',
+        'Dex #',
+        'Starter',
+        'Starter Cost',
+        'Fought Flag',
+        'Fought Count',
+      ],
     ])
-    partyChecklist.load(2, 1, [
-      [438, 'Bonsly', 'Rare', 20, '☑', '☑'],
-      [1, 'Bulbasaur', 'Rare', 17, '☑', '☑'],
+    partyChecklist.load(3, 1, [
+      ['Arceus', 493, 'Arceus', 9, '☐', 0],
+      ['Charcadet', 935, 'Charcadet', 4, '☑', 19],
     ])
   }
 

@@ -87,7 +87,7 @@ test('describeLayout reports every tracker (or the error) without throwing', () 
   assert.match(text, /QuickChecklist: data D–K/)
   assert.match(text, /StarterDex: data L–EM .* → display D–EE \(shift -8\)/)
   assert.match(text, /clear on upload: "Daily Unlock Map" from E2 \(\d+ rows/)
-  assert.match(text, /clear on upload: "Party Checklist" from A2/)
+  assert.match(text, /clear on upload: "Party Checklist" from A3/)
   spreadsheet.deleteSheet(spreadsheet.getSheetByName('FULL_DEX.data')!)
   assert.match(describeLayout(), /ERROR FULL_DEX.data not found/)
 })
@@ -101,8 +101,8 @@ test('an upload wipes the hand-made highlights on the Daily Unlock Map and Party
   unlockMap.writeBackgrounds(2, 5, [['#ffff00', '#ffff00']]) // today's route
   unlockMap.writeBackgrounds(9, 9, [['#ff9900']])
   const partyChecklist = spreadsheet.getSheetByName('Party Checklist')!
-  partyChecklist.writeBackgrounds(1, 1, [['#999999']])
-  partyChecklist.writeBackgrounds(2, 2, [['#00ff00']])
+  partyChecklist.writeBackgrounds(1, 1, [['#999999'], ['#999999']]) // both header rows
+  partyChecklist.writeBackgrounds(3, 2, [['#00ff00']])
   resetToastProgress('upload')
   processChanges()
   assert.equal(unlockMap.backgroundAt(2, 5), null)
@@ -110,8 +110,9 @@ test('an upload wipes the hand-made highlights on the Daily Unlock Map and Party
   assert.equal(unlockMap.backgroundAt(9, 9), null)
   assert.equal(unlockMap.backgroundAt(1, 5), '#999999', 'header row kept')
   assert.equal(unlockMap.backgroundAt(2, 2), '#999999', 'description kept')
-  assert.equal(partyChecklist.backgroundAt(2, 2), null)
+  assert.equal(partyChecklist.backgroundAt(3, 2), null)
   assert.equal(partyChecklist.backgroundAt(1, 1), '#999999', 'header row kept')
+  assert.equal(partyChecklist.backgroundAt(2, 1), '#999999', 'label row kept')
   assert.deepEqual(
     apiCalls.map((call) => call.method),
     [

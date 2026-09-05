@@ -109,7 +109,7 @@ API instead:
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
    the display is physically re-sorted first; otherwise there is no sort. The same batch
    wipes the hand-made highlights on the `CLEAR_ON_UPLOAD` sheets (`Daily Unlock Map` from
-   E2, `Party Checklist` from A2: one `repeatCell` blanking the backgrounds from that cell
+   E2, `Party Checklist` from A3: one `repeatCell` blanking the backgrounds from that cell
    to the grid's end, so the creator's header fills above and left of it stay). A missing
    sheet is logged and skipped; *Check Layout* shows whether each one was found.
 3. *Snapshotting*: ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
