@@ -107,7 +107,11 @@ API instead:
    first run after an upgrade the whole tracked block is cleared once) and paints only the
    changed rows (`updateCells` with `backgroundColor` per row of the tracked block, `{}`
    for unchanged cells). If the display key column (A) is out of order (a slicer sort),
-   the display is physically re-sorted first; otherwise there is no sort.
+   the display is physically re-sorted first; otherwise there is no sort. The same batch
+   wipes the hand-made highlights on the `CLEAR_ON_UPLOAD` sheets (`Daily Unlock Map` from
+   E2, `Party Checklist` from A2: one `repeatCell` blanking the backgrounds from that cell
+   to the grid's end, so the creator's header fills above and left of it stay). A missing
+   sheet is logged and skipped; *Check Layout* shows whether each one was found.
 3. *Snapshotting*: ONE `values.batchUpdate` writes each tracker's baseline as **JSON in a
    few cells** of the hidden `_snapshot_<key>` sheet (A1 = metadata `{v, firstRow,
    minCol, maxCol, rows, cells, labels, painted}`, A2… = row chunks ≤45k chars). A
@@ -122,8 +126,10 @@ and barely needed.
 **Upload Data (Keep Baseline)** paints and stores the painted rows but leaves the baseline.
 
 **Standalone menu items:** *Snapshot Data* (baseline ← current, highlights untouched),
-*Highlight Changes* (= keep-baseline flow), *Clear Highlights* (clears the remembered rows,
-or the whole block if unknown), *Check Layout* (dry run of the probe).
+*Highlight Changes* (= keep-baseline flow; the hand-made highlights on the `CLEAR_ON_UPLOAD`
+sheets are left alone), *Clear Highlights* (clears the whole tracked blocks and the
+`CLEAR_ON_UPLOAD` sheets), *Check Layout* (dry run of the probe, plus whether each
+`CLEAR_ON_UPLOAD` sheet was found).
 
 **Toast progress + timing log (`progress.ts`):** a single replacing toast shows the current
 step; on finish (or failure, where `failFlow` shows a non-sticky error toast) every step's

@@ -18,7 +18,8 @@
  *   1 values.batchGet    (header bands, display key columns, all data blocks,
  *                         all snapshots)
  *   1 batchUpdate        (clear last upload's highlighted rows, paint the
- *                         changed rows)
+ *                         changed rows, wipe the hand-made highlights on the
+ *                         CLEAR_ON_UPLOAD sheets)
  *   1 values.batchUpdate (snapshots as compact JSON in a few cells)
  * plus a display sort only when a slicer moved rows.
  *
@@ -50,6 +51,7 @@ import {
   hexToColor,
   liveSheets,
   padValues,
+  parseA1Cell,
   sheetRange,
 } from './sheetsApi.ts'
 
@@ -117,6 +119,32 @@ export const TRACKER_SPECS: TrackerSpec[] = [
 
 export function snapshotSheetName(key: string): string {
   return '_snapshot_' + key
+}
+
+// ---------------------------------------------------------------------------
+// Sheets highlighted by hand, wiped on every upload
+// ---------------------------------------------------------------------------
+
+/**
+ * A sheet you fill cells on while playing. Each upload clears the backgrounds
+ * from `fromCell` to the bottom-right of the grid; whatever lies above or left
+ * of it (the creator's headers) keeps its fills. A missing sheet is logged and
+ * skipped, never fatal.
+ */
+export type ClearTarget = { sheet: string; fromCell: string }
+
+export const CLEAR_ON_UPLOAD: ClearTarget[] = [
+  // The biome grid starts at E2; B2:C15 is the creator's description block.
+  { sheet: 'Daily Unlock Map', fromCell: 'E2' },
+  { sheet: 'Party Checklist', fromCell: 'A2' },
+]
+
+export type ResolvedClearTarget = {
+  target: ClearTarget
+  sheetId: number
+  title: string
+  rowCount: number
+  columnCount: number
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +310,12 @@ export type LoadedTracker = {
   snapshotSheetStale: boolean
 }
 
-export type Workbook = { info: SpreadsheetInfo; trackers: LoadedTracker[] }
+export type Workbook = {
+  info: SpreadsheetInfo
+  trackers: LoadedTracker[]
+  /** The CLEAR_ON_UPLOAD sheets that exist in this workbook. */
+  clearTargets: ResolvedClearTarget[]
+}
 
 type SheetInfoLite = NonNullable<SpreadsheetInfo['sheets']>[number]
 
@@ -392,6 +425,23 @@ export function loadWorkbook(
       }
     }
   }
+  const clearTargets: ResolvedClearTarget[] = []
+  for (const target of CLEAR_ON_UPLOAD) {
+    const sheet = findSheet(info, target.sheet, spreadsheet)
+    if (!sheet) {
+      Logger.log(
+        `Note: "${target.sheet}" not found; its highlights are not cleared`,
+      )
+      continue
+    }
+    clearTargets.push({
+      target,
+      sheetId: sheet.properties.sheetId,
+      title: sheet.properties.title,
+      rowCount: sheet.properties.gridProperties?.rowCount ?? 1000,
+      columnCount: sheet.properties.gridProperties?.columnCount ?? 26,
+    })
+  }
   const ranges: string[] = []
   for (const spec of TRACKER_SPECS) {
     const dataTitle = apiTitle(info, spec.dataSheet, spreadsheet)
@@ -494,7 +544,7 @@ export function loadWorkbook(
       snapshotSheetStale,
     })
   }
-  return { info, trackers }
+  return { info, trackers, clearTargets }
 }
 
 /** A1 of a snapshot sheet holds the JSON metadata; anything else is not a snapshot. */
@@ -733,18 +783,41 @@ export function ensureDisplayOrder(
 // Public flow
 // ---------------------------------------------------------------------------
 
+/** One repeatCell that blanks the backgrounds from the target's `fromCell` to the grid's end. */
+export function clearTargetRequests(resolved: ResolvedClearTarget): Request[] {
+  const { row, column } = parseA1Cell(resolved.target.fromCell)
+  if (row > resolved.rowCount || column > resolved.columnCount) return []
+  return [
+    {
+      repeatCell: {
+        range: {
+          sheetId: resolved.sheetId,
+          startRowIndex: row - 1,
+          endRowIndex: resolved.rowCount,
+          startColumnIndex: column - 1,
+          endColumnIndex: resolved.columnCount,
+        },
+        cell: { userEnteredFormat: {} },
+        fields: 'userEnteredFormat.backgroundColor',
+      },
+    },
+  ]
+}
+
 /**
  * Full save-upload flow: read everything, diff, paint the changed rows (and
- * clear last time's), write the new snapshots.
+ * clear last time's), wipe the hand-made highlights on the CLEAR_ON_UPLOAD
+ * sheets, write the new snapshots.
  * Assumes the caller (uploadFileTracked) already reset toast state. On
  * failure the user gets an error toast and the error is rethrown.
  */
 export function processChanges(
-  options?: { skipSnapshot?: boolean },
+  options?: { skipSnapshot?: boolean; keepManualHighlights?: boolean },
   client: SheetsClient = liveSheets,
 ): void {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
   const skipSnapshot = !!(options && options.skipSnapshot)
+  const keepManualHighlights = !!(options && options.keepManualHighlights)
   try {
     startStep(spreadsheet, 'Reading sheets')
     const workbook = loadWorkbook(spreadsheet, client)
@@ -775,6 +848,14 @@ export function processChanges(
       Logger.log(
         `${key}: highlighted ${changedCells} changed cells in ${rowColors.size} rows over ${tracker.currentValues.length} rows`,
       )
+    }
+    if (!keepManualHighlights) {
+      for (const resolved of workbook.clearTargets) {
+        paintBatch.push(...clearTargetRequests(resolved))
+        Logger.log(
+          `${resolved.title}: cleared highlights from ${resolved.target.fromCell}`,
+        )
+      }
     }
     if (paintBatch.length) client.batchUpdate(spreadsheet.getId(), paintBatch)
 
@@ -840,12 +921,12 @@ export function snapshot(client: SheetsClient = liveSheets): void {
   })
 }
 
-/** Public entry: diff against the baseline and paint; the baseline is kept. */
+/** Public entry: diff against the baseline and paint; the baseline and the hand-made highlights are kept. */
 export function highlightChanges(): void {
-  processChanges({ skipSnapshot: true })
+  processChanges({ skipSnapshot: true, keepManualHighlights: true })
 }
 
-/** Public entry: clear every highlight (last painted rows, or the whole block if unknown). */
+/** Public entry: clear every highlight (the whole tracked blocks, plus the CLEAR_ON_UPLOAD sheets). */
 export function clearHighlights(client: SheetsClient = liveSheets): void {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
   runStandaloneIfNeeded(spreadsheet, 'Clear highlights', () => {
@@ -861,6 +942,9 @@ export function clearHighlights(client: SheetsClient = liveSheets): void {
           .requests,
       )
     }
+    for (const resolved of workbook.clearTargets) {
+      requests.push(...clearTargetRequests(resolved))
+    }
     if (requests.length) client.batchUpdate(spreadsheet.getId(), requests)
     const metaWrites = workbook.trackers
       .filter((tracker) => tracker.snapshotMeta)
@@ -871,13 +955,23 @@ export function clearHighlights(client: SheetsClient = liveSheets): void {
   })
 }
 
-/** Dry run: what the layout probe finds in this workbook, one line per tracker (or the error). */
+/** Dry run: what the layout probe finds in this workbook, one line per tracker and per CLEAR_ON_UPLOAD sheet (or the error). */
 export function describeLayout(client: SheetsClient = liveSheets): string {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
   try {
-    return loadWorkbook(spreadsheet, client)
-      .trackers.map((tracker) => describeResolved(tracker.layout))
-      .join('\n')
+    const workbook = loadWorkbook(spreadsheet, client)
+    const trackerLines = workbook.trackers.map((tracker) =>
+      describeResolved(tracker.layout),
+    )
+    const clearLines = CLEAR_ON_UPLOAD.map((target) => {
+      const resolved = workbook.clearTargets.find(
+        (candidate) => candidate.target === target,
+      )
+      return resolved
+        ? `clear on upload: "${resolved.title}" from ${target.fromCell} (${resolved.rowCount} rows × ${resolved.columnCount} columns)`
+        : `clear on upload: "${target.sheet}" NOT FOUND (its highlights are not cleared)`
+    })
+    return [...trackerLines, ...clearLines].join('\n')
   } catch (error) {
     return 'ERROR ' + (error instanceof Error ? error.message : String(error))
   }

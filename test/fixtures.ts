@@ -17,6 +17,8 @@ export const HEADERS: Record<string, string[][]> = JSON.parse(
 export type WorkbookOptions = {
   /** Number of Pokémon rows per sheet (default 25). */
   rows?: number
+  /** Include the two sheets highlighted by hand, Daily Unlock Map and Party Checklist (default true). */
+  handHighlightedSheets?: boolean
 }
 
 /** Deterministic pseudo-random 0/1/count values so diffs are reproducible. */
@@ -118,6 +120,33 @@ export function buildWorkbook(options: WorkbookOptions = {}): FakeSpreadsheet {
   }
   addDexPair('STARTER_DEX.data', 'Starter DEX Checklist', LAYOUT_603.starter)
   addDexPair('FULL_DEX.data', 'Full DEX Checklist', LAYOUT_603.full)
+
+  // --- Sheets highlighted by hand (cleared on upload) ------------------------
+  if (options.handHighlightedSheets ?? true) {
+    const unlockMap = spreadsheet.addSheet('Daily Unlock Map')
+    unlockMap.load(1, 5, [[1, 11, 21, 31, 41]])
+    unlockMap.load(2, 2, [
+      [
+        'Daily Mode Unlocks',
+        '',
+        '',
+        'Tall Grass',
+        'Forest',
+        'Jungle',
+        'Temple',
+        'Desert',
+      ],
+    ])
+    unlockMap.load(3, 9, [['Swamp']])
+    const partyChecklist = spreadsheet.addSheet('Party Checklist')
+    partyChecklist.load(1, 1, [
+      ['Dex #', 'Starter', 'Rarity', 'Candy', 'Starter', 'Fought'],
+    ])
+    partyChecklist.load(2, 1, [
+      [438, 'Bonsly', 'Rare', 20, '☑', '☑'],
+      [1, 'Bulbasaur', 'Rare', 17, '☑', '☑'],
+    ])
+  }
 
   return spreadsheet
 }

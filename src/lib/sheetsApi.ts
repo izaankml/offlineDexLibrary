@@ -251,3 +251,19 @@ export function a1(row: number, column: number): string {
   }
   return letters + row
 }
+
+/** 1-based (row, column) of a single A1 cell reference: parseA1Cell('E2') = { row: 2, column: 5 }. */
+export function parseA1Cell(reference: string): {
+  row: number
+  column: number
+} {
+  const match = reference
+    .trim()
+    .toUpperCase()
+    .match(/^([A-Z]+)(\d+)$/)
+  if (!match) throw new Error(`not a cell reference: ${reference}`)
+  let column = 0
+  for (const letter of match[1]!)
+    column = column * 26 + (letter.charCodeAt(0) - 64)
+  return { row: parseInt(match[2]!, 10), column }
+}
