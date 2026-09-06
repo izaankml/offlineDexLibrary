@@ -86,16 +86,17 @@ test('describeLayout reports every tracker (or the error) without throwing', () 
   const text = describeLayout()
   assert.match(text, /QuickChecklist: data D–K/)
   assert.match(text, /StarterDex: data L–EM .* → display D–EE \(shift -8\)/)
-  assert.match(text, /clear on upload: "Party Checklist" from A3 \(\d+ rows/)
+  assert.match(text, /clear on upload: "Party Checklist" from B3 \(\d+ rows/)
   spreadsheet.deleteSheet(spreadsheet.getSheetByName('FULL_DEX.data')!)
   assert.match(describeLayout(), /ERROR FULL_DEX.data not found/)
 })
 
-test('an upload wipes the hand-made highlights on the Party Checklist; its header rows stay', () => {
+test('an upload wipes the hand-made highlights on the Party Checklist; its header rows and column A stay', () => {
   const spreadsheet = buildWorkbook({ rows: 5 })
   setActiveSpreadsheet(spreadsheet)
   const partyChecklist = spreadsheet.getSheetByName('Party Checklist')!
   partyChecklist.writeBackgrounds(1, 1, [['#999999'], ['#999999']]) // both header rows
+  partyChecklist.writeBackgrounds(3, 1, [['#ff00ff']]) // a name in column A
   partyChecklist.writeBackgrounds(3, 2, [['#00ff00']])
   partyChecklist.writeBackgrounds(9, 6, [['#ff9900']])
   resetToastProgress('upload')
@@ -104,6 +105,7 @@ test('an upload wipes the hand-made highlights on the Party Checklist; its heade
   assert.equal(partyChecklist.backgroundAt(9, 6), null)
   assert.equal(partyChecklist.backgroundAt(1, 1), '#999999', 'header row kept')
   assert.equal(partyChecklist.backgroundAt(2, 1), '#999999', 'label row kept')
+  assert.equal(partyChecklist.backgroundAt(3, 1), '#ff00ff', 'column A kept')
   assert.deepEqual(
     apiCalls.map((call) => call.method),
     [
@@ -116,7 +118,7 @@ test('an upload wipes the hand-made highlights on the Party Checklist; its heade
   )
   assert.ok(
     logs.some((line) =>
-      line.includes('Party Checklist: cleared highlights from A3'),
+      line.includes('Party Checklist: cleared highlights from B3'),
     ),
   )
 })

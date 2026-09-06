@@ -134,8 +134,9 @@ export function snapshotSheetName(key: string): string {
 export type ClearTarget = { sheet: string; fromCell: string }
 
 export const CLEAR_ON_UPLOAD: ClearTarget[] = [
-  // Row 1 holds the group headers, row 2 the column labels; entries start at row 3.
-  { sheet: 'Party Checklist', fromCell: 'A3' },
+  // Row 1 holds the group headers, row 2 the column labels, column A the
+  // Pokemon names (highlighted by hand and kept); entries start at row 3.
+  { sheet: 'Party Checklist', fromCell: 'B3' },
 ]
 
 export type ResolvedClearTarget = {
