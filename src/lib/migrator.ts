@@ -275,21 +275,15 @@ export function readSource(
       blockRange(DAILY_MODE_SHEET, dailyModeImageBlock(meta)),
       blockRange(DAILY_MODE_SHEET, DAILY_MODE_INPUTS_BLOCK),
       `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
-      ...dailyUnlocksRange(
-        meta,
-        `${a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN)}`,
+      sheetRange(
+        DAILY_UNLOCKS_SHEET,
+        a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN),
       ),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
   })
   return { meta, grid }
-}
-
-/** The Daily Mode Unlocks range to read, or nothing when the sheet is absent (an unknown range fails the whole GET). */
-function dailyUnlocksRange(meta: SpreadsheetInfo, a1Range: string): string[] {
-  const sheet = sheetByTitle(meta, DAILY_UNLOCKS_SHEET)
-  return sheet ? [sheetRange(sheet.properties.title, a1Range)] : []
 }
 
 export function readDestination(
@@ -305,8 +299,8 @@ export function readDestination(
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
       `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)}:${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
       // The landmark headers and the formula cell, read as one block from A1.
-      ...dailyUnlocksRange(
-        meta,
+      sheetRange(
+        DAILY_UNLOCKS_SHEET,
         `A1:${a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN)}`,
       ),
     ],
@@ -616,45 +610,36 @@ export function planQuickChecklist(
     requests,
   })
 
-  // Title stamp unless A1 is a formula.
-  const destTitleCell = cellAt(destGrid, 0, 0)
-  if (destTitleCell.userEnteredValue?.formulaValue !== undefined) {
-    ops.push({
-      label: 'Quick Checklist title',
-      note: 'A1 is a formula; left alone',
-      requests: [],
-    })
-  } else {
-    ops.push({
-      label: 'Quick Checklist title',
-      note: `A1 ← "${QUICK_CHECKLIST_TITLE_PREFIX}${destVersion}"`,
-      requests: [
-        {
-          updateCells: {
-            range: {
-              sheetId,
-              startRowIndex: 0,
-              endRowIndex: 1,
-              startColumnIndex: 0,
-              endColumnIndex: 1,
-            },
-            rows: [
-              {
-                values: [
-                  {
-                    userEnteredValue: {
-                      stringValue: QUICK_CHECKLIST_TITLE_PREFIX + destVersion,
-                    },
-                  },
-                ],
-              },
-            ],
-            fields: 'userEnteredValue',
+  // Title stamp: the creator's copy can lag a version.
+  ops.push({
+    label: 'Quick Checklist title',
+    note: `A1 ← "${QUICK_CHECKLIST_TITLE_PREFIX}${destVersion}"`,
+    requests: [
+      {
+        updateCells: {
+          range: {
+            sheetId,
+            startRowIndex: 0,
+            endRowIndex: 1,
+            startColumnIndex: 0,
+            endColumnIndex: 1,
           },
+          rows: [
+            {
+              values: [
+                {
+                  userEnteredValue: {
+                    stringValue: QUICK_CHECKLIST_TITLE_PREFIX + destVersion,
+                  },
+                },
+              ],
+            },
+          ],
+          fields: 'userEnteredValue',
         },
-      ],
-    })
-  }
+      },
+    ],
+  })
   return ops
 }
 
@@ -662,8 +647,7 @@ export function planQuickChecklist(
  * Extend the alternating-colour banding to cover the Pokémon image column B:
  * a banding starting at C is stretched left (merging with an A-only banding
  * if present) and B's cell fills are cleared over the banded rows. If a
- * banding already spans B, only the fills are cleared. Otherwise row-parity
- * CF rules adjacent to B are widened.
+ * banding already spans B, only the fills are cleared.
  */
 export function planQuickChecklistBanding(
   dest: DestInfo,
@@ -742,58 +726,8 @@ export function planQuickChecklistBanding(
       },
     ]
   }
-  const rowParityFormula = /ISEVEN\s*\(\s*ROW|ISODD\s*\(\s*ROW|MOD\s*\(\s*ROW/i
-  const requests: Request[] = []
-  ;(destSheetMeta.conditionalFormats ?? []).forEach((rule, ruleIndex) => {
-    const formula =
-      rule.booleanRule?.condition.values?.[0]?.userEnteredValue ?? ''
-    if (
-      rule.booleanRule?.condition.type !== 'CUSTOM_FORMULA' ||
-      !rowParityFormula.test(formula)
-    )
-      return
-    let widened = false
-    const ranges = rule.ranges.map((range) => {
-      const firstColumnIndex = range.startColumnIndex ?? 0
-      const lastColumnIndex = (range.endColumnIndex ?? 0) - 1
-      if (
-        firstColumnIndex <= imageColumnIndex &&
-        lastColumnIndex >= imageColumnIndex
-      )
-        return range
-      if (
-        lastColumnIndex === imageColumnIndex - 1 ||
-        firstColumnIndex === imageColumnIndex + 1
-      ) {
-        widened = true
-        return {
-          ...range,
-          startColumnIndex: Math.min(firstColumnIndex, imageColumnIndex),
-          endColumnIndex: Math.max(lastColumnIndex, imageColumnIndex) + 1,
-        }
-      }
-      return range
-    })
-    if (widened)
-      requests.push({
-        updateConditionalFormatRule: {
-          sheetId,
-          index: ruleIndex,
-          rule: { ...rule, ranges },
-        },
-      })
-  })
-  if (requests.length) {
-    return [
-      {
-        label: 'Quick Checklist banding over the image column',
-        note: `widened ${requests.length} row-parity CF rule(s)`,
-        requests,
-      },
-    ]
-  }
   notes.push(
-    'Quick Checklist: no banding or row-parity CF adjacent to column B; nothing to extend',
+    'Quick Checklist: no banding starting at C or spanning B; nothing to extend',
   )
   return []
 }
@@ -1455,7 +1389,8 @@ export function isUnlockMarkerRule(rule: ConditionalFormatRule): boolean {
 /**
  * Copy the AG3 map-string formula from the source's Daily Mode Unlocks to the
  * destination's. Whatever the source holds wins, so later hand edits carry
- * forward too. Throws when a header the formula reads is not where expected.
+ * forward too. Throws when either side lacks the formula or a header the
+ * formula reads is not where expected.
  */
 export function planDailyUnlocksFormula(
   source: SourceInfo,
@@ -1466,35 +1401,26 @@ export function planDailyUnlocksFormula(
     DAILY_UNLOCKS_FORMULA_ROW,
     DAILY_UNLOCKS_FORMULA_COLUMN,
   )
-  const sourceSheet = sheetByTitle(source.grid, DAILY_UNLOCKS_SHEET)
-  if (!sourceSheet) {
-    notes.push(
-      `${DAILY_UNLOCKS_SHEET}: not found in the source, ${formulaCell} formula not ported`,
-    )
-    return []
-  }
-  const sourceFormula = cellAt(
-    gridAt(
-      sourceSheet,
-      DAILY_UNLOCKS_FORMULA_ROW - 1,
-      DAILY_UNLOCKS_FORMULA_COLUMN - 1,
-    ),
-    0,
-    0,
-  ).userEnteredValue?.formulaValue
-  if (sourceFormula === undefined) {
-    notes.push(
-      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the source, nothing to port`,
-    )
-    return []
-  }
-  const destSheet = sheetByTitle(dest.grid, DAILY_UNLOCKS_SHEET)
-  if (!destSheet) {
-    notes.push(
-      `${DAILY_UNLOCKS_SHEET}: not found in the destination, ${formulaCell} formula not ported`,
-    )
-    return []
-  }
+  const sourceSheet = requireFound(
+    sheetByTitle(source.grid, DAILY_UNLOCKS_SHEET),
+    `${DAILY_UNLOCKS_SHEET} not found in the source`,
+  )
+  const sourceFormula = requireFound(
+    cellAt(
+      gridAt(
+        sourceSheet,
+        DAILY_UNLOCKS_FORMULA_ROW - 1,
+        DAILY_UNLOCKS_FORMULA_COLUMN - 1,
+      ),
+      0,
+      0,
+    ).userEnteredValue?.formulaValue,
+    `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the source; the map-string column moved, formula not ported`,
+  )
+  const destSheet = requireFound(
+    sheetByTitle(dest.grid, DAILY_UNLOCKS_SHEET),
+    `${DAILY_UNLOCKS_SHEET} not found in the destination`,
+  )
   const destGrid = gridAt(destSheet, 0, 0)
   for (const landmark of DAILY_UNLOCKS_LANDMARKS) {
     const found = displayText(

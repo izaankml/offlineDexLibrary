@@ -898,7 +898,7 @@ test('planning refuses unknown layouts before anything is written', () => {
     /left of the source's/,
   )
 
-  // Daily Mode Unlocks: a moved header, or no creator formula at AG3, stops the port.
+  // Daily Mode Unlocks: a moved header, or no formula at AG3 on either side, stops the port.
   const waveMoved = freshDest()
   waveMoved.grid.sheets![2]!.data![0]!.rowData![1]!.values![12] = str('Floor')
   assert.throws(
@@ -912,41 +912,19 @@ test('planning refuses unknown layouts before anything is written', () => {
     () => buildPlan(source(), noCreatorFormula, '6.03'),
     /AG3 holds no formula in the destination/,
   )
-})
-
-test('Daily Mode Unlocks formula: skipped with a note when either side lacks the sheet or the formula', () => {
+  const sourceWithoutFormula = source()
+  sourceWithoutFormula.grid.sheets![2]!.data = [grid(2, 32, [[str('')]])]
+  assert.throws(
+    () => buildPlan(sourceWithoutFormula, freshDest(), '6.03'),
+    /AG3 holds no formula in the source/,
+  )
   const sourceWithoutSheet = source()
   sourceWithoutSheet.grid.sheets = sourceWithoutSheet.grid.sheets!.filter(
     (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode Unlocks',
   )
-  let { ops, notes } = buildPlan(sourceWithoutSheet, freshDest(), '6.03')
-  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
-  assert.ok(
-    notes.some((note) =>
-      note.startsWith('Daily Mode Unlocks: not found in the source'),
-    ),
-  )
-
-  const sourceWithoutFormula = source()
-  sourceWithoutFormula.grid.sheets![2]!.data = [grid(2, 32, [[str('')]])]
-  ;({ ops, notes } = buildPlan(sourceWithoutFormula, freshDest(), '6.03'))
-  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
-  assert.ok(
-    notes.some((note) =>
-      note.startsWith('Daily Mode Unlocks: AG3 holds no formula in the source'),
-    ),
-  )
-
-  const destWithoutSheet = freshDest()
-  destWithoutSheet.grid.sheets = destWithoutSheet.grid.sheets!.filter(
-    (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode Unlocks',
-  )
-  ;({ ops, notes } = buildPlan(source(), destWithoutSheet, '6.03'))
-  assert.ok(!ops.some((op) => op.label.startsWith('Daily Mode Unlocks')))
-  assert.ok(
-    notes.some((note) =>
-      note.startsWith('Daily Mode Unlocks: not found in the destination'),
-    ),
+  assert.throws(
+    () => buildPlan(sourceWithoutSheet, freshDest(), '6.03'),
+    /Daily Mode Unlocks not found in the source/,
   )
 })
 
