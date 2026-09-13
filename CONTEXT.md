@@ -206,15 +206,22 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
 - `prepareNextVersion()`: run from the *current* sheet's menu. The creator publishes
   every version as **the same Drive file**, renamed per release
   (`PUBLIC_Offline RogueDex 6.03`; ID in `PUBLIC_SHEET_FILE_ID`). It reads the version
-  from that title, `makeCopy()`s it as `Offline RogueDex <new>` into the current sheet's
-  folder (reusing an existing same-named copy if you say so), and shows a dialog: open the
+  from that title, copies it through `SpreadsheetApp` as `Offline RogueDex <new>` into your
+  Drive root (reusing an existing same-named copy if you say so), and shows a dialog: open the
   copy → Extensions → Apps Script → paste the editor URL → the dialog builds
   `npm run update -- <scriptId>` with a Copy button.
   **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
   with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
   nothing even with full Drive scope inside Apps Script), so no lookup is attempted. The
-  library uses `DriveApp` and the Sheets advanced service; no Drive advanced service, no
-  `UrlFetchApp`.
+  library uses `DriveApp` only to list spreadsheets by name and the Sheets advanced
+  service; no Drive advanced service, no `UrlFetchApp`.
+- **OAuth scopes are pinned** in both manifests (`library/appsscript.json`,
+  `bound/appsscript.json`): `spreadsheets`, `drive.metadata.readonly`, and
+  `script.container.ui`. The metadata-only Drive scope is Google-*sensitive* rather than
+  *restricted*, so the consent screen no longer asks for edit/delete access to all Drive
+  files and OAuth verification, if ever pursued, needs no paid security assessment. Every
+  `DriveApp` call must stay metadata-only (search, name, ID, dates, URL); a bound script
+  inherits its libraries' scopes, so both lists must stay in step.
 - `finishSetup()`: run from the *new* sheet's menu. Reads the destination version from
   the sheet's name, asks `detectPreviousVersion` for the source, shows one YES/NO/CANCEL
   confirm (NO falls back to a typed prompt), builds the migration plan (`planForVersions`),
@@ -233,8 +240,8 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
 Why the copy/lookup happen in Apps Script and not the CLI: `drive` / `drive.readonly` are
 Google-*restricted* scopes and clasp's built-in OAuth client isn't verified for them, so
 a local tool reusing clasp's login can't copy sheets or list bound scripts (they're
-invisible under `drive.metadata.readonly`). Inside Apps Script, `DriveApp` / the Drive
-service get full scope with no verification hurdle. The CLI *can* (and does) use clasp's
+invisible under `drive.metadata.readonly`). Inside Apps Script, `SpreadsheetApp.copy()`
+runs under the spreadsheets scope with no verification hurdle. The CLI *can* (and does) use clasp's
 login for `projects.get` (script → parent sheet) and Drive metadata (sheet name → version).
 
 ## The bound script (per-version)

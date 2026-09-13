@@ -2,8 +2,8 @@
  * SETUP: the Google-side half of a version update.
  *
  *   prepareNextVersion()      from your CURRENT sheet: copy the creator's
- *                             public sheet into Drive under the right name and
- *                             hand you the one terminal command.
+ *                             public sheet into your Drive root under the
+ *                             right name and hand you the one terminal command.
  *   finishSetup()             from the NEW sheet: confirm the previous version
  *                             (auto-detected), run the migration, mark migrated.
  *                             Returns true when the migration ran cleanly so
@@ -35,16 +35,18 @@ export const MIGRATED_FROM_PROPERTY = 'OFFLINEDEX_MIGRATED_FROM'
 
 /**
  * Menu (run from your CURRENT sheet). Copies the creator's public sheet into
- * your Drive as "Offline RogueDex <new>" and shows a dialog that turns the
- * copy's Apps Script editor URL into the exact terminal command to run next.
+ * your Drive root as "Offline RogueDex <new>" and shows a dialog that turns
+ * the copy's Apps Script editor URL into the exact terminal command to run
+ * next. The copy goes through SpreadsheetApp so the library never needs a
+ * Drive write scope.
  */
 export function prepareNextVersion(): void {
   const ui = SpreadsheetApp.getUi()
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet()
 
-  let publicFile: GoogleAppsScript.Drive.File
+  let publicSheet: GoogleAppsScript.Spreadsheet.Spreadsheet
   try {
-    publicFile = DriveApp.getFileById(PUBLIC_SHEET_FILE_ID)
+    publicSheet = SpreadsheetApp.openById(PUBLIC_SHEET_FILE_ID)
   } catch (error) {
     ui.alert(
       `Couldn't open the creator's public sheet (${PUBLIC_SHEET_FILE_ID}). If the creator moved it, update PUBLIC_SHEET_FILE_ID in src/shared/naming.ts.\n\n${error instanceof Error ? error.message : error}`,
@@ -52,7 +54,7 @@ export function prepareNextVersion(): void {
     return
   }
 
-  const publicName = publicFile.getName()
+  const publicName = publicSheet.getName()
   const newVersion = versionFromName(publicName)
   if (!newVersion) {
     ui.alert(
@@ -72,7 +74,7 @@ export function prepareNextVersion(): void {
     if (copyAnyway !== ui.Button.YES) return
   }
 
-  let copy: GoogleAppsScript.Drive.File | null = null
+  let copyUrl: string | null = null
   const existingCopies = findExistingCopies(newCopyName)
   if (existingCopies.length > 0) {
     const choice = ui.alert(
@@ -84,38 +86,20 @@ export function prepareNextVersion(): void {
       ui.ButtonSet.YES_NO_CANCEL,
     )
     if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return
-    if (choice === ui.Button.YES) copy = existingCopies[0]!
+    if (choice === ui.Button.YES) copyUrl = existingCopies[0]!.getUrl()
   }
 
-  if (!copy) {
+  if (!copyUrl) {
     spreadsheet.toast(`Copying "${publicName}"…`, 'Prepare Next Version', -1)
-    const folder = firstParentFolder(spreadsheet.getId())
-    copy = folder
-      ? publicFile.makeCopy(newCopyName, folder)
-      : publicFile.makeCopy(newCopyName)
+    copyUrl = publicSheet.copy(newCopyName).getUrl()
   }
 
   spreadsheet.toast('', 'Ready', 3)
   showPrepareDialog(ui, {
     copyName: newCopyName,
-    copyUrl: copy.getUrl(),
+    copyUrl,
     version: newVersion,
   })
-}
-
-/** The first Drive folder containing a file, or null if it's in root only. */
-function firstParentFolder(
-  fileId: string,
-): GoogleAppsScript.Drive.Folder | null {
-  try {
-    const parents = DriveApp.getFileById(fileId).getParents()
-    return parents.hasNext() ? parents.next() : null
-  } catch (error) {
-    Logger.log(
-      'firstParentFolder: ' + (error instanceof Error ? error.message : error),
-    )
-    return null
-  }
 }
 
 /** Non-trashed spreadsheets with exactly this name (newest-created first). */
