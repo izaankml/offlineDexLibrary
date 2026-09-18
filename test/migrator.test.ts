@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import './fake-gas.ts'
 import {
+  AG3_LOOKUP_SHEETS,
   DAILY_UNLOCKS_LANDMARKS,
   type DestInfo,
   type SourceInfo,
@@ -135,7 +136,7 @@ const LANDMARK = 'Missing Gym Leader Voucher…'
 const CREATOR_AG_FORMULA =
   '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P))'
 const USER_AG_FORMULA =
-  '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P & IF(D3:D<>"", " [Caught]", "")))'
+  '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P & IF(D3:D<>"", " (Caught)", "")))'
 
 /** Daily Mode Unlocks A1:AG3: the header landmarks in rows 1-2, the map-string formula at AG3. */
 function dailyUnlocksHeaderGrid(agFormula: string): GridData {
@@ -345,9 +346,23 @@ function freshDest(): DestInfo {
           columnCount: 40,
           data: [dailyUnlocksHeaderGrid(CREATOR_AG_FORMULA)],
         }),
+        ...lookupSheets(),
       ],
     },
   }
+}
+
+/** The header row of each sheet AG3 looks up, as read for the landmark check. */
+function lookupSheets(): SheetInfo[] {
+  return AG3_LOOKUP_SHEETS.map((lookup, lookupIndex) => {
+    const headerRow = Array.from({ length: lookup.lastColumn }, () => empty())
+    for (const landmark of lookup.landmarks)
+      headerRow[landmark.column - 1] = str(landmark.label)
+    return sheet(lookup.title, 20 + lookupIndex, {
+      columnCount: lookup.lastColumn,
+      data: [grid(lookup.headerRow - 1, 0, [headerRow])],
+    })
+  })
 }
 
 function migratedDest(): DestInfo {
@@ -374,25 +389,26 @@ function migratedDest(): DestInfo {
   ]
   dest.meta.sheets![5]!.conditionalFormats = []
   dest.meta.sheets![6]!.conditionalFormats = [
-    {
-      ranges: [
-        {
-          sheetId: 17,
-          startRowIndex: 1,
-          endRowIndex: 1000,
-          startColumnIndex: 4,
-          endColumnIndex: 10,
-        },
-      ],
-      booleanRule: {
-        condition: {
-          type: 'TEXT_CONTAINS',
-          values: [{ userEnteredValue: '[' }],
-        },
-        format: { backgroundColor: { red: 0.72, green: 0.88, blue: 0.8 } },
+    ['=REGEXMATCH(E2, "\\([A-Z]")', { red: 0.72, green: 0.88, blue: 0.8 }],
+    ['=REGEXMATCH(E2, "\\[[A-Z]")', { red: 0.98, green: 0.8, blue: 0.61 }],
+  ].map(([formula, backgroundColor]) => ({
+    ranges: [
+      {
+        sheetId: 17,
+        startRowIndex: 1,
+        endRowIndex: 1000,
+        startColumnIndex: 4,
+        endColumnIndex: 10,
       },
+    ],
+    booleanRule: {
+      condition: {
+        type: 'CUSTOM_FORMULA',
+        values: [{ userEnteredValue: formula as string }],
+      },
+      format: { backgroundColor: backgroundColor as Record<string, number> },
     },
-  ]
+  }))
   dest.grid.sheets![2]!.data = [dailyUnlocksHeaderGrid(USER_AG_FORMULA)]
   return dest
 }
@@ -423,7 +439,7 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     'Hide 1 sheet(s)',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
-    'Daily Unlock Map: highlight cells with a bracketed unlock',
+    'Daily Unlock Map: highlight cells with a marker',
     'Daily Mode Unlocks: AG3 formula',
   ])
   assert.deepEqual(notes, [])
@@ -453,7 +469,8 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
     USER_AG_FORMULA,
   )
 
-  // Unlock map: one "text contains [" rule at index 0 over E2 to the grid's end.
+  // Unlock map: the unlock rule at index 0, the charm rule under it, both over
+  // E2 to the grid's end.
   const unlockMapRules = requestsOfKind(ops, 'addConditionalFormatRule')
     .map(
       (request) =>
@@ -472,27 +489,44 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
         },
     )
     .filter(({ rule }) => rule.ranges[0]!.sheetId === 17)
-  assert.equal(unlockMapRules.length, 1)
-  const unlockMapRule = unlockMapRules[0]!
+  assert.equal(unlockMapRules.length, 2)
+  const [unlockMapRule, charmRule] = unlockMapRules as [
+    (typeof unlockMapRules)[number],
+    (typeof unlockMapRules)[number],
+  ]
   assert.equal(unlockMapRule.index, 0)
-  assert.deepEqual(unlockMapRule.rule.ranges, [
-    {
-      sheetId: 17,
-      startRowIndex: 1,
-      endRowIndex: 1000,
-      startColumnIndex: 4,
-      endColumnIndex: 10,
-    },
-  ])
-  assert.equal(unlockMapRule.rule.booleanRule.condition.type, 'TEXT_CONTAINS')
+  assert.equal(charmRule.index, 1)
+  for (const { rule } of unlockMapRules) {
+    assert.deepEqual(rule.ranges, [
+      {
+        sheetId: 17,
+        startRowIndex: 1,
+        endRowIndex: 1000,
+        startColumnIndex: 4,
+        endColumnIndex: 10,
+      },
+    ])
+    assert.equal(rule.booleanRule.condition.type, 'CUSTOM_FORMULA')
+  }
   assert.equal(
     unlockMapRule.rule.booleanRule.condition.values[0]!.userEnteredValue,
-    '[',
+    '=REGEXMATCH(E2, "\\([A-Z]")',
+  )
+  assert.equal(
+    charmRule.rule.booleanRule.condition.values[0]!.userEnteredValue,
+    '=REGEXMATCH(E2, "\\[[A-Z]")',
   )
   assert.ok(
     unlockMapRule.rule.booleanRule.format.backgroundColor['green']! >
       unlockMapRule.rule.booleanRule.format.backgroundColor['red']!,
-    'tint is green',
+    'unlock tint is green',
+  )
+  assert.ok(
+    charmRule.rule.booleanRule.format.backgroundColor['red']! >
+      charmRule.rule.booleanRule.format.backgroundColor['green']! &&
+      charmRule.rule.booleanRule.format.backgroundColor['green']! >
+        charmRule.rule.booleanRule.format.backgroundColor['blue']!,
+    'charm tint is orange',
   )
 
   // Quick Checklist: ported up to the block end (E..O = 15) + offset 1 = 16 needed; dest has 16 → no append.
@@ -810,7 +844,7 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
   assert.equal(requestsOfKind(ops, 'addConditionalFormatRule').length, 0)
   assert.ok(
     notes.some((note) =>
-      note.startsWith('Unlock map highlight: rule already present'),
+      note.startsWith('Unlock map highlight: rules already present'),
     ),
   )
   assert.ok(
@@ -925,6 +959,29 @@ test('planning refuses unknown layouts before anything is written', () => {
   assert.throws(
     () => buildPlan(sourceWithoutSheet, freshDest(), '6.03'),
     /Daily Mode Unlocks not found in the source/,
+  )
+
+  // The sheets AG3 looks up: a moved header, or a missing sheet, stops the port too.
+  const variantsMoved = freshDest()
+  variantsMoved.grid.sheets![3]!.data![0]!.rowData![0]!.values![36] =
+    str('hasForms')
+  assert.throws(
+    () => buildPlan(source(), variantsMoved, '6.03'),
+    /STATIC:data\.SPECIES: expected "hasVariants" at AK1 in the destination, found "hasForms"/,
+  )
+  const ownedIvsMoved = freshDest()
+  ownedIvsMoved.grid.sheets![4]!.data![0]!.rowData![0]!.values![26] = str('ATK')
+  assert.throws(
+    () => buildPlan(source(), ownedIvsMoved, '6.03'),
+    /DAILY_MODE\.DATA: expected "HP" at AA1 in the destination, found "ATK"/,
+  )
+  const withoutLookupSheet = freshDest()
+  withoutLookupSheet.grid.sheets = withoutLookupSheet.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'DAILY_MODE.DATA',
+  )
+  assert.throws(
+    () => buildPlan(source(), withoutLookupSheet, '6.03'),
+    /"DAILY_MODE\.DATA" not found in the destination/,
   )
 })
 

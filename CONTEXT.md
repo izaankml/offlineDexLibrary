@@ -186,15 +186,28 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   L12:M15 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
-- *Unlock map highlight*: one "text contains `[`" rule → light green 2 over the Daily Unlock
-  Map's biome grid (E2 to the grid's end), added at index 0 and skipped when already there.
-  The map strings carry a bracketed category marker (`[Shiny]`, `[Caught]`, …) for every
-  unlock type except nature, set by the AG3 formula on Daily Mode Unlocks.
+- *Unlock map highlight*: two custom-formula rules over the Daily Unlock Map's biome grid
+  (E2 to the grid's end), `=REGEXMATCH(E2, "\([A-Z]")` → light green 2 for unlocks at
+  index 0 and `=REGEXMATCH(E2, "\[[A-Z]")` → light orange 2 for charm-only cells under it,
+  so a cell holding both reads as an unlock; each is skipped when already there. The map
+  strings carry a parenthesized category marker (`(Shiny)`, `(Caught)`, …) for every
+  unlock type except nature, set by the AG3 formula on Daily Mode Unlocks (an IV unlock is
+  marked only when a stat rolls 31 that the starter's owned IVs, `DAILY_MODE.DATA` AA:AF,
+  do not already have), and a bracketed
+  one (`[Ability Charm]`, `[Shiny Charm]`) for the charm waves, added by the map's own E2
+  formula from the Daily Mode overrides (`G3:G6` and `K3:K6`). A default shiny of a
+  species with rare and epic variants (`hasVariants` in `STATIC:data.SPECIES`) reads
+  `Default Shiny` with no marker, so the cell is tinted only when another unlock applies;
+  every other shiny reads `<variant> (Shiny)`. The capital letter after each bracket keeps
+  charm counts such as `(3)` from matching.
 - *Daily Mode Unlocks formula*: copy the source's `AG3` ArrayFormula (the map strings) into
   the destination, skipped when they already match. Planning throws when either side lacks
-  the sheet or the AG3 formula, or when one of the header labels the formula reads
-  (`DAILY_UNLOCKS_LANDMARKS`: D1:L1 filters, M2/P2/R2/S2/T2) is not where expected, since
-  the column references would then point at the wrong data.
+  the sheet or the AG3 formula, or when one of the header labels the formula reads is not
+  where expected, since the column references would then point at the wrong data. Checked
+  are `DAILY_UNLOCKS_LANDMARKS` (A2 Dex#, D1:L1 filters, M2/P2/R2/S2/T2, U2 IVs) and, for
+  the two sheets the formula looks up, `AG3_LOOKUP_SHEETS`: `STATIC:data.SPECIES` A1/AK1
+  and `DAILY_MODE.DATA` AA1/AF1 (the starter's owned IVs) with BR1/BU1 (the wave and
+  Pokémon it joins on). The destination read fetches those two header rows.
 
 Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
 notes what was already done).

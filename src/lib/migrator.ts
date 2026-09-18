@@ -105,18 +105,29 @@ export const DEX_IV_HIGHLIGHT_SHEETS = [
 export const DEX_IV_PERFECT_VALUE = '31'
 export const DEX_IV_IMPERFECT_COLOR = '#ea9999' // red
 
-// Daily Unlock Map: the per-unlock strings carry a bracketed category marker
-// ("[Shiny]", "[Caught]", …) for everything but nature unlocks; cells holding
-// one are tinted so they stand out on the map. The biome grid starts at E2,
-// the same cell CLEAR_ON_UPLOAD wipes from.
+// Daily Unlock Map: the per-unlock strings carry a parenthesized category
+// marker ("(Shiny)", "(Caught)", …) for everything but nature unlocks, and the
+// charm waves from the Daily Mode overrides carry a bracketed one
+// ("[Shiny Charm]"); cells holding either are tinted so they stand out on the
+// map. A default shiny of a species with rare and epic variants reads
+// "Default Shiny", with no marker. Each pattern needs a capital letter after
+// its bracket so charm counts such as "(3)" do not match. The biome grid
+// starts at E2.
 export const UNLOCK_MAP_SHEET = 'Daily Unlock Map'
 export const UNLOCK_MAP_GRID_FIRST_ROW = 2
 export const UNLOCK_MAP_GRID_FIRST_COLUMN = 5 // E
-export const UNLOCK_MAP_MARKER_TEXT = '['
-export const UNLOCK_MAP_MARKER_COLOR = '#b7e1cd' // light green 2
+/** Tried in order: the first match colours the cell, so unlocks beat charms. */
+export const UNLOCK_MAP_RULES: {
+  label: string
+  pattern: string
+  color: string
+}[] = [
+  { label: 'unlocks light green', pattern: '\\([A-Z]', color: '#b7e1cd' },
+  { label: 'charms light orange', pattern: '\\[[A-Z]', color: '#f9cb9c' },
+]
 
 // Daily Mode Unlocks: AG3 holds the ArrayFormula that builds each unlock's map
-// string (wave, Pokémon, lures, the bracketed category marker). It is a hand
+// string (wave, Pokémon, lures, the category marker). It is a hand
 // edit, so the source's formula is copied as is. The headers it reads are
 // checked first, so a reshaped creator layout stops the plan.
 export const DAILY_UNLOCKS_SHEET = 'Daily Mode Unlocks'
@@ -135,11 +146,46 @@ export const DAILY_UNLOCKS_LANDMARKS: {
   { row: 1, column: 10, label: 'New Form' }, // J1
   { row: 1, column: 11, label: 'New Gender' }, // K1
   { row: 1, column: 12, label: 'New IVs' }, // L1
+  { row: 2, column: 1, label: 'Dex#' }, // A2, the species lookup's key
   { row: 2, column: 13, label: 'Wave' }, // M2
   { row: 2, column: 16, label: 'Pokemon' }, // P2
   { row: 2, column: 18, label: 'Lures' }, // R2
   { row: 2, column: 19, label: 'Charms' }, // S2
   { row: 2, column: 20, label: 'Shiny' }, // T2
+  { row: 2, column: 21, label: 'IVs' }, // U2, merged over the six stats
+]
+
+// The AG3 formula also reads two sheets outside Daily Mode Unlocks: the species
+// table, for whether a species has rare and epic shiny variants, and the daily
+// calculation tab, for the starter's owned IVs. Their headers are checked the
+// same way, so a creator move stops the plan instead of porting a formula that
+// would read the wrong columns.
+export const AG3_LOOKUP_SHEETS: {
+  title: string
+  headerRow: number
+  lastColumn: number
+  landmarks: { column: number; label: string }[]
+}[] = [
+  {
+    title: 'STATIC:data.SPECIES',
+    headerRow: 1,
+    lastColumn: 37, // AK
+    landmarks: [
+      { column: 1, label: 'Dex #' }, // A1, the lookup key
+      { column: 37, label: 'hasVariants' }, // AK1
+    ],
+  },
+  {
+    title: 'DAILY_MODE.DATA',
+    headerRow: 1,
+    lastColumn: 73, // BU
+    landmarks: [
+      { column: 27, label: 'HP' }, // AA1, first owned IV
+      { column: 32, label: 'SPE' }, // AF1, last owned IV
+      { column: 70, label: 'Wave' }, // BR1, half of the join key
+      { column: 73, label: 'Pokemon' }, // BU1, the other half
+    ],
+  },
 ]
 
 /** One human-visible migration step and the batchUpdate requests that implement it. */
@@ -302,6 +348,13 @@ export function readDestination(
       sheetRange(
         DAILY_UNLOCKS_SHEET,
         `A1:${a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN)}`,
+      ),
+      // The header rows of the sheets AG3 looks up.
+      ...AG3_LOOKUP_SHEETS.map((lookup) =>
+        sheetRange(
+          lookup.title,
+          `A${lookup.headerRow}:${a1(lookup.headerRow, lookup.lastColumn)}`,
+        ),
       ),
     ],
     includeGridData: true,
@@ -1319,9 +1372,10 @@ export function isPerfectIvRule(rule: ConditionalFormatRule): boolean {
 }
 
 /**
- * Tint every Daily Unlock Map cell whose text holds a bracketed unlock marker.
- * One "text contains [" rule over the biome grid, added at index 0 so it wins
- * over any creator rule on the same cells; skipped when the sheet already has it.
+ * Tint every Daily Unlock Map cell whose text holds a marker: green for an
+ * unlock, yellow for a cell that only announces a charm. Two REGEXMATCH
+ * custom-formula rules over the biome grid, the unlock one first so a cell with
+ * both reads as an unlock; each is skipped when the sheet already has it.
  */
 export function planUnlockMapHighlight(
   dest: DestInfo,
@@ -1334,8 +1388,15 @@ export function planUnlockMapHighlight(
     )
     return []
   }
-  if ((sheet.conditionalFormats ?? []).some(isUnlockMarkerRule)) {
-    notes.push('Unlock map highlight: rule already present')
+  const existingRules = sheet.conditionalFormats ?? []
+  const missingRules = UNLOCK_MAP_RULES.filter(
+    (marker) =>
+      !existingRules.some(
+        (rule) => markerRuleFormula(rule) === markerFormula(marker.pattern),
+      ),
+  )
+  if (!missingRules.length) {
+    notes.push('Unlock map highlight: rules already present')
     return []
   }
   const sheetId = sheet.properties.sheetId
@@ -1353,44 +1414,47 @@ export function planUnlockMapHighlight(
   }
   return [
     {
-      label: `${UNLOCK_MAP_SHEET}: highlight cells with a bracketed unlock`,
-      note: `light green from ${a1(UNLOCK_MAP_GRID_FIRST_ROW, UNLOCK_MAP_GRID_FIRST_COLUMN)}`,
-      requests: [
-        {
-          addConditionalFormatRule: {
-            index: 0,
-            rule: {
-              ranges: [range],
-              booleanRule: {
-                condition: {
-                  type: 'TEXT_CONTAINS',
-                  values: [{ userEnteredValue: UNLOCK_MAP_MARKER_TEXT }],
-                },
-                format: {
-                  backgroundColor: hexToColor(UNLOCK_MAP_MARKER_COLOR),
-                },
+      label: `${UNLOCK_MAP_SHEET}: highlight cells with a marker`,
+      note: `${missingRules.map((marker) => marker.label).join(' and ')} from ${a1(UNLOCK_MAP_GRID_FIRST_ROW, UNLOCK_MAP_GRID_FIRST_COLUMN)}`,
+      requests: missingRules.map((marker, markerIndex) => ({
+        addConditionalFormatRule: {
+          index: markerIndex,
+          rule: {
+            ranges: [range],
+            booleanRule: {
+              condition: {
+                type: 'CUSTOM_FORMULA',
+                values: [{ userEnteredValue: markerFormula(marker.pattern) }],
               },
+              format: { backgroundColor: hexToColor(marker.color) },
             },
           },
         },
-      ],
+      })),
     },
   ]
 }
 
-export function isUnlockMarkerRule(rule: ConditionalFormatRule): boolean {
-  const condition = rule.booleanRule?.condition
-  return (
-    condition?.type === 'TEXT_CONTAINS' &&
-    condition.values?.[0]?.userEnteredValue === UNLOCK_MAP_MARKER_TEXT
+export function markerFormula(pattern: string): string {
+  const topLeftCell = a1(
+    UNLOCK_MAP_GRID_FIRST_ROW,
+    UNLOCK_MAP_GRID_FIRST_COLUMN,
   )
+  return `=REGEXMATCH(${topLeftCell}, "${pattern}")`
+}
+
+function markerRuleFormula(rule: ConditionalFormatRule): string | undefined {
+  const condition = rule.booleanRule?.condition
+  if (condition?.type !== 'CUSTOM_FORMULA') return undefined
+  return condition.values?.[0]?.userEnteredValue
 }
 
 /**
  * Copy the AG3 map-string formula from the source's Daily Mode Unlocks to the
  * destination's. Whatever the source holds wins, so later hand edits carry
- * forward too. Throws when either side lacks the formula or a header the
- * formula reads is not where expected.
+ * forward too. Throws when either side lacks the formula, or a header the
+ * formula reads, on Daily Mode Unlocks or on a sheet it looks up, is not where
+ * expected.
  */
 export function planDailyUnlocksFormula(
   source: SourceInfo,
@@ -1430,6 +1494,22 @@ export function planDailyUnlocksFormula(
       throw new Error(
         `${DAILY_UNLOCKS_SHEET}: expected "${landmark.label}" at ${a1(landmark.row, landmark.column)} in the destination, found "${found}"; layout changed, ${formulaCell} formula not ported`,
       )
+  }
+  for (const lookup of AG3_LOOKUP_SHEETS) {
+    const lookupSheet = requireFound(
+      sheetByTitle(dest.grid, lookup.title),
+      `"${lookup.title}" not found in the destination; ${formulaCell} formula not ported`,
+    )
+    const lookupGrid = gridAt(lookupSheet, lookup.headerRow - 1, 0)
+    for (const landmark of lookup.landmarks) {
+      const found = displayText(
+        cellAt(lookupGrid, 0, landmark.column - 1),
+      ).trim()
+      if (found !== landmark.label)
+        throw new Error(
+          `${lookup.title}: expected "${landmark.label}" at ${a1(lookup.headerRow, landmark.column)} in the destination, found "${found}"; the column AG3 looks up moved, ${formulaCell} formula not ported`,
+        )
+    }
   }
   const destFormula = cellAt(
     destGrid,
