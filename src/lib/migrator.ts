@@ -3,9 +3,9 @@
  *
  * Ports your customizations from an old OfflineDex spreadsheet to a new one,
  * as a plan, preview, apply pipeline on the Sheets API:
- *   1. read the source (sheet list and merges; formats and values of the
- *      customized ranges) and the destination (sheet list, banding, CF and
- *      merges; the locator cells);
+ *   1. read the source (sheet list; formats and values of the customized
+ *      ranges) and the destination (sheet list, banding and CF; the locator
+ *      cells);
  *   2. build a list of migration ops (human label plus batchUpdate requests).
  *      This step is pure and tested. Planning throws if a landmark doesn't
  *      fit, so nothing is touched when the creator's layout changed;
@@ -34,6 +34,15 @@ import {
   sheetByTitle,
   sheetRange,
 } from './sheetsApi.ts'
+import {
+  DAILY_UNLOCKS_AG3_FORMULA,
+  UNLOCK_MAP_FORMULA_COLUMNS,
+  UNLOCK_MAP_FORMULA_ROW,
+  normalizeFormula,
+  sameFormula,
+  unlockMapBiomeRange,
+  unlockMapColumnFormula,
+} from './trackedFormulas.ts'
 
 // Quick Checklist: columns A-D (#, image, Dex#, name) are fixed; where the
 // data block ("Caught?" … "Ribbons", QUICK_CHECKLIST_DATA_COLUMNS wide) starts
@@ -49,53 +58,6 @@ export const QUICK_CHECKLIST_TITLE_PREFIX = 'POKEROGUE DEX '
 export const QUICK_CHECKLIST_IMAGE_COLUMN = 2
 /** Sheets' default row height; a non-hidden row at this height is treated as "Fit to data". */
 const DEFAULT_ROW_HEIGHT = 21
-
-// Daily Mode carries two structural customizations of ours that a fresh copy
-// lacks, and both shift everything after them:
-//
-//   * custom column L: the map-size inputs (L12:M15) the IMAGE formula reads.
-//     Detected by the creator's "Missing Gym Leader Voucher…" landmark, at N2
-//     when L exists and M2 when it doesn't.
-//   * custom row 15: a blank row above the creator's wiki-link row so the
-//     "Rows" input has a line of its own. Detected by where the map-image
-//     merge starts, B17 when the row exists and B16 when it doesn't.
-//
-// The source has both, so source coordinates are also the destination's final
-// coordinates. Every write below uses them, and the two inserts run first in
-// the same batch.
-export const DAILY_MODE_SHEET = 'Daily Mode'
-export const DAILY_MODE_CUSTOM_COLUMN = 12 // L
-export const DAILY_MODE_CUSTOM_ROW = 15
-export const DAILY_MODE_LANDMARK_ROW = 2
-export const DAILY_MODE_LANDMARK_COL_WITH_L = 14 // N
-export const DAILY_MODE_LANDMARK_COL_WITHOUT_L = 13 // M
-export const DAILY_MODE_IMAGE_COLUMN = 2 // B
-export const DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW = 17
-export const DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW = 16
-
-/** A rectangular block in 1-based, inclusive sheet coordinates. */
-type Block = {
-  firstRow: number
-  firstColumn: number
-  lastRow: number
-  lastColumn: number
-}
-/** L12:M15, the map-size inputs the IMAGE formula reads (Map Width/Height/Scale/Rows). */
-export const DAILY_MODE_INPUTS_BLOCK: Block = {
-  firstRow: 12,
-  firstColumn: 12,
-  lastRow: 15,
-  lastColumn: 13,
-}
-/**
- * B12:M<image bottom>, the region whose merges are made to match the source's
- * (the input rows, the creator's wiki-link row, and the map-image block).
- * Every source merge inside it is ported; any destination merge overlapping
- * one of them is unmerged first.
- */
-export const DAILY_MODE_MERGE_FIRST_ROW = 12
-export const DAILY_MODE_MERGE_FIRST_COLUMN = 2 // B
-export const DAILY_MODE_MERGE_LAST_COLUMN = 13 // M
 
 // IV conditional formatting on the dex checklists.
 export const DEX_IV_HIGHLIGHT_SHEETS = [
@@ -127,9 +89,9 @@ export const UNLOCK_MAP_RULES: {
 ]
 
 // Daily Mode Unlocks: AG3 holds the ArrayFormula that builds each unlock's map
-// string (wave, Pokémon, lures, the category marker). It is a hand
-// edit, so the source's formula is copied as is. The headers it reads are
-// checked first, so a reshaped creator layout stops the plan.
+// string (wave, Pokémon, lures, the category marker). The repo's copy
+// (trackedFormulas.ts) is written. The headers it reads are checked first, so
+// a reshaped creator layout stops the plan.
 export const DAILY_UNLOCKS_SHEET = 'Daily Mode Unlocks'
 export const DAILY_UNLOCKS_FORMULA_ROW = 3
 export const DAILY_UNLOCKS_FORMULA_COLUMN = 33 // AG
@@ -146,8 +108,9 @@ export const DAILY_UNLOCKS_LANDMARKS: {
   { row: 1, column: 10, label: 'New Form' }, // J1
   { row: 1, column: 11, label: 'New Gender' }, // K1
   { row: 1, column: 12, label: 'New IVs' }, // L1
-  { row: 2, column: 1, label: 'Dex#' }, // A2, the species lookup's key
+  { row: 2, column: 1, label: 'Dex#' }, // A2, the species and owned-IV lookups' key
   { row: 2, column: 13, label: 'Wave' }, // M2
+  { row: 2, column: 14, label: 'Biome' }, // N2, the map formulas' biome filter
   { row: 2, column: 16, label: 'Pokemon' }, // P2
   { row: 2, column: 18, label: 'Lures' }, // R2
   { row: 2, column: 19, label: 'Charms' }, // S2
@@ -176,14 +139,13 @@ export const AG3_LOOKUP_SHEETS: {
     ],
   },
   {
-    title: 'DAILY_MODE.DATA',
+    title: 'DAILY_MODE.data',
     headerRow: 1,
-    lastColumn: 73, // BU
+    lastColumn: 77, // BY
     landmarks: [
       { column: 27, label: 'HP' }, // AA1, first owned IV
       { column: 32, label: 'SPE' }, // AF1, last owned IV
-      { column: 70, label: 'Wave' }, // BR1, half of the join key
-      { column: 73, label: 'Pokemon' }, // BU1, the other half
+      { column: 77, label: 'Species ID' }, // BY1, the owned-IV lookup's key
     ],
   },
 ]
@@ -294,42 +256,52 @@ export function describePlan(plan: MigrationPlan): string {
 // Reads
 // ---------------------------------------------------------------------------
 
-/** `meta`: sheet list (+ banding/CF/merges for the destination); `grid`: cell data of the customized ranges. */
+/** `meta`: sheet list (+ banding/CF for the destination); `grid`: cell data of the customized ranges. */
 export type SourceInfo = { meta: SpreadsheetInfo; grid: SpreadsheetInfo }
 export type DestInfo = { meta: SpreadsheetInfo; grid: SpreadsheetInfo }
 
 const GRID_FIELDS =
   'sheets(properties(sheetId,title,gridProperties),data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,formattedValue)),rowMetadata,columnMetadata))'
 
-/** A1 range of a Block on a sheet: 'Daily Mode'!B16:M131. */
-function blockRange(sheetTitle: string, block: Block): string {
-  return `'${sheetTitle}'!${a1(block.firstRow, block.firstColumn)}:${a1(block.lastRow, block.lastColumn)}`
-}
-
 export function readSource(
   client: SheetsClient,
   sourceSpreadsheetId: string,
 ): SourceInfo {
   const meta = client.get(sourceSpreadsheetId, {
-    fields: 'sheets(properties(sheetId,title,hidden,gridProperties),merges)',
+    fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
   })
-  // The map-image block is however big the source's merge is, so the metadata
-  // read has to come first: its size decides which range we ask for here.
+  // The metadata read comes first: it says which tracked-formula sheets exist.
+  // The tracked formulas are read only to compare with the repo's copies.
   const grid = client.get(sourceSpreadsheetId, {
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
-      blockRange(DAILY_MODE_SHEET, dailyModeImageBlock(meta)),
-      blockRange(DAILY_MODE_SHEET, DAILY_MODE_INPUTS_BLOCK),
-      `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
-      sheetRange(
-        DAILY_UNLOCKS_SHEET,
-        a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN),
-      ),
+      ...trackedFormulaRanges(meta),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
   })
   return { meta, grid }
+}
+
+/** Ranges holding the tracked formulas, on the sheets of `meta` that exist. */
+function trackedFormulaRanges(meta: SpreadsheetInfo): string[] {
+  const ranges: string[] = []
+  if (sheetByTitle(meta, DAILY_UNLOCKS_SHEET))
+    ranges.push(
+      sheetRange(
+        DAILY_UNLOCKS_SHEET,
+        a1(DAILY_UNLOCKS_FORMULA_ROW, DAILY_UNLOCKS_FORMULA_COLUMN),
+      ),
+    )
+  if (sheetByTitle(meta, UNLOCK_MAP_SHEET))
+    ranges.push(sheetRange(UNLOCK_MAP_SHEET, unlockMapFormulaCells()))
+  return ranges
+}
+
+/** E2:I2, the Daily Unlock Map cells holding one formula per column. */
+function unlockMapFormulaCells(): string {
+  const columns = UNLOCK_MAP_FORMULA_COLUMNS.map((entry) => entry.column)
+  return `${a1(UNLOCK_MAP_FORMULA_ROW, Math.min(...columns))}:${a1(UNLOCK_MAP_FORMULA_ROW, Math.max(...columns))}`
 }
 
 export function readDestination(
@@ -338,12 +310,11 @@ export function readDestination(
 ): DestInfo {
   const meta = client.get(destSpreadsheetId, {
     fields:
-      'sheets(properties(sheetId,title,hidden,gridProperties),merges,bandedRanges,conditionalFormats)',
+      'sheets(properties(sheetId,title,hidden,gridProperties),bandedRanges,conditionalFormats)',
   })
   const grid = client.get(destSpreadsheetId, {
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
-      `'${DAILY_MODE_SHEET}'!${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)}:${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)}`,
       // The landmark headers and the formula cell, read as one block from A1.
       sheetRange(
         DAILY_UNLOCKS_SHEET,
@@ -356,6 +327,9 @@ export function readDestination(
           `A${lookup.headerRow}:${a1(lookup.headerRow, lookup.lastColumn)}`,
         ),
       ),
+      ...(sheetByTitle(meta, UNLOCK_MAP_SHEET)
+        ? [sheetRange(UNLOCK_MAP_SHEET, unlockMapFormulaCells())]
+        : []),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
@@ -376,11 +350,11 @@ export function buildPlan(
   const notes: string[] = []
   ops.push(...planQuickChecklist(source, dest, destVersion))
   ops.push(...planQuickChecklistBanding(dest, notes))
-  ops.push(...planDailyMode(source, dest, notes))
   ops.push(...planHiddenSheets(source, dest, notes))
   ops.push(...planDexIvHighlight(dest, notes))
   ops.push(...planUnlockMapHighlight(dest, notes))
   ops.push(...planDailyUnlocksFormula(source, dest, notes))
+  ops.push(...planUnlockMapFormulas(source, dest, notes))
   return { ops, notes }
 }
 
@@ -785,482 +759,6 @@ export function planQuickChecklistBanding(
   return []
 }
 
-/** Landmark check: true = column L present; false = insert it; throws when neither cell holds the label. */
-export function dailyModeHasCustomColumn(
-  source: SourceInfo,
-  dest: DestInfo,
-): boolean {
-  const sourceSheet = requireFound(
-    sheetByTitle(source.grid, DAILY_MODE_SHEET),
-    'Daily Mode not found in the source',
-  )
-  const destSheet = requireFound(
-    sheetByTitle(dest.grid, DAILY_MODE_SHEET),
-    'Daily Mode not found in the destination',
-  )
-  const sourceLandmarkGrid = gridAt(
-    sourceSheet,
-    DAILY_MODE_LANDMARK_ROW - 1,
-    DAILY_MODE_LANDMARK_COL_WITH_L - 1,
-  )
-  const landmarkText = displayText(cellAt(sourceLandmarkGrid, 0, 0)).trim()
-  if (!landmarkText) {
-    throw new Error(
-      `Daily Mode: landmark cell ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)} is blank in the source; cannot tell whether column L is present`,
-    )
-  }
-  const destLandmarkGrid = gridAt(
-    destSheet,
-    DAILY_MODE_LANDMARK_ROW - 1,
-    DAILY_MODE_LANDMARK_COL_WITHOUT_L - 1,
-  )
-  const destTextWithoutL = displayText(cellAt(destLandmarkGrid, 0, 0)).trim()
-  const destTextWithL = displayText(cellAt(destLandmarkGrid, 0, 1)).trim()
-  if (destTextWithL === landmarkText) return true
-  if (destTextWithoutL === landmarkText) return false
-  throw new Error(
-    `Daily Mode: landmark "${landmarkText}" is at neither ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITH_L)} nor ${a1(DAILY_MODE_LANDMARK_ROW, DAILY_MODE_LANDMARK_COL_WITHOUT_L)} in the destination; layout changed, Daily Mode not touched`,
-  )
-}
-
-/** The merged cell of a Daily Mode sheet whose top-left is `row`/`column` (1-based), or null. */
-function dailyModeMergeAt(
-  info: SpreadsheetInfo,
-  spreadsheetRole: string,
-  row: number,
-  column: number,
-): GridRange | null {
-  const sheet = requireFound(
-    sheetByTitle(info, DAILY_MODE_SHEET),
-    `Daily Mode not found in the ${spreadsheetRole}`,
-  )
-  return (
-    (sheet.merges ?? []).find(
-      (merge) =>
-        (merge.startRowIndex ?? 0) === row - 1 &&
-        (merge.startColumnIndex ?? 0) === column - 1,
-    ) ?? null
-  )
-}
-
-/**
- * The source's map-image block, taken from the merge it is (its bottom row
- * follows the map's aspect ratio, so it is not a constant). Throws when the
- * source has no merge at B17, so nothing is ported on an unknown layout.
- */
-export function dailyModeImageBlock(sourceMeta: SpreadsheetInfo): Block {
-  const anchor = a1(
-    DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
-    DAILY_MODE_IMAGE_COLUMN,
-  )
-  const merge = dailyModeMergeAt(
-    sourceMeta,
-    'source',
-    DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
-    DAILY_MODE_IMAGE_COLUMN,
-  )
-  if (!merge) {
-    throw new Error(
-      `Daily Mode: no merged cell starts at ${anchor} in the source, so the map image block cannot be located; layout changed, nothing ported`,
-    )
-  }
-  return {
-    firstRow: DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
-    firstColumn: DAILY_MODE_IMAGE_COLUMN,
-    lastRow: merge.endRowIndex ?? DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW,
-    lastColumn: merge.endColumnIndex ?? DAILY_MODE_IMAGE_COLUMN,
-  }
-}
-
-/**
- * Structural check on the destination: true = our custom row 15 is already
- * there (the map-image merge starts at B17), false = insert it (it starts at
- * B16, a fresh copy). Throws when it starts at neither.
- */
-export function dailyModeHasCustomRow(dest: DestInfo): boolean {
-  const startsAt = (row: number): boolean =>
-    dailyModeMergeAt(dest.meta, 'destination', row, DAILY_MODE_IMAGE_COLUMN) !==
-    null
-  if (startsAt(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW)) return true
-  if (startsAt(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW)) return false
-  throw new Error(
-    `Daily Mode: the map image merge starts at neither ${a1(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} nor ${a1(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} in the destination; layout changed, Daily Mode not touched`,
-  )
-}
-
-/** A block as A1 ('B16:M131'), for op labels. */
-function blockLabel(block: Block): string {
-  return `${a1(block.firstRow, block.firstColumn)}:${a1(block.lastRow, block.lastColumn)}`
-}
-
-/**
- * Daily Mode: insert custom column L and custom row 15 when missing; formats
- * for the map-image block and the L12:M15 inputs; height of row 15 and widths
- * of L and M; make the merges of B12:M<image bottom> match the source's;
- * the image formula/value top-aligned; L12:M15 formulas/values.
- */
-export function planDailyMode(
-  source: SourceInfo,
-  dest: DestInfo,
-  notes: string[],
-): MigrationOp[] {
-  const sourceSheet = requireFound(
-    sheetByTitle(source.grid, DAILY_MODE_SHEET),
-    'Daily Mode not found in the source',
-  )
-  const destSheetMeta = requireFound(
-    sheetByTitle(dest.meta, DAILY_MODE_SHEET),
-    'Daily Mode not found in the destination',
-  )
-  const sheetId = destSheetMeta.properties.sheetId
-  const imageBlock = dailyModeImageBlock(source.meta)
-  const hasCustomColumn = dailyModeHasCustomColumn(source, dest)
-  const hasCustomRow = dailyModeHasCustomRow(dest)
-  const ops: MigrationOp[] = []
-  const customColumnIndex = DAILY_MODE_CUSTOM_COLUMN - 1 // 0-based
-  const customRowIndex = DAILY_MODE_CUSTOM_ROW - 1 // 0-based
-
-  // Both inserts go first: everything after them is in post-insert (= source)
-  // coordinates, and the batch applies its requests in order.
-  if (!hasCustomColumn) {
-    ops.push({
-      label: 'Daily Mode: insert custom column L',
-      note: 'landmark found at M2 (fresh copy)',
-      requests: [
-        {
-          insertDimension: {
-            range: {
-              sheetId,
-              dimension: 'COLUMNS',
-              startIndex: customColumnIndex,
-              endIndex: customColumnIndex + 1,
-            },
-            inheritFromBefore: false,
-          },
-        },
-      ],
-    })
-  } else {
-    notes.push('Daily Mode: custom column L already present (landmark at N2)')
-  }
-  if (!hasCustomRow) {
-    ops.push({
-      label: `Daily Mode: insert custom row ${DAILY_MODE_CUSTOM_ROW}`,
-      note: `map image merge found at ${a1(DAILY_MODE_IMAGE_ROW_WITHOUT_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)} (fresh copy)`,
-      requests: [
-        {
-          insertDimension: {
-            range: {
-              sheetId,
-              dimension: 'ROWS',
-              startIndex: customRowIndex,
-              endIndex: customRowIndex + 1,
-            },
-            inheritFromBefore: false,
-          },
-        },
-      ],
-    })
-  } else {
-    notes.push(
-      `Daily Mode: custom row ${DAILY_MODE_CUSTOM_ROW} already present (map image merge at ${a1(DAILY_MODE_IMAGE_ROW_WITH_CUSTOM_ROW, DAILY_MODE_IMAGE_COLUMN)})`,
-    )
-  }
-
-  const formatBlockOp = (block: Block, label: string): MigrationOp => {
-    const sourceBlockGrid = gridAt(
-      sourceSheet,
-      block.firstRow - 1,
-      block.firstColumn - 1,
-    )
-    const rowCount = block.lastRow - block.firstRow + 1
-    const columnCount = block.lastColumn - block.firstColumn + 1
-    return {
-      label,
-      requests: [
-        {
-          updateCells: {
-            range: {
-              sheetId,
-              startRowIndex: block.firstRow - 1,
-              endRowIndex: block.lastRow,
-              startColumnIndex: block.firstColumn - 1,
-              endColumnIndex: block.lastColumn,
-            },
-            rows: Array.from({ length: rowCount }, (_, rowOffset) => ({
-              values: Array.from(
-                { length: columnCount },
-                (_, columnOffset) => ({
-                  userEnteredFormat:
-                    cellAt(sourceBlockGrid, rowOffset, columnOffset)
-                      .userEnteredFormat ?? {},
-                }),
-              ),
-            })),
-            fields: 'userEnteredFormat',
-          },
-        },
-      ],
-    }
-  }
-  ops.push(
-    formatBlockOp(
-      imageBlock,
-      `Daily Mode: formats of ${blockLabel(imageBlock)}`,
-    ),
-  )
-  ops.push(
-    formatBlockOp(
-      DAILY_MODE_INPUTS_BLOCK,
-      `Daily Mode: formats of ${blockLabel(DAILY_MODE_INPUTS_BLOCK)}`,
-    ),
-  )
-
-  // Column widths L, M from the source (its image block carries columnMetadata for B..M).
-  const sourceImageBlockGrid = gridAt(
-    sourceSheet,
-    imageBlock.firstRow - 1,
-    imageBlock.firstColumn - 1,
-  )
-  const dimensionRequests: Request[] = []
-  for (const column of [
-    DAILY_MODE_CUSTOM_COLUMN,
-    DAILY_MODE_CUSTOM_COLUMN + 1,
-  ]) {
-    const columnMeta =
-      sourceImageBlockGrid?.columnMetadata?.[column - imageBlock.firstColumn]
-    if (!columnMeta?.pixelSize) continue
-    dimensionRequests.push({
-      updateDimensionProperties: {
-        range: {
-          sheetId,
-          dimension: 'COLUMNS',
-          startIndex: column - 1,
-          endIndex: column,
-        },
-        properties: { pixelSize: columnMeta.pixelSize },
-        fields: 'pixelSize',
-      },
-    })
-  }
-  // Height of the row we insert: a fresh insert would otherwise inherit a
-  // neighbour's. The inputs block spans it, so its rowMetadata carries it.
-  const sourceInputsGrid = gridAt(
-    sourceSheet,
-    DAILY_MODE_INPUTS_BLOCK.firstRow - 1,
-    DAILY_MODE_INPUTS_BLOCK.firstColumn - 1,
-  )
-  const customRowMeta =
-    sourceInputsGrid?.rowMetadata?.[
-      DAILY_MODE_CUSTOM_ROW - DAILY_MODE_INPUTS_BLOCK.firstRow
-    ]
-  if (customRowMeta?.pixelSize) {
-    dimensionRequests.push({
-      updateDimensionProperties: {
-        range: {
-          sheetId,
-          dimension: 'ROWS',
-          startIndex: customRowIndex,
-          endIndex: customRowIndex + 1,
-        },
-        properties: { pixelSize: customRowMeta.pixelSize },
-        fields: 'pixelSize',
-      },
-    })
-  }
-  if (dimensionRequests.length)
-    ops.push({
-      label: `Daily Mode: widths of columns L and M, height of row ${DAILY_MODE_CUSTOM_ROW}`,
-      requests: dimensionRequests,
-    })
-
-  // Make the merges of B12:M<image bottom> match the source's: unmerge any
-  // destination merge overlapping a source merge (post-insert coordinates),
-  // then merge the source's. Re-running plans the same pair, so it is
-  // idempotent. The region widens to the image block if that reaches past M.
-  const mergedRegion: Block = {
-    firstRow: DAILY_MODE_MERGE_FIRST_ROW,
-    firstColumn: DAILY_MODE_MERGE_FIRST_COLUMN,
-    lastRow: imageBlock.lastRow,
-    lastColumn: Math.max(DAILY_MODE_MERGE_LAST_COLUMN, imageBlock.lastColumn),
-  }
-  const sourceSheetMeta = requireFound(
-    sheetByTitle(source.meta, DAILY_MODE_SHEET),
-    'Daily Mode not found in the source',
-  )
-  const targetMerges = (sourceSheetMeta.merges ?? [])
-    .filter((merge) =>
-      rangeContains(
-        {
-          sheetId,
-          startRowIndex: mergedRegion.firstRow - 1,
-          endRowIndex: mergedRegion.lastRow,
-          startColumnIndex: mergedRegion.firstColumn - 1,
-          endColumnIndex: mergedRegion.lastColumn,
-        },
-        merge,
-      ),
-    )
-    .map((merge) => ({ ...merge, sheetId }))
-    .sort(
-      (mergeA, mergeB) =>
-        (mergeA.startRowIndex ?? 0) - (mergeB.startRowIndex ?? 0) ||
-        (mergeA.startColumnIndex ?? 0) - (mergeB.startColumnIndex ?? 0),
-    )
-  const existingMerges = (destSheetMeta.merges ?? [])
-    .map((merge) =>
-      hasCustomColumn
-        ? merge
-        : shiftMergeForColumnInsert(merge, customColumnIndex),
-    )
-    .map((merge) =>
-      hasCustomRow ? merge : shiftMergeForRowInsert(merge, customRowIndex),
-    )
-  const overlappingMerges = existingMerges.filter((merge) =>
-    targetMerges.some((target) => rangesOverlap(merge, target)),
-  )
-  const mergeRequests: Request[] = overlappingMerges.map((merge) => ({
-    unmergeCells: { range: { ...merge, sheetId } },
-  }))
-  for (const merge of targetMerges)
-    mergeRequests.push({ mergeCells: { range: merge, mergeType: 'MERGE_ALL' } })
-  ops.push({
-    label: `Daily Mode: ${targetMerges.length} merge(s) in ${blockLabel(mergedRegion)}`,
-    note:
-      `map image ${blockLabel(imageBlock)}` +
-      (overlappingMerges.length
-        ? `; unmerging ${overlappingMerges.length} existing merge(s) first`
-        : ''),
-    requests: mergeRequests,
-  })
-
-  // The image cell's value/formula, top-aligned.
-  const sourceImageCell = cellAt(sourceImageBlockGrid, 0, 0)
-  const imageAnchor = a1(imageBlock.firstRow, imageBlock.firstColumn)
-  ops.push({
-    label: `Daily Mode: ${imageAnchor} formula`,
-    note: sourceImageCell.userEnteredValue?.formulaValue
-      ? 'formula copied from the source'
-      : 'value copied from the source',
-    requests: [
-      {
-        updateCells: {
-          range: {
-            sheetId,
-            startRowIndex: imageBlock.firstRow - 1,
-            endRowIndex: imageBlock.firstRow,
-            startColumnIndex: imageBlock.firstColumn - 1,
-            endColumnIndex: imageBlock.firstColumn,
-          },
-          rows: [
-            {
-              values: [
-                {
-                  userEnteredValue: sourceImageCell.userEnteredValue ?? {},
-                  userEnteredFormat: { verticalAlignment: 'TOP' },
-                },
-              ],
-            },
-          ],
-          fields: 'userEnteredValue,userEnteredFormat.verticalAlignment',
-        },
-      },
-    ],
-  })
-
-  // L12:M15 formulas/values.
-  const inputRowCount =
-    DAILY_MODE_INPUTS_BLOCK.lastRow - DAILY_MODE_INPUTS_BLOCK.firstRow + 1
-  const inputColumnCount =
-    DAILY_MODE_INPUTS_BLOCK.lastColumn - DAILY_MODE_INPUTS_BLOCK.firstColumn + 1
-  ops.push({
-    label: `Daily Mode: ${blockLabel(DAILY_MODE_INPUTS_BLOCK)} inputs`,
-    requests: [
-      {
-        updateCells: {
-          range: {
-            sheetId,
-            startRowIndex: DAILY_MODE_INPUTS_BLOCK.firstRow - 1,
-            endRowIndex: DAILY_MODE_INPUTS_BLOCK.lastRow,
-            startColumnIndex: DAILY_MODE_INPUTS_BLOCK.firstColumn - 1,
-            endColumnIndex: DAILY_MODE_INPUTS_BLOCK.lastColumn,
-          },
-          rows: Array.from({ length: inputRowCount }, (_, rowOffset) => ({
-            values: Array.from(
-              { length: inputColumnCount },
-              (_, columnOffset) => {
-                const sourceValue = cellAt(
-                  sourceInputsGrid,
-                  rowOffset,
-                  columnOffset,
-                ).userEnteredValue
-                return sourceValue ? { userEnteredValue: sourceValue } : {}
-              },
-            ),
-          })),
-          fields: 'userEnteredValue',
-        },
-      },
-    ],
-  })
-  return ops
-}
-
-/** How a merge (pre-insert coordinates) looks after a column is inserted at 0-based `insertedColumnIndex`. */
-export function shiftMergeForColumnInsert(
-  merge: GridRange,
-  insertedColumnIndex: number,
-): GridRange {
-  const startColumnIndex = merge.startColumnIndex ?? 0
-  const endColumnIndex = merge.endColumnIndex ?? 0
-  if (startColumnIndex >= insertedColumnIndex)
-    return {
-      ...merge,
-      startColumnIndex: startColumnIndex + 1,
-      endColumnIndex: endColumnIndex + 1,
-    }
-  if (endColumnIndex > insertedColumnIndex)
-    return { ...merge, endColumnIndex: endColumnIndex + 1 } // insertion inside the merge widens it
-  return merge
-}
-
-/** How a merge (pre-insert coordinates) looks after a row is inserted at 0-based `insertedRowIndex`. */
-export function shiftMergeForRowInsert(
-  merge: GridRange,
-  insertedRowIndex: number,
-): GridRange {
-  const startRowIndex = merge.startRowIndex ?? 0
-  const endRowIndex = merge.endRowIndex ?? 0
-  if (startRowIndex >= insertedRowIndex)
-    return {
-      ...merge,
-      startRowIndex: startRowIndex + 1,
-      endRowIndex: endRowIndex + 1,
-    }
-  if (endRowIndex > insertedRowIndex)
-    return { ...merge, endRowIndex: endRowIndex + 1 } // insertion inside the merge grows it
-  return merge
-}
-
-export function rangesOverlap(rangeA: GridRange, rangeB: GridRange): boolean {
-  return (
-    (rangeA.startRowIndex ?? 0) < (rangeB.endRowIndex ?? Infinity) &&
-    (rangeB.startRowIndex ?? 0) < (rangeA.endRowIndex ?? Infinity) &&
-    (rangeA.startColumnIndex ?? 0) < (rangeB.endColumnIndex ?? Infinity) &&
-    (rangeB.startColumnIndex ?? 0) < (rangeA.endColumnIndex ?? Infinity)
-  )
-}
-
-/** True when `inner` lies entirely within `outer`. */
-export function rangeContains(outer: GridRange, inner: GridRange): boolean {
-  return (
-    (inner.startRowIndex ?? 0) >= (outer.startRowIndex ?? 0) &&
-    (inner.endRowIndex ?? Infinity) <= (outer.endRowIndex ?? Infinity) &&
-    (inner.startColumnIndex ?? 0) >= (outer.startColumnIndex ?? 0) &&
-    (inner.endColumnIndex ?? Infinity) <= (outer.endColumnIndex ?? Infinity)
-  )
-}
-
 /** Hide every destination sheet whose same-named source sheet is hidden. */
 export function planHiddenSheets(
   source: SourceInfo,
@@ -1449,12 +947,63 @@ function markerRuleFormula(rule: ConditionalFormatRule): string | undefined {
   return condition.values?.[0]?.userEnteredValue
 }
 
+/** The formula a source sheet holds at `row`/`column` (1-based), as read by readSource. */
+function sourceFormulaAt(
+  source: SourceInfo,
+  sheetTitle: string,
+  row: number,
+  column: number,
+  firstColumn = column,
+): string | undefined {
+  const sourceSheet = sheetByTitle(source.grid, sheetTitle)
+  if (!sourceSheet) return undefined
+  return cellAt(
+    gridAt(sourceSheet, row - 1, firstColumn - 1),
+    0,
+    column - firstColumn,
+  ).userEnteredValue?.formulaValue
+}
+
+/** Note a source formula that differs from the repo's copy, which is what gets written. */
+function noteSourceDrift(
+  notes: string[],
+  sheetTitle: string,
+  cell: string,
+  sourceFormula: string | undefined,
+  repoFormula: string,
+): void {
+  if (sourceFormula !== undefined && !sameFormula(sourceFormula, repoFormula))
+    notes.push(
+      `${sheetTitle}: ${cell} in the source differs from the repo's copy in trackedFormulas.ts, which is what gets written; copy the source's into the repo first to keep its changes`,
+    )
+}
+
+function formulaCellRequest(
+  sheetId: number,
+  row: number,
+  column: number,
+  formula: string,
+): Request {
+  return {
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: row - 1,
+        endRowIndex: row,
+        startColumnIndex: column - 1,
+        endColumnIndex: column,
+      },
+      rows: [{ values: [{ userEnteredValue: { formulaValue: formula } }] }],
+      fields: 'userEnteredValue',
+    },
+  }
+}
+
 /**
- * Copy the AG3 map-string formula from the source's Daily Mode Unlocks to the
- * destination's. Whatever the source holds wins, so later hand edits carry
- * forward too. Throws when either side lacks the formula, or a header the
- * formula reads, on Daily Mode Unlocks or on a sheet it looks up, is not where
- * expected.
+ * Write the repo's AG3 map-string formula into the destination's Daily Mode
+ * Unlocks, unless it already holds it. Throws when the destination lacks the
+ * formula, or a header the formula reads, on Daily Mode Unlocks or on a sheet
+ * it looks up, is not where expected.
  */
 export function planDailyUnlocksFormula(
   source: SourceInfo,
@@ -1465,21 +1014,17 @@ export function planDailyUnlocksFormula(
     DAILY_UNLOCKS_FORMULA_ROW,
     DAILY_UNLOCKS_FORMULA_COLUMN,
   )
-  const sourceSheet = requireFound(
-    sheetByTitle(source.grid, DAILY_UNLOCKS_SHEET),
-    `${DAILY_UNLOCKS_SHEET} not found in the source`,
-  )
-  const sourceFormula = requireFound(
-    cellAt(
-      gridAt(
-        sourceSheet,
-        DAILY_UNLOCKS_FORMULA_ROW - 1,
-        DAILY_UNLOCKS_FORMULA_COLUMN - 1,
-      ),
-      0,
-      0,
-    ).userEnteredValue?.formulaValue,
-    `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the source; the map-string column moved, formula not ported`,
+  noteSourceDrift(
+    notes,
+    DAILY_UNLOCKS_SHEET,
+    formulaCell,
+    sourceFormulaAt(
+      source,
+      DAILY_UNLOCKS_SHEET,
+      DAILY_UNLOCKS_FORMULA_ROW,
+      DAILY_UNLOCKS_FORMULA_COLUMN,
+    ),
+    DAILY_UNLOCKS_AG3_FORMULA,
   )
   const destSheet = requireFound(
     sheetByTitle(dest.grid, DAILY_UNLOCKS_SHEET),
@@ -1520,35 +1065,103 @@ export function planDailyUnlocksFormula(
     throw new Error(
       `${DAILY_UNLOCKS_SHEET}: ${formulaCell} holds no formula in the destination; the map-string column moved, formula not ported`,
     )
-  if (destFormula === sourceFormula) {
+  if (sameFormula(destFormula, DAILY_UNLOCKS_AG3_FORMULA)) {
     notes.push(
-      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} formula already matching`,
+      `${DAILY_UNLOCKS_SHEET}: ${formulaCell} formula already matching the repo's`,
     )
     return []
   }
   return [
     {
       label: `${DAILY_UNLOCKS_SHEET}: ${formulaCell} formula`,
-      note: 'copied from the source',
+      note: "the repo's copy",
       requests: [
-        {
-          updateCells: {
-            range: {
-              sheetId: destSheet.properties.sheetId,
-              startRowIndex: DAILY_UNLOCKS_FORMULA_ROW - 1,
-              endRowIndex: DAILY_UNLOCKS_FORMULA_ROW,
-              startColumnIndex: DAILY_UNLOCKS_FORMULA_COLUMN - 1,
-              endColumnIndex: DAILY_UNLOCKS_FORMULA_COLUMN,
-            },
-            rows: [
-              {
-                values: [{ userEnteredValue: { formulaValue: sourceFormula } }],
-              },
-            ],
-            fields: 'userEnteredValue',
-          },
-        },
+        formulaCellRequest(
+          destSheet.properties.sheetId,
+          DAILY_UNLOCKS_FORMULA_ROW,
+          DAILY_UNLOCKS_FORMULA_COLUMN,
+          DAILY_UNLOCKS_AG3_FORMULA,
+        ),
       ],
+    },
+  ]
+}
+
+/**
+ * Write the repo's Daily Unlock Map column formulas (E2:I2) into the
+ * destination, each cell only when it differs. A cell must already hold a
+ * formula listing the same DAILY_MODE_MAP.data biome column, the creator's or
+ * ours; otherwise the map was reshaped and planning throws. Skipped with a
+ * note when the destination has no map sheet.
+ */
+export function planUnlockMapFormulas(
+  source: SourceInfo,
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const destSheet = sheetByTitle(dest.meta, UNLOCK_MAP_SHEET)
+  if (!destSheet) {
+    notes.push(`Unlock map formulas: "${UNLOCK_MAP_SHEET}" not found, skipping`)
+    return []
+  }
+  const firstColumn = Math.min(
+    ...UNLOCK_MAP_FORMULA_COLUMNS.map((entry) => entry.column),
+  )
+  const destGridSheet = sheetByTitle(dest.grid, UNLOCK_MAP_SHEET)
+  const destGrid = destGridSheet
+    ? gridAt(destGridSheet, UNLOCK_MAP_FORMULA_ROW - 1, firstColumn - 1)
+    : null
+  const requests: Request[] = []
+  const writtenCells: string[] = []
+  for (const { column, biomeColumn } of UNLOCK_MAP_FORMULA_COLUMNS) {
+    const cell = a1(UNLOCK_MAP_FORMULA_ROW, column)
+    const repoFormula = unlockMapColumnFormula(column, biomeColumn)
+    noteSourceDrift(
+      notes,
+      UNLOCK_MAP_SHEET,
+      cell,
+      sourceFormulaAt(
+        source,
+        UNLOCK_MAP_SHEET,
+        UNLOCK_MAP_FORMULA_ROW,
+        column,
+        firstColumn,
+      ),
+      repoFormula,
+    )
+    const destFormula = cellAt(destGrid, 0, column - firstColumn)
+      .userEnteredValue?.formulaValue
+    if (destFormula === undefined)
+      throw new Error(
+        `${UNLOCK_MAP_SHEET}: ${cell} holds no formula in the destination; layout changed, map formulas not written`,
+      )
+    if (sameFormula(destFormula, repoFormula)) continue
+    const biomeRange = unlockMapBiomeRange(biomeColumn)
+    if (!normalizeFormula(destFormula).includes(normalizeFormula(biomeRange)))
+      throw new Error(
+        `${UNLOCK_MAP_SHEET}: ${cell} does not list ${biomeRange} in the destination; layout changed, map formulas not written`,
+      )
+    requests.push(
+      formulaCellRequest(
+        destSheet.properties.sheetId,
+        UNLOCK_MAP_FORMULA_ROW,
+        column,
+        repoFormula,
+      ),
+    )
+    writtenCells.push(cell)
+  }
+  if (!requests.length) {
+    notes.push(
+      `${UNLOCK_MAP_SHEET}: ${unlockMapFormulaCells()} formulas already matching the repo's`,
+    )
+    return []
+  }
+  return [
+    {
+      label: `${UNLOCK_MAP_SHEET}: column formulas`,
+      note: `${writtenCells.join(', ')} from the repo's copy`,
+      requests,
     },
   ]
 }

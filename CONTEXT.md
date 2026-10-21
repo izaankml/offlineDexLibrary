@@ -9,7 +9,7 @@ I track my Pokemon collection in a Google Sheets spreadsheet called "Offline Rog
 This repo contains two pieces of automation I've added on top of the creator's spreadsheet:
 
 1. **A save tracker** that highlights cells in the spreadsheet that changed since my last save data upload, so I can see which Pokemon got newly caught/shiny/etc.
-2. **A version migrator** that ports my customizations (formatting, hidden sheets, custom column, specific cell formulas) from an old version of the spreadsheet to a new one.
+2. **A version migrator** that ports my customizations (formatting, hidden sheets, specific cell formulas) from an old version of the spreadsheet to a new one.
 
 Both pieces of logic live in a single shared **OfflineDex Library** Apps Script project. Each version's bound script references this library and exposes its functions via menu items.
 
@@ -25,6 +25,7 @@ offlinedex-scripts/
 ├── src/
 │   ├── lib/                     # library sources (TypeScript); see index.ts for the public surface
 │   │   ├── saveTracker.ts, migrator.ts, setup.ts, progress.ts
+│   │   ├── trackedFormulas.ts   # our cell formulas in the sheet (AG3, the unlock map)
 │   └── shared/naming.ts         # copy-naming rules shared by the library and the CLI
 ├── scripts/
 │   ├── build.ts                 # esbuild: src/lib → library/Code.js (+ forwarding stubs)
@@ -146,18 +147,17 @@ order the display is painted against.
 Ports customizations from an old version of the spreadsheet to a new one. Since 2026-08 it
 is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets API v4):
 
-1. **Read**: 2 GETs on the source (sheet list + merges; formats/formulas of the
-   customized ranges: `Quick Checklist!1:10`, the Daily Mode map-image block,
-   `Daily Mode!L12:M15`, the `N2` landmark, `Daily Mode Unlocks!AG3`) and 2 on the
-   destination (sheet list + banding + CF rules + merges; the Quick Checklist header, the
-   `M2:N2` landmark cells and `Daily Mode Unlocks!A1:AG3`). No
-   `openById`, no temp sheets, no `copyTo`. The source's merge list comes first because
-   the map-image block is however tall the source's merge is (it follows the map's aspect
-   ratio), so it decides which range the second GET asks for.
+1. **Read**: 2 GETs on the source (sheet list; formats/formulas of the customized
+   ranges: `Quick Checklist!1:10`, and the tracked formulas `Daily Mode Unlocks!AG3` and
+   `Daily Unlock Map!E2:I2`, only to compare with the repo's) and 2 on the destination
+   (sheet list + banding + CF rules; the Quick Checklist header,
+   `Daily Mode Unlocks!A1:AG3`, the header rows of the sheets AG3 looks up, and
+   `Daily Unlock Map!E2:I2`). No `openById`, no temp sheets, no `copyTo`. The sheet list
+   comes first because it decides which tracked-formula ranges the second GET asks for.
 2. **Plan** (`buildPlan`, pure, tested with hand-built API responses): a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
-   (Daily Mode landmark at neither M2 nor N2; Quick Checklist row 10 blank; destination
-   block left of the source's), so nothing is touched on an unknown layout.
+   (Quick Checklist row 10 blank; destination block left of the source's; a header the
+   tracked formulas read has moved), so nothing is touched on an unknown layout.
 3. **Preview**: Finish Setup shows `describePlan()` in the confirm dialog.
 4. **Apply**: ONE `batchUpdate`; the API applies it atomically (all steps or none).
 
@@ -172,18 +172,6 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
 - *Banding over the image column*: `updateBanding` stretches the C-start banding to B (merging
   an A-only banding), `repeatCell` clears B's fills; a banding already spanning B only gets
   the fills cleared.
-- *Daily Mode*: two structural customizations, each inserted when the destination lacks
-  it. Column **L** (the map-size inputs) is decided by the "Missing Gym Leader Voucher…"
-  landmark at N2 (present) vs M2 (fresh). Blank row **15**, which gives the "Rows" input a
-  line of its own instead of sharing the creator's wiki-link row, is decided by where the
-  map-image merge starts (B17 present, B16 fresh). Both inserts go first in the batch, so
-  everything after them is in source coordinates. Then `updateCells` formats for the image
-  block and L12:M15; widths of L/M and the height of row 15; the merges of
-  `B12:M<image bottom>` are made to match the source's (`unmergeCells` for every existing
-  merge overlapping one of them, in post-insert coordinates, then `mergeCells` for each),
-  which is what carries the B12/F12/I12 header blocks now running to row 15, the creator's
-  wiki row, and the image block itself; the image cell's formula/value top-aligned;
-  L12:M15 inputs.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
 - *Unlock map highlight*: two custom-formula rules over the Daily Unlock Map's biome grid
@@ -192,24 +180,38 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   so a cell holding both reads as an unlock; each is skipped when already there. The map
   strings carry a parenthesized category marker (`(Shiny)`, `(Caught)`, …) for every
   unlock type except nature, set by the AG3 formula on Daily Mode Unlocks (an IV unlock is
-  marked only when a stat rolls 31 that the starter's owned IVs, `DAILY_MODE.DATA` AA:AF,
+  marked only when a stat rolls 31 that the starter's owned IVs, `DAILY_MODE.data` AA:AF,
   do not already have), and a bracketed
-  one (`[Ability Charm]`, `[Shiny Charm]`) for the charm waves, added by the map's own E2
-  formula from the Daily Mode overrides (`G3:G6` and `K3:K6`). A default shiny of a
+  one (`[Ability Charm]`, `[Shiny Charm]`) for the charm waves, added by the map's own
+  E2:I2 formulas from the Daily Mode overrides (`G3:G6` and `K3:K6`). A default shiny of a
   species with rare and epic variants (`hasVariants` in `STATIC:data.SPECIES`) reads
   `Default Shiny` with no marker, so the cell is tinted only when another unlock applies;
   every other shiny reads `<variant> (Shiny)`. The capital letter after each bracket keeps
   charm counts such as `(3)` from matching.
-- *Daily Mode Unlocks formula*: copy the source's `AG3` ArrayFormula (the map strings) into
-  the destination, skipped when they already match. Planning throws when either side lacks
-  the sheet or the AG3 formula, or when one of the header labels the formula reads is not
-  where expected, since the column references would then point at the wrong data. Checked
-  are `DAILY_UNLOCKS_LANDMARKS` (A2 Dex#, D1:L1 filters, M2/P2/R2/S2/T2, U2 IVs) and, for
-  the two sheets the formula looks up, `AG3_LOOKUP_SHEETS`: `STATIC:data.SPECIES` A1/AK1
-  and `DAILY_MODE.DATA` AA1/AF1 (the starter's owned IVs) with BR1/BU1 (the wave and
-  Pokémon it joins on). The destination read fetches those two header rows.
+- *Tracked formulas* (`trackedFormulas.ts`): the repo holds our cell formulas, and these
+  ops write the repo's copy, never the source's. A source formula that differs from the
+  repo's (compared ignoring layout, sheet-name quoting and case outside string literals,
+  since Sheets requotes and recases sheet names) is reported in the plan notes, so a hand
+  edit that never reached the repo is visible before it is overwritten.
+  - *Daily Mode Unlocks formula*: `AG3`, the map strings, skipped when the destination
+    already holds it. Planning throws when the destination lacks the AG3 formula or a
+    header label the formula reads is not where expected, since the column references
+    would then point at the wrong data. Checked are `DAILY_UNLOCKS_LANDMARKS` (A2 Dex#,
+    D1:L1 filters, M2/N2/P2/R2/S2/T2, U2 IVs) and, for the two sheets the formula looks up,
+    `AG3_LOOKUP_SHEETS`: `STATIC:data.SPECIES` A1/AK1 and `DAILY_MODE.data` AA1/AF1 (the
+    starter's owned IVs) with BY1 (`Species ID`). The owned IVs are joined on species ID
+    (Daily Mode Unlocks A ↔ `DAILY_MODE.data` BY): that tab's `Pokemon` column holds the
+    enum key for regional forms (`HISUI_ELECTRODE`) where Daily Mode Unlocks has the
+    display name, and a species missing from the tab gets no `(IV)` marker. The
+    destination read fetches those two header rows.
+  - *Unlock map formulas*: `E2:I2` on the Daily Unlock Map, one per column (each lists
+    its own `DAILY_MODE_MAP.data` biome column, AF to AJ, and reads its first wave from
+    its own header cell, so they cannot be filled across); each cell is written only when
+    it differs. Planning throws when a destination cell holds no formula or one that no
+    longer lists the same biome column; a destination without the map sheet is skipped
+    with a note.
 
-Everything is idempotent (re-running on a migrated copy plans no insert/no CF change and
+Everything is idempotent (re-running on a migrated copy plans no CF change and
 notes what was already done).
 
 ### setup.ts
@@ -319,6 +321,23 @@ checks out `creator` in the working tree.
 - Pokemon are listed by row in the data sheets and display sheets, with the same row mapping (e.g., row 12 is Bulbasaur in both QuickChecklist data and display)
 - The data sheets have raw 0/1/empty integer values; the display sheets have formulas like `=STARTER_CHECKLIST.sorted!H12` that resolve through `STARTER_CHECKLIST.sorted` (which uses ARRAYFORMULA + IFS to map values to icons via cell references like `$A$10` and `G11`)
 - This is why we track the data sheets directly: `getDisplayValues()` on the display sheets returns empty for the icon cells because the icons are inserted images, not text
+
+## Our customizations of the creator's sheet
+
+Every change we make to a fresh copy, and where its content lives. "Repo" means the
+migrator writes it from code in this repo; "previous sheet" means the migrator copies it
+from your previous version, so its content exists only in the sheets.
+
+| Customization | Content lives in |
+|---|---|
+| Daily Mode Unlocks `AG3` (map strings, unlock markers) | Repo: `DAILY_UNLOCKS_AG3_FORMULA` in `trackedFormulas.ts` |
+| Daily Unlock Map `E2:I2` (one formula per column, charm lines) | Repo: `unlockMapColumnFormula` in `trackedFormulas.ts` |
+| Daily Unlock Map CF: unlock (green) and charm (orange) rules over E2 onwards | Repo: `UNLOCK_MAP_RULES` in `migrator.ts` |
+| Starter/Full DEX Checklist CF: IVs other than 31 in red, replacing the creator's `= 31` rule | Repo: `DEX_IV_*` and `planDexIvHighlight` in `migrator.ts` |
+| Quick Checklist: title in A1, Ribbons hidden, banding stretched over image column B | Repo: `migrator.ts` |
+| Quick Checklist rows 1–10: formats, row heights, hidden rows, column widths, row 1 and row 10 formulas | Previous sheet |
+| Which sheets are hidden | Previous sheet |
+| Bound script: `OfflineDexBound.js`, `OfflineDexUpload.html`, one line in `onOpen.js` | Repo: `bound/` |
 
 ## Things that took some figuring out
 

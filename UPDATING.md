@@ -83,8 +83,8 @@ toast will point you at Finish Setup. Then run **RogueDex Functions → Finish S
   type a different source.)
 - It then **plans** the migration (reads only) and shows you the exact list of
   changes before anything is written, e.g. "Quick Checklist header: source block at
-  column 5, destination at 6: formulas shifted right by 1" or "Daily Mode: insert
-  custom column L". If the creator's layout doesn't fit a landmark, it stops here
+  column 5, destination at 6: formulas shifted right by 1" or "Daily Mode Unlocks: AG3
+  formula". If the creator's layout doesn't fit a landmark, it stops here
   with the reason and nothing is changed.
 - On YES it applies everything in one atomic update (seconds), records that this copy
   has been migrated, then opens the **Upload Data** dialog so you can load your save
@@ -157,7 +157,6 @@ brings it along.)
 
 - **Execution log**: Extensions → Apps Script → Executions. Each migration step is
   wrapped in `safeRun`; check the `OK/ERR` summary for any `ERR` lines.
-- **Daily Mode sheet**: confirm your custom column L looks right (see caveat below).
 - **Highlights**: after the save upload, changed Pokemon should be filled with the
   highlight colors.
 
@@ -175,23 +174,17 @@ brings it along.)
 - **"A creator baseline for X is already recorded".** You already ran the update for
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
-- **Daily Mode column L and row 15.** These are the two structural pieces the port
-  inserts. Column L is decided by a landmark label in the creator's layout
-  (`DAILY_MODE_LANDMARK_*` in `src/lib/migrator.ts`), row 15 by where the map-image
-  merge starts (`DAILY_MODE_IMAGE_ROW_*`). If the creator moves or renames either,
-  planning stops with the reason and nothing is written (fix the constants, run Finish
-  Setup again). Check that sheet after migrating.
-- **Daily Mode merges.** Everything merged in `B12:M<image bottom>` is copied from your
-  previous version, so the header blocks (B12/F12/I12), the creator's wiki-link row and
-  the map image all come across as you had them. Change a merge there in your current
-  sheet and the next migration reproduces it; no constant to update.
-- **Daily Mode Unlocks AG3.** The map-string formula (with the unlock markers) is
-  copied from your previous version as is, so edit it in your current sheet and the next
-  migration carries the edit. The headers it reads (A2, D1:L1, M2, P2, R2, S2, T2, U2; see
-  `DAILY_UNLOCKS_LANDMARKS` in `src/lib/migrator.ts`) are checked first, as are the headers
-  on the sheets it looks up (`STATIC:data.SPECIES` and `DAILY_MODE.DATA`; see
-  `AG3_LOOKUP_SHEETS`). If the creator moves one, planning stops with the reason and
-  nothing is written.
+- **Daily Mode sheet.** The port leaves it exactly as the creator ships it.
+- **Daily Mode Unlocks AG3 and the Daily Unlock Map's E2:I2.** These formulas are
+  written from the repo (`src/lib/trackedFormulas.ts`), not copied from your previous
+  version. Edit them there and paste the result into your current sheet; an edit made only
+  in the sheet is overwritten by the next migration, and the plan preview says so ("… in
+  the source differs from the repo's copy …") before anything is written. The headers AG3
+  reads (A2, D1:L1, M2, N2, P2, R2, S2, T2, U2; see `DAILY_UNLOCKS_LANDMARKS` in
+  `src/lib/migrator.ts`) are checked first, as are the headers on the sheets it looks up
+  (`STATIC:data.SPECIES` and `DAILY_MODE.data`; see `AG3_LOOKUP_SHEETS`), and each map
+  cell must still list the same `DAILY_MODE_MAP.data` biome column. If the creator moves
+  one, planning stops with the reason and nothing is written.
 - **Quick Checklist columns.** The creator's layout is kept; the port finds the data
   block by row 10 and shifts your header formulas to match. The SaveTracker finds its
   columns the same way, plus header labels (see `TRACKER_SPECS` in

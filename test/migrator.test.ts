@@ -10,9 +10,13 @@ import {
   buildPlan,
   describePlan,
   planQuickChecklist,
-  shiftMergeForColumnInsert,
-  shiftMergeForRowInsert,
 } from '../src/lib/migrator.ts'
+import {
+  DAILY_UNLOCKS_AG3_FORMULA,
+  UNLOCK_MAP_FORMULA_COLUMNS,
+  unlockMapBiomeRange,
+  unlockMapColumnFormula,
+} from '../src/lib/trackedFormulas.ts'
 import type {
   CellData,
   CellFormat,
@@ -130,13 +134,30 @@ function migratedDestQuickGrid(): GridData {
   return migratedGrid
 }
 
-const LANDMARK = 'Missing Gym Leader Voucher…'
-
-/** The creator's AG3 on Daily Mode Unlocks, and ours with the category marker. */
+/** The creator's AG3 on Daily Mode Unlocks. */
 const CREATOR_AG_FORMULA =
   '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P))'
-const USER_AG_FORMULA =
-  '=ArrayFormula(IF(M3:M="",, "w" & M3:M & " " & P3:P & IF(D3:D<>"", " (Caught)", "")))'
+
+/** The repo's AG3 as Sheets might hand it back: sheet names requoted and recased, lines reflowed. */
+const REQUOTED_AG_FORMULA = DAILY_UNLOCKS_AG3_FORMULA.replaceAll(
+  'DAILY_MODE.data!',
+  "'DAILY_MODE.DATA'!",
+).replaceAll('\n  ', '\n')
+
+/** Daily Unlock Map E2:I2 holding one formula per column, starting at E2. */
+function unlockMapFormulaGrid(
+  formulaFor: (column: number, biomeColumn: string) => string,
+): GridData {
+  return grid(1, 4, [
+    UNLOCK_MAP_FORMULA_COLUMNS.map(({ column, biomeColumn }) =>
+      formula(formulaFor(column, biomeColumn)),
+    ),
+  ])
+}
+
+/** The creator's map formula: biome names only, from the same biome column as ours. */
+const creatorMapFormula = (_column: number, biomeColumn: string): string =>
+  `=BYROW(${unlockMapBiomeRange(biomeColumn)}, LAMBDA(biome, IF(biome="",, biome)))`
 
 /** Daily Mode Unlocks A1:AG3: the header landmarks in rows 1-2, the map-string formula at AG3. */
 function dailyUnlocksHeaderGrid(agFormula: string): GridData {
@@ -149,59 +170,17 @@ function dailyUnlocksHeaderGrid(agFormula: string): GridData {
   return grid(0, 0, rows)
 }
 
-const range = (
-  sheetId: number,
-  startRowIndex: number,
-  endRowIndex: number,
-  startColumnIndex: number,
-  endColumnIndex: number,
-): GridRange => ({
-  sheetId,
-  startRowIndex,
-  endRowIndex,
-  startColumnIndex,
-  endColumnIndex,
-})
-
-/**
- * Daily Mode merges of a source (or already-migrated) copy: the three header
- * blocks run to row 15, the creator's wiki-link row sits at 16, and the map
- * image is B17:M132. B8:K10 is outside the ported region.
- */
-const sourceDailyMerges = (sheetId: number): GridRange[] => [
-  range(sheetId, 7, 10, 1, 11), // B8:K10, above the ported region
-  range(sheetId, 11, 15, 1, 5), // B12:E15
-  range(sheetId, 11, 15, 5, 8), // F12:H15
-  range(sheetId, 11, 15, 8, 11), // I12:K15
-  range(sheetId, 15, 16, 1, 10), // B16:J16, the creator's wiki link
-  range(sheetId, 16, 132, 1, 13), // B17:M132, the map image
-]
-
 function source(): SourceInfo {
-  const dailyImage: CellData[][] = []
-  for (let rowIndex = 0; rowIndex < 116; rowIndex++)
-    dailyImage.push(
-      Array.from({ length: 12 }, () => ({ userEnteredFormat: fmt('daily') })),
-    )
-  dailyImage[0]![0] = {
-    ...formula('=IMAGE("https://wiki/daily.jpg",4,L12,M12)', ''),
-    userEnteredFormat: fmt('b17'),
-  }
-  const inputs: CellData[][] = [
-    [num(1), num(2)],
-    [str('w'), str('h')],
-    [formula('=L12*2'), empty()],
-    [str('Rows'), num(24)],
-  ]
   return {
     meta: {
       sheets: [
         sheet('Quick Checklist', 1, { columnCount: 15 }),
-        sheet('Daily Mode', 2, { merges: sourceDailyMerges(2) }),
+        sheet('Daily Mode', 2),
         sheet('newJSON', 3, { hidden: true }),
         sheet('IMPORT:data.SPECIES', 4, { hidden: true }),
         sheet('_snapshot_QuickChecklist', 5, { hidden: true }),
         sheet('Daily Mode Unlocks', 6, { columnCount: 40 }),
+        sheet('Daily Unlock Map', 7, { columnCount: 10 }),
       ],
     },
     grid: {
@@ -210,22 +189,13 @@ function source(): SourceInfo {
           columnCount: 15,
           data: [sourceQuickGrid()],
         }),
-        sheet('Daily Mode', 2, {
-          data: [
-            grid(16, 1, dailyImage, {
-              columnMetadata: Array.from({ length: 12 }, (_, colIndex) => ({
-                pixelSize: 50 + colIndex,
-              })),
-            }),
-            grid(11, 11, inputs, {
-              rowMetadata: [{}, {}, {}, { pixelSize: 42 }],
-            }),
-            grid(1, 13, [[str(LANDMARK)]]),
-          ],
-        }),
         sheet('Daily Mode Unlocks', 6, {
           columnCount: 40,
-          data: [grid(2, 32, [[formula(USER_AG_FORMULA)]])],
+          data: [grid(2, 32, [[formula(DAILY_UNLOCKS_AG3_FORMULA)]])],
+        }),
+        sheet('Daily Unlock Map', 7, {
+          columnCount: 10,
+          data: [unlockMapFormulaGrid(unlockMapColumnFormula)],
         }),
       ],
     },
@@ -251,19 +221,7 @@ function freshDest(): DestInfo {
             },
           ],
         }),
-        // Creator coordinates: no custom column L, no custom row 15, so the
-        // header blocks stop at row 14, the wiki link is at 15 and the image
-        // merge starts at B16 (running to L, which the insert widens to M).
-        sheet('Daily Mode', 12, {
-          merges: [
-            range(12, 7, 10, 1, 11), // B8:K10
-            range(12, 11, 14, 1, 5), // B12:E14
-            range(12, 11, 14, 5, 8), // F12:H14
-            range(12, 11, 14, 8, 11), // I12:K14
-            range(12, 14, 15, 1, 10), // B15:J15
-            range(12, 15, 131, 1, 12), // B16:L131
-          ],
-        }),
+        sheet('Daily Mode', 12),
         sheet('newJSON', 13),
         sheet('IMPORT:data.SPECIES', 14, { hidden: true }),
         sheet('Starter DEX Checklist', 15, {
@@ -339,14 +297,15 @@ function freshDest(): DestInfo {
           columnCount: 16,
           data: [freshDestQuickGrid()],
         }),
-        sheet('Daily Mode', 12, {
-          data: [grid(1, 12, [[str(LANDMARK), empty()]])],
-        }),
         sheet('Daily Mode Unlocks', 18, {
           columnCount: 40,
           data: [dailyUnlocksHeaderGrid(CREATOR_AG_FORMULA)],
         }),
         ...lookupSheets(),
+        sheet('Daily Unlock Map', 17, {
+          columnCount: 10,
+          data: [unlockMapFormulaGrid(creatorMapFormula)],
+        }),
       ],
     },
   }
@@ -368,7 +327,6 @@ function lookupSheets(): SheetInfo[] {
 function migratedDest(): DestInfo {
   const dest = freshDest()
   dest.grid.sheets![0]!.data = [migratedDestQuickGrid()]
-  dest.grid.sheets![1]!.data = [grid(1, 12, [[empty(), str(LANDMARK)]])]
   dest.meta.sheets![0]!.bandedRanges = [
     {
       bandedRangeId: 7,
@@ -381,7 +339,6 @@ function migratedDest(): DestInfo {
       },
     },
   ]
-  dest.meta.sheets![1]!.merges = sourceDailyMerges(12)
   dest.meta.sheets![3]!.properties.hidden = true
   dest.meta.sheets![2]!.properties.hidden = true
   dest.meta.sheets![4]!.conditionalFormats = [
@@ -409,7 +366,8 @@ function migratedDest(): DestInfo {
       format: { backgroundColor: backgroundColor as Record<string, number> },
     },
   }))
-  dest.grid.sheets![2]!.data = [dailyUnlocksHeaderGrid(USER_AG_FORMULA)]
+  dest.grid.sheets![1]!.data = [dailyUnlocksHeaderGrid(REQUOTED_AG_FORMULA)]
+  dest.grid.sheets![4]!.data = [unlockMapFormulaGrid(unlockMapColumnFormula)]
   return dest
 }
 
@@ -421,30 +379,51 @@ const requestsOfKind = (
 
 // ---------------------------------------------------------------------------
 
-test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF handled', () => {
+test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alone', () => {
   const { ops, notes } = buildPlan(source(), freshDest(), '6.03')
   const labels = ops.map((op) => op.label)
   assert.deepEqual(labels, [
     'Quick Checklist header (rows 1–10)',
     'Quick Checklist title',
     'Quick Checklist banding over the image column',
-    'Daily Mode: insert custom column L',
-    'Daily Mode: insert custom row 15',
-    'Daily Mode: formats of B17:M132',
-    'Daily Mode: formats of L12:M15',
-    'Daily Mode: widths of columns L and M, height of row 15',
-    'Daily Mode: 5 merge(s) in B12:M132',
-    'Daily Mode: B17 formula',
-    'Daily Mode: L12:M15 inputs',
     'Hide 1 sheet(s)',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
     'Daily Unlock Map: highlight cells with a marker',
     'Daily Mode Unlocks: AG3 formula',
+    'Daily Unlock Map: column formulas',
   ])
   assert.deepEqual(notes, [])
 
-  // Daily Mode Unlocks: our AG3 formula replaces the creator's, nothing else on that sheet.
+  // Daily Unlock Map: the repo's formula replaces the creator's in each of E2:I2.
+  const mapWrites = requestsOfKind(ops, 'updateCells')
+    .map(
+      (request) =>
+        request['updateCells'] as {
+          range: GridRange
+          rows: { values: CellData[] }[]
+        },
+    )
+    .filter((write) => write.range.sheetId === 17)
+  assert.deepEqual(
+    mapWrites.map((write) => [
+      write.range.startRowIndex,
+      write.range.startColumnIndex,
+      write.rows[0]!.values[0]!.userEnteredValue!.formulaValue,
+    ]),
+    UNLOCK_MAP_FORMULA_COLUMNS.map(({ column, biomeColumn }) => [
+      1,
+      column - 1,
+      unlockMapColumnFormula(column, biomeColumn),
+    ]),
+  )
+  assert.match(
+    unlockMapColumnFormula(6, 'AG'),
+    /^=BYROW\(DAILY_MODE_MAP\.data!AG2:AG, [\s\S]*firstWave, F1,\n {2}nextWave, F1 \+ 10,[\s\S]*"\^w\(\\d\+\)"/,
+    'each column reads its own biome column and header cell; the wave regex keeps its backslash',
+  )
+
+  // Daily Mode Unlocks: the repo's AG3 formula replaces the creator's, nothing else on that sheet.
   const unlocksWrites = requestsOfKind(ops, 'updateCells')
     .map(
       (request) =>
@@ -466,7 +445,7 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
   assert.equal(unlocksWrites[0]!.fields, 'userEnteredValue')
   assert.equal(
     unlocksWrites[0]!.rows[0]!.values[0]!.userEnteredValue!.formulaValue,
-    USER_AG_FORMULA,
+    DAILY_UNLOCKS_AG3_FORMULA,
   )
 
   // Unlock map: the unlock rule at index 0, the charm rule under it, both over
@@ -655,87 +634,11 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
   }
   assert.equal(band.bandedRange.range['startColumnIndex'], 1)
   assert.equal(requestsOfKind(ops, 'repeatCell').length, 1)
-  // Daily Mode: column L inserted at 0-based 11, row 15 at 0-based 14.
-  const inserts = requestsOfKind(ops, 'insertDimension').map(
-    (request) =>
-      (request['insertDimension'] as { range: Record<string, unknown> }).range,
-  )
-  assert.deepEqual(
-    inserts.map((insert) => [insert['dimension'], insert['startIndex']]),
-    [
-      ['COLUMNS', 11],
-      ['ROWS', 14],
-    ],
-  )
+  // Daily Mode (sheet 12) stays as the creator ships it.
   assert.ok(
-    dimensionUpdates.some(
-      (update) =>
-        update.range['dimension'] === 'ROWS' &&
-        update.range['startIndex'] === 14 &&
-        update.properties['pixelSize'] === 42,
-    ),
-    "the inserted row gets the source's height",
+    !ops.some((op) => /"sheetId":12\b/.test(JSON.stringify(op.requests))),
+    'no request touches Daily Mode',
   )
-  // Every destination merge overlapping one of the five ported ones is
-  // unmerged in post-insert coordinates (B8:K10 is outside and survives);
-  // then the source's merges are applied.
-  const asTuple = (range: Record<string, number>): number[] => [
-    range['startRowIndex']!,
-    range['endRowIndex']!,
-    range['startColumnIndex']!,
-    range['endColumnIndex']!,
-  ]
-  assert.deepEqual(
-    requestsOfKind(ops, 'unmergeCells').map((request) =>
-      asTuple(
-        (request['unmergeCells'] as { range: Record<string, number> }).range,
-      ),
-    ),
-    [
-      [11, 14, 1, 5], // B12:E14
-      [11, 14, 5, 8], // F12:H14
-      [11, 14, 8, 11], // I12:K14
-      [15, 16, 1, 10], // B15:J15 → B16:J16
-      [16, 132, 1, 13], // B16:L131 → B17:M132 (widened by the column insert)
-    ],
-  )
-  assert.deepEqual(
-    requestsOfKind(ops, 'mergeCells').map((request) =>
-      asTuple(
-        (request['mergeCells'] as { range: Record<string, number> }).range,
-      ),
-    ),
-    [
-      [11, 15, 1, 5], // B12:E15
-      [11, 15, 5, 8], // F12:H15
-      [11, 15, 8, 11], // I12:K15
-      [15, 16, 1, 10], // B16:J16
-      [16, 132, 1, 13], // B17:M132
-    ],
-  )
-  // B17 formula copied, top-aligned; L12:M15 values.
-  const imageCell = cellWrites.find(
-    (write) =>
-      write.fields === 'userEnteredValue,userEnteredFormat.verticalAlignment',
-  )!
-  assert.equal(imageCell.range['startRowIndex'], 16)
-  assert.match(
-    imageCell.rows[0]!.values[0]!.userEnteredValue!.formulaValue!,
-    /^=IMAGE/,
-  )
-  const inputs = cellWrites.find(
-    (write) =>
-      write.fields === 'userEnteredValue' &&
-      write.range['startRowIndex'] === 11 &&
-      write.range['startColumnIndex'] === 11,
-  )!
-  assert.equal(inputs.range['endRowIndex'], 15)
-  assert.equal(
-    inputs.rows[2]!.values[0]!.userEnteredValue!.formulaValue,
-    '=L12*2',
-  )
-  assert.deepEqual(inputs.rows[2]!.values[1], {})
-  assert.equal(inputs.rows[3]!.values[1]!.userEnteredValue!.numberValue, 24)
   // Hidden sheets: newJSON gets hidden; IMPORT already hidden; _snapshot_ has no counterpart.
   const hide = requestsOfKind(ops, 'updateSheetProperties')
   assert.equal(hide.length, 1)
@@ -788,9 +691,8 @@ test('fresh 6.03 copy: block shifted +1, column L inserted, merges/banding/CF ha
   )
 })
 
-test('already-migrated destination: idempotent plan (no insert, no shift, banding/CF already done)', () => {
+test('already-migrated destination: idempotent plan (banding/CF already done)', () => {
   const { ops, notes } = buildPlan(source(), migratedDest(), '6.03')
-  assert.equal(requestsOfKind(ops, 'insertDimension').length, 0)
   assert.equal(requestsOfKind(ops, 'deleteConditionalFormatRule').length, 0)
   assert.equal(requestsOfKind(ops, 'updateBanding').length, 0)
   assert.equal(
@@ -822,19 +724,6 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
   )
   assert.ok(
     notes.some((note) =>
-      note.startsWith('Daily Mode: custom column L already present'),
-    ),
-  )
-  assert.ok(
-    notes.some((note) =>
-      note.startsWith('Daily Mode: custom row 15 already present'),
-    ),
-  )
-  // The merges already match the source's: each is unmerged and re-applied.
-  assert.equal(requestsOfKind(ops, 'unmergeCells').length, 5)
-  assert.equal(requestsOfKind(ops, 'mergeCells').length, 5)
-  assert.ok(
-    notes.some((note) =>
       note.includes('no "= 31" rule on "Starter DEX Checklist"'),
     ),
   )
@@ -847,17 +736,96 @@ test('already-migrated destination: idempotent plan (no insert, no shift, bandin
       note.startsWith('Unlock map highlight: rules already present'),
     ),
   )
+  // The tracked formulas already match the repo's, AG3 despite its requoted sheet names.
   assert.ok(
-    notes.some((note) =>
-      note.startsWith('Daily Mode Unlocks: AG3 formula already matching'),
+    notes.includes(
+      "Daily Mode Unlocks: AG3 formula already matching the repo's",
+    ),
+  )
+  assert.ok(
+    notes.includes(
+      "Daily Unlock Map: E2:I2 formulas already matching the repo's",
     ),
   )
   assert.equal(
-    requestsOfKind(ops, 'updateCells').filter(
-      (request) =>
-        (request['updateCells'] as { range: GridRange }).range.sheetId === 18,
+    requestsOfKind(ops, 'updateCells').filter((request) =>
+      [17, 18].includes(
+        (request['updateCells'] as { range: GridRange }).range.sheetId,
+      ),
     ).length,
     0,
+  )
+})
+
+test("tracked formulas: the repo's copy is written, and a source that differs is noted", () => {
+  const editedSource = source()
+  editedSource.grid.sheets![1]!.data = [grid(2, 32, [[formula('=1')]])]
+  editedSource.grid.sheets![2]!.data = [
+    unlockMapFormulaGrid((column, biomeColumn) =>
+      column === 6 ? '=2' : unlockMapColumnFormula(column, biomeColumn),
+    ),
+  ]
+  const { ops, notes } = buildPlan(editedSource, migratedDest(), '6.03')
+  assert.deepEqual(
+    notes.filter((note) => note.includes('differs from the repo')),
+    [
+      "Daily Mode Unlocks: AG3 in the source differs from the repo's copy in trackedFormulas.ts, which is what gets written; copy the source's into the repo first to keep its changes",
+      "Daily Unlock Map: F2 in the source differs from the repo's copy in trackedFormulas.ts, which is what gets written; copy the source's into the repo first to keep its changes",
+    ],
+  )
+  assert.ok(
+    !ops.some((op) =>
+      [
+        'Daily Mode Unlocks: AG3 formula',
+        'Daily Unlock Map: column formulas',
+      ].includes(op.label),
+    ),
+    "a destination already holding the repo's copies is left alone",
+  )
+
+  // A destination differing in one map cell gets only that cell.
+  const oneCellStale = migratedDest()
+  oneCellStale.grid.sheets![4]!.data = [
+    unlockMapFormulaGrid((column, biomeColumn) =>
+      column === 8
+        ? creatorMapFormula(column, biomeColumn)
+        : unlockMapColumnFormula(column, biomeColumn),
+    ),
+  ]
+  const mapOp = buildPlan(source(), oneCellStale, '6.03').ops.find(
+    (op) => op.label === 'Daily Unlock Map: column formulas',
+  )!
+  assert.equal(mapOp.note, "H2 from the repo's copy")
+  assert.equal(mapOp.requests.length, 1)
+
+  // A source without the tracked sheets plans the same, with nothing to compare.
+  const sourceWithoutSheets = source()
+  sourceWithoutSheets.grid.sheets = sourceWithoutSheets.grid.sheets!.filter(
+    (sheetInfo) =>
+      !['Daily Mode Unlocks', 'Daily Unlock Map'].includes(
+        sheetInfo.properties.title,
+      ),
+  )
+  const withoutSheetsPlan = buildPlan(sourceWithoutSheets, freshDest(), '6.03')
+  assert.deepEqual(withoutSheetsPlan.notes, [])
+  assert.ok(
+    withoutSheetsPlan.ops.some(
+      (op) => op.label === 'Daily Mode Unlocks: AG3 formula',
+    ),
+  )
+
+  // A destination without the map sheet skips its formulas.
+  const withoutMap = freshDest()
+  withoutMap.meta.sheets = withoutMap.meta.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Daily Unlock Map',
+  )
+  withoutMap.grid.sheets = withoutMap.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Daily Unlock Map',
+  )
+  assert.ok(
+    buildPlan(source(), withoutMap, '6.03').notes.includes(
+      'Unlock map formulas: "Daily Unlock Map" not found, skipping',
+    ),
   )
 })
 
@@ -887,30 +855,6 @@ test('a 6.03 → 6.03 port (same layout, block at F in both) needs no formula sh
 })
 
 test('planning refuses unknown layouts before anything is written', () => {
-  const noLandmark = freshDest()
-  noLandmark.grid.sheets![1]!.data = [grid(1, 12, [[empty(), empty()]])]
-  assert.throws(
-    () => buildPlan(source(), noLandmark, '6.03'),
-    /landmark "Missing Gym Leader Voucher…" is at neither N2 nor M2/,
-  )
-
-  // The map image block is located by the merge it is; without one, nothing is ported.
-  const sourceWithoutImageMerge = source()
-  sourceWithoutImageMerge.meta.sheets![1]!.merges = sourceDailyMerges(2).filter(
-    (merge) => merge.startRowIndex !== 16,
-  )
-  assert.throws(
-    () => buildPlan(sourceWithoutImageMerge, freshDest(), '6.03'),
-    /no merged cell starts at B17 in the source/,
-  )
-
-  const destImageMergeMoved = freshDest()
-  destImageMergeMoved.meta.sheets![1]!.merges = [range(12, 20, 40, 1, 12)]
-  assert.throws(
-    () => buildPlan(source(), destImageMergeMoved, '6.03'),
-    /map image merge starts at neither B17 nor B16 in the destination/,
-  )
-
   const blankRow10 = freshDest()
   blankRow10.grid.sheets![0]!.data![0]!.rowData![9]!.values = Array.from(
     { length: 16 },
@@ -932,56 +876,67 @@ test('planning refuses unknown layouts before anything is written', () => {
     /left of the source's/,
   )
 
-  // Daily Mode Unlocks: a moved header, or no formula at AG3 on either side, stops the port.
+  // Daily Mode Unlocks: a moved header, or no formula at AG3, stops the port.
   const waveMoved = freshDest()
-  waveMoved.grid.sheets![2]!.data![0]!.rowData![1]!.values![12] = str('Floor')
+  waveMoved.grid.sheets![1]!.data![0]!.rowData![1]!.values![12] = str('Floor')
   assert.throws(
     () => buildPlan(source(), waveMoved, '6.03'),
     /Daily Mode Unlocks: expected "Wave" at M2 in the destination, found "Floor"/,
   )
   const noCreatorFormula = freshDest()
-  noCreatorFormula.grid.sheets![2]!.data![0]!.rowData![2]!.values![32] =
+  noCreatorFormula.grid.sheets![1]!.data![0]!.rowData![2]!.values![32] =
     str('w13 Dartrix')
   assert.throws(
     () => buildPlan(source(), noCreatorFormula, '6.03'),
     /AG3 holds no formula in the destination/,
   )
-  const sourceWithoutFormula = source()
-  sourceWithoutFormula.grid.sheets![2]!.data = [grid(2, 32, [[str('')]])]
-  assert.throws(
-    () => buildPlan(sourceWithoutFormula, freshDest(), '6.03'),
-    /AG3 holds no formula in the source/,
-  )
-  const sourceWithoutSheet = source()
-  sourceWithoutSheet.grid.sheets = sourceWithoutSheet.grid.sheets!.filter(
-    (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode Unlocks',
-  )
-  assert.throws(
-    () => buildPlan(sourceWithoutSheet, freshDest(), '6.03'),
-    /Daily Mode Unlocks not found in the source/,
-  )
 
   // The sheets AG3 looks up: a moved header, or a missing sheet, stops the port too.
   const variantsMoved = freshDest()
-  variantsMoved.grid.sheets![3]!.data![0]!.rowData![0]!.values![36] =
+  variantsMoved.grid.sheets![2]!.data![0]!.rowData![0]!.values![36] =
     str('hasForms')
   assert.throws(
     () => buildPlan(source(), variantsMoved, '6.03'),
     /STATIC:data\.SPECIES: expected "hasVariants" at AK1 in the destination, found "hasForms"/,
   )
   const ownedIvsMoved = freshDest()
-  ownedIvsMoved.grid.sheets![4]!.data![0]!.rowData![0]!.values![26] = str('ATK')
+  ownedIvsMoved.grid.sheets![3]!.data![0]!.rowData![0]!.values![26] = str('ATK')
   assert.throws(
     () => buildPlan(source(), ownedIvsMoved, '6.03'),
-    /DAILY_MODE\.DATA: expected "HP" at AA1 in the destination, found "ATK"/,
+    /DAILY_MODE\.data: expected "HP" at AA1 in the destination, found "ATK"/,
+  )
+  const speciesIdMoved = freshDest()
+  speciesIdMoved.grid.sheets![3]!.data![0]!.rowData![0]!.values![76] =
+    str('Form ID')
+  assert.throws(
+    () => buildPlan(source(), speciesIdMoved, '6.03'),
+    /DAILY_MODE\.data: expected "Species ID" at BY1 in the destination, found "Form ID"/,
   )
   const withoutLookupSheet = freshDest()
   withoutLookupSheet.grid.sheets = withoutLookupSheet.grid.sheets!.filter(
-    (sheetInfo) => sheetInfo.properties.title !== 'DAILY_MODE.DATA',
+    (sheetInfo) => sheetInfo.properties.title !== 'DAILY_MODE.data',
   )
   assert.throws(
     () => buildPlan(source(), withoutLookupSheet, '6.03'),
-    /"DAILY_MODE\.DATA" not found in the destination/,
+    /"DAILY_MODE\.data" not found in the destination/,
+  )
+
+  // Daily Unlock Map: a cell without a formula, or listing another biome column, stops the port.
+  const mapCellBlank = freshDest()
+  mapCellBlank.grid.sheets![4]!.data![0]!.rowData![0]!.values![2] = empty()
+  assert.throws(
+    () => buildPlan(source(), mapCellBlank, '6.03'),
+    /Daily Unlock Map: G2 holds no formula in the destination/,
+  )
+  const mapBiomesMoved = freshDest()
+  mapBiomesMoved.grid.sheets![4]!.data = [
+    unlockMapFormulaGrid((column, biomeColumn) =>
+      creatorMapFormula(column, column === 5 ? 'AK' : biomeColumn),
+    ),
+  ]
+  assert.throws(
+    () => buildPlan(source(), mapBiomesMoved, '6.03'),
+    /Daily Unlock Map: E2 does not list DAILY_MODE_MAP\.data!AF2:AF in the destination/,
   )
 })
 
@@ -1010,55 +965,5 @@ test('applyPlan sends every request in one batchUpdate to the destination', () =
   assert.equal(
     sent[0]!.requests.length,
     ops.reduce((total, op) => total + op.requests.length, 0),
-  )
-})
-
-test('shiftMergeForColumnInsert', () => {
-  const merge = { sheetId: 1, startColumnIndex: 1, endColumnIndex: 12 }
-  assert.deepEqual(shiftMergeForColumnInsert(merge, 11), {
-    sheetId: 1,
-    startColumnIndex: 1,
-    endColumnIndex: 13,
-  })
-  assert.deepEqual(
-    shiftMergeForColumnInsert(
-      { sheetId: 1, startColumnIndex: 12, endColumnIndex: 14 },
-      11,
-    ),
-    { sheetId: 1, startColumnIndex: 13, endColumnIndex: 15 },
-  )
-  assert.deepEqual(
-    shiftMergeForColumnInsert(
-      { sheetId: 1, startColumnIndex: 0, endColumnIndex: 11 },
-      11,
-    ),
-    { sheetId: 1, startColumnIndex: 0, endColumnIndex: 11 },
-  )
-})
-
-test('shiftMergeForRowInsert', () => {
-  // Starts at or below the inserted row: moves down whole (B15:J15 → B16:J16).
-  assert.deepEqual(
-    shiftMergeForRowInsert(
-      { sheetId: 1, startRowIndex: 14, endRowIndex: 15 },
-      14,
-    ),
-    { sheetId: 1, startRowIndex: 15, endRowIndex: 16 },
-  )
-  // Ends exactly at the inserted row: untouched (B12:E14 stays B12:E14).
-  assert.deepEqual(
-    shiftMergeForRowInsert(
-      { sheetId: 1, startRowIndex: 11, endRowIndex: 14 },
-      14,
-    ),
-    { sheetId: 1, startRowIndex: 11, endRowIndex: 14 },
-  )
-  // Spans the inserted row: grows by one.
-  assert.deepEqual(
-    shiftMergeForRowInsert(
-      { sheetId: 1, startRowIndex: 11, endRowIndex: 16 },
-      14,
-    ),
-    { sheetId: 1, startRowIndex: 11, endRowIndex: 17 },
   )
 })
