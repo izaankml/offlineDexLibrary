@@ -3,10 +3,12 @@
  * good enough to run the SaveTracker / Setup logic offline under node:test.
  *
  * Importing this module installs the fakes on globalThis (SpreadsheetApp,
- * Logger, PropertiesService, Utilities, LockService). Import it BEFORE any
- * src/lib module in a test file. Every Sheets "API call" is appended to
- * `calls` so tests can assert on the number of round-trips a flow makes.
+ * Logger, PropertiesService, Utilities, LockService, Sheets, Drive). Import it
+ * BEFORE any src/lib module in a test file. Every Sheets "API call" is appended
+ * to `calls` so tests can assert on the number of round-trips a flow makes.
  */
+
+import type { DriveSpreadsheet, ListParams } from '../src/lib/driveApi.ts'
 
 export type CellValue = string | number | boolean | null
 
@@ -30,6 +32,8 @@ export function resetFakes(): void {
   toasts.length = 0
   apiCalls.length = 0
   batchUpdates.length = 0
+  driveListCalls.length = 0
+  driveFilePages.length = 0
   activeSpreadsheet = null
   docProps.clear()
 }
@@ -469,6 +473,28 @@ fakeGlobals['PropertiesService'] = {
       setProperty: (key: string, value: string) => docProps.set(key, value),
       deleteProperty: (key: string) => docProps.delete(key),
     }
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Fake Drive advanced service: files.list serves `driveFilePages` one page per
+// call, whatever the query, and records each call's parameters.
+// ---------------------------------------------------------------------------
+
+export const driveListCalls: ListParams[] = []
+export const driveFilePages: Partial<DriveSpreadsheet>[][] = []
+
+fakeGlobals['Drive'] = {
+  Files: {
+    list(params: ListParams) {
+      driveListCalls.push(params)
+      const pageIndex = Number(params.pageToken ?? 0)
+      const hasNextPage = pageIndex + 1 < driveFilePages.length
+      return {
+        files: driveFilePages[pageIndex] ?? [],
+        ...(hasNextPage ? { nextPageToken: String(pageIndex + 1) } : {}),
+      }
+    },
   },
 }
 

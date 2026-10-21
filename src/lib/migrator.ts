@@ -16,6 +16,11 @@
  */
 
 import { copyName } from '../shared/naming.ts'
+import {
+  type DriveSpreadsheet,
+  driveQueryString,
+  listSpreadsheets,
+} from './driveApi.ts'
 import { shiftFormulaColumns } from './formulaShift.ts'
 import { finishFlow, startStep } from './progress.ts'
 import {
@@ -1171,17 +1176,8 @@ export function planUnlockMapFormulas(
 // ---------------------------------------------------------------------------
 
 /** Every non-trashed spreadsheet in Drive with exactly this name. */
-export function findSpreadsheetsNamed(
-  name: string,
-): GoogleAppsScript.Drive.File[] {
-  const query =
-    "title = '" +
-    name.replace(/'/g, "\\'") +
-    "' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
-  const fileIterator = DriveApp.searchFiles(query)
-  const files: GoogleAppsScript.Drive.File[] = []
-  while (fileIterator.hasNext()) files.push(fileIterator.next())
-  return files
+export function findSpreadsheetsNamed(name: string): DriveSpreadsheet[] {
+  return listSpreadsheets(`name = ${driveQueryString(name)}`)
 }
 
 /** Drive file ID of an Offline RogueDex spreadsheet by version (newest if several). */
@@ -1196,14 +1192,14 @@ export function findFileIdByVersion(version: string): string {
   if (matchingFiles.length > 1) {
     matchingFiles.sort(
       (fileA, fileB) =>
-        fileB.getLastUpdated().getTime() - fileA.getLastUpdated().getTime(),
+        Date.parse(fileB.modifiedTime) - Date.parse(fileA.modifiedTime),
     )
     Logger.log(
-      `Multiple files named "${targetName}" found. Using newest: ${matchingFiles[0]!.getId()}. Others ignored: ${matchingFiles
+      `Multiple files named "${targetName}" found. Using newest: ${matchingFiles[0]!.id}. Others ignored: ${matchingFiles
         .slice(1)
-        .map((file) => file.getId())
+        .map((file) => file.id)
         .join(', ')}`,
     )
   }
-  return matchingFiles[0]!.getId()
+  return matchingFiles[0]!.id
 }

@@ -228,15 +228,19 @@ The Google-side half of a version update (the terminal half is `scripts/update.t
   **Bound scripts are not enumerable through Drive** (verified 2026-08: v3 `files.list`
   with `'<sheetId>' in parents`, v2 `files.list`, and v2 `children.list` all return
   nothing even with full Drive scope inside Apps Script), so no lookup is attempted. The
-  library uses `DriveApp` only to list spreadsheets by name and the Sheets advanced
-  service; no Drive advanced service, no `UrlFetchApp`.
+  library lists spreadsheets by name through the Drive advanced service (`files.list`,
+  wrapped in `src/lib/driveApi.ts`) and edits through the Sheets advanced service; no
+  `DriveApp`, no `UrlFetchApp`.
 - **OAuth scopes are pinned** in both manifests (`library/appsscript.json`,
   `bound/appsscript.json`): `spreadsheets`, `drive.metadata.readonly`, and
   `script.container.ui`. The metadata-only Drive scope is Google-*sensitive* rather than
   *restricted*, so the consent screen no longer asks for edit/delete access to all Drive
-  files and OAuth verification, if ever pursued, needs no paid security assessment. Every
-  `DriveApp` call must stay metadata-only (search, name, ID, dates, URL); a bound script
-  inherits its libraries' scopes, so both lists must stay in step.
+  files and OAuth verification, if ever pursued, needs no paid security assessment.
+  `DriveApp` is unusable under this scope: every one of its methods, `searchFiles`
+  included, requires `drive.readonly` or `drive`. Drive access goes through the Drive
+  advanced service and must stay metadata-only (list, name, ID, dates, URL). A bound
+  script inherits its libraries' scopes, and an advanced service the library calls must
+  be enabled in both manifests, so both lists must stay in step.
 - `finishSetup()`: run from the *new* sheet's menu. Reads the destination version from
   the sheet's name, asks `detectPreviousVersion` for the source, shows one YES/NO/CANCEL
   confirm (NO falls back to a typed prompt), builds the migration plan (`planForVersions`),

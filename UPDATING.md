@@ -90,10 +90,11 @@ toast will point you at Finish Setup. Then run **RogueDex Functions → Finish S
   has been migrated, then opens the **Upload Data** dialog so you can load your save
   straight away. If the update is rejected, the sheet is unchanged and you're told why.
 - First run after 2026-08: Google may ask you to re-authorize once (the library now uses
-  the Sheets API); accept and run again. The Sheets advanced service must be enabled in
-  BOTH manifests, the library's and the bound script's (`bound/appsscript.json`,
+  the Sheets API); accept and run again. The Sheets and Drive advanced services must be
+  enabled in BOTH manifests, the library's and the bound script's (`bound/appsscript.json`,
   `enabledAdvancedServices`), or you get "Service Google Sheets API has not been enabled
-  for your Apps Script-managed Cloud Platform project". Give it a minute to propagate.
+  for your Apps Script-managed Cloud Platform project" (or the Drive equivalent). Give it
+  a minute to propagate.
 
 The merge commit on `main` is your record of this version's reconciled bound code;
 `bound/.clasp.json` is gitignored.

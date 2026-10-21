@@ -20,6 +20,7 @@ import {
   copyName,
   versionFromName,
 } from '../shared/naming.ts'
+import { type DriveSpreadsheet, listSpreadsheets } from './driveApi.ts'
 import {
   applyPlanWithProgress,
   describePlan,
@@ -79,14 +80,14 @@ export function prepareNextVersion(): void {
   if (existingCopies.length > 0) {
     const choice = ui.alert(
       'Prepare Next Version',
-      `You already have a sheet named "${newCopyName}" (created ${existingCopies[0]!.getDateCreated().toLocaleString()}).\n\n` +
+      `You already have a sheet named "${newCopyName}" (created ${new Date(existingCopies[0]!.createdTime).toLocaleString()}).\n\n` +
         'YES: use it (only if you have NOT pushed your code to it yet)\n' +
         'NO: make a brand-new copy alongside it\n' +
         'CANCEL: stop',
       ui.ButtonSet.YES_NO_CANCEL,
     )
     if (choice === ui.Button.CANCEL || choice === ui.Button.CLOSE) return
-    if (choice === ui.Button.YES) copyUrl = existingCopies[0]!.getUrl()
+    if (choice === ui.Button.YES) copyUrl = existingCopies[0]!.webViewLink
   }
 
   if (!copyUrl) {
@@ -103,11 +104,11 @@ export function prepareNextVersion(): void {
 }
 
 /** Non-trashed spreadsheets with exactly this name (newest-created first). */
-function findExistingCopies(name: string): GoogleAppsScript.Drive.File[] {
+function findExistingCopies(name: string): DriveSpreadsheet[] {
   const copies = findSpreadsheetsNamed(name)
   copies.sort(
     (fileA, fileB) =>
-      fileB.getDateCreated().getTime() - fileA.getDateCreated().getTime(),
+      Date.parse(fileB.createdTime) - Date.parse(fileA.createdTime),
   )
   return copies
 }
@@ -294,11 +295,9 @@ export function finishSetup(): boolean {
  * than `destVersion`. Ignores the creator's PUBLIC_ file and trashed files.
  */
 export function detectPreviousVersion(destVersion: string): string | null {
-  const fileIterator = DriveApp.searchFiles(
-    "title contains 'Offline RogueDex' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false",
+  const fileNames = listSpreadsheets("name contains 'Offline RogueDex'").map(
+    (file) => file.name,
   )
-  const fileNames: string[] = []
-  while (fileIterator.hasNext()) fileNames.push(fileIterator.next().getName())
   return newestVersionBelow(fileNames, destVersion)
 }
 
