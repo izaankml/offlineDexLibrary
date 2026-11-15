@@ -85,9 +85,16 @@ function dexSpec(
     trackFrom: 'Fought Flag',
     trackTo: null,
     exclude: ['Fought Count', 'Candy Count', 'Friendship'],
-    // 'Total' is the Egg Move Attributes total (display column AG), the first
-    // column labelled 'Total' right of 'Fought Flag'.
-    increment: ['Caught Count', 'Hatched Count', 'Total', 'Classic Wins'],
+    // 'Total' is the Egg Move Attributes total, the first column labelled
+    // 'Total' right of 'Fought Flag'.
+    increment: [
+      'Caught Count',
+      'Hatched Count',
+      'Last Shiny',
+      'Last New Variant',
+      'Total',
+      'Classic Wins',
+    ],
     color: DEX_HIGHLIGHT_COLOR,
     incrementColor: INCREMENT_HIGHLIGHT_COLOR,
     crossCheck: 'Classic Wins',

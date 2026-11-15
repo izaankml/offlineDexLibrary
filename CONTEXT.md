@@ -74,8 +74,9 @@ Since 2026-08 a tracker is a **spec of header labels, not column numbers**
   dataBlockAnchor: 'Fought Flag', displayAnchor: { kind: 'label', text: 'Fought Flag' },
   trackFrom: 'Fought Flag', trackTo: null,            // through the last labelled column
   exclude: ['Fought Count', 'Candy Count', 'Friendship'],   // auto-calculated, never painted
-  increment: ['Caught Count', 'Hatched Count', 'Total', 'Classic Wins'], // purple: counters
-                                            // 'Total' = Egg Move Attributes total, display AG
+  increment: ['Caught Count', 'Hatched Count', 'Last Shiny', 'Last New Variant',
+              'Total', 'Classic Wins'],     // purple; a label this copy lacks is skipped
+                                            // 'Total' = Egg Move Attributes total
   crossCheck: 'Classic Wins', sortDisplayColumn: 1, ... }
 ```
 

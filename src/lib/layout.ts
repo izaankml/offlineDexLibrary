@@ -39,7 +39,7 @@ export type TrackerSpec = {
   trackTo: string | null
   /** Header labels of tracked columns that must never be highlighted (auto-calculated). */
   exclude: string[]
-  /** Header labels of counter columns that get the increment colour. */
+  /** Header labels of columns that get the increment colour; a label absent from the header is skipped. */
   increment: string[]
   color: string
   incrementColor: string
@@ -189,18 +189,29 @@ export function resolveFromBands(
 
   // exclude/increment name the first column carrying that label in the
   // tracked header row; some labels repeat further right.
-  const firstTrackedColumnLabelled = (label: string): number => {
+  const firstTrackedColumnLabelled = (label: string): number | null => {
     const wantedLabel = normalizeLabel(label)
     for (let column = trackFrom.col; column <= trackToColumn; column++) {
       if (normalizeLabel(headerRow[column - 1]) === wantedLabel) return column
     }
-    throw new Error(
-      `Layout: tracked column "${label}" not found in the header of ${dataSheetName}; update the tracker spec.`,
-    )
+    return null
   }
-  const excludedColumns = new Set(spec.exclude.map(firstTrackedColumnLabelled))
+  const excludedColumns = new Set(
+    spec.exclude.map((label) => {
+      const column = firstTrackedColumnLabelled(label)
+      if (column === null)
+        throw new Error(
+          `Layout: tracked column "${label}" not found in the header of ${dataSheetName}; update the tracker spec.`,
+        )
+      return column
+    }),
+  )
+  // Increment labels only choose a colour, so one missing from this copy's
+  // layout leaves that column in the default colour.
   const incrementColumns = new Set(
-    spec.increment.map(firstTrackedColumnLabelled),
+    spec.increment
+      .map(firstTrackedColumnLabelled)
+      .filter((column) => column !== null),
   )
 
   const labels: Record<number, string> = {}

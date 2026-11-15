@@ -108,6 +108,51 @@ test('dex sheets resolve to the known 6.03 shifts with named exclude/increment c
   )
 })
 
+test('Last Shiny and Last New Variant after Hatched Count get the increment colour', () => {
+  const withLastColumns = (band: string[][]): string[][] => {
+    const labelRowIndex = band.findIndex((row) => row.includes('Hatched Count'))
+    const insertAt = band[labelRowIndex]!.indexOf('Hatched Count') + 1
+    return band.map((row, rowIndex) => [
+      ...row.slice(0, insertAt),
+      ...(rowIndex === labelRowIndex
+        ? ['Last Shiny', 'Last New Variant']
+        : ['', '']),
+      ...row.slice(insertAt),
+    ])
+  }
+  for (const key of ['StarterDex', 'FullDex']) {
+    const trackerSpec = spec(key)
+    const resolved = resolveFromBands(
+      trackerSpec,
+      withLastColumns(HEADERS[trackerSpec.dataSheet]!),
+      withLastColumns(HEADERS[trackerSpec.displaySheet]!),
+    )
+    const colorByDisplayCol = Object.fromEntries(
+      resolved.cells.map((cell) => [cell.displayCol, cell.color]),
+    )
+    assert.equal(colorByDisplayCol[28], '#b4a7d6', `${key} AB Hatched Count`)
+    assert.equal(colorByDisplayCol[29], '#b4a7d6', `${key} AC Last Shiny`)
+    assert.equal(colorByDisplayCol[30], '#b4a7d6', `${key} AD Last New Variant`)
+    assert.equal(colorByDisplayCol[31], '#93c47d', `${key} AE Egg Move 1`)
+    assert.equal(colorByDisplayCol[35], '#b4a7d6', `${key} AI Total`)
+  }
+})
+
+test('a missing exclude label fails loudly', () => {
+  const renamed = HEADERS['STARTER_DEX.data']!.map((row) =>
+    row.map((label) => (label === 'Candy Count' ? 'Candies' : label)),
+  )
+  assert.throws(
+    () =>
+      resolveFromBands(
+        spec('StarterDex'),
+        renamed,
+        HEADERS['Starter DEX Checklist']!,
+      ),
+    /tracked column "Candy Count" not found/,
+  )
+})
+
 test('a creator column insert in the display is absorbed; a renamed anchor fails loudly', () => {
   const display = HEADERS['Starter DEX Checklist']!.map((row) => [
     ...row.slice(0, 3),
