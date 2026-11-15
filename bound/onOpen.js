@@ -13,7 +13,7 @@ function onOpen() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   const directions = ss.getSheetByName('DIRECTIONS')
-  const autoupdate = directions.getRange('D51').getValue()
+  const autoupdate = directions.getRange('D52').getValue()
 
   if (autoupdate) {
     forceUpdate(true)
