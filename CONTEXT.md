@@ -152,9 +152,10 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
    ranges: `Quick Checklist!1:10`, and the tracked formulas `Daily Mode Unlocks!AG3` and
    `Daily Unlock Map!E2:I2`, only to compare with the repo's) and 2 on the destination
    (sheet list + banding + CF rules; the Quick Checklist header,
-   `Daily Mode Unlocks!A1:AG3`, the header rows of the sheets AG3 looks up, and
-   `Daily Unlock Map!E2:I2`). No `openById`, no temp sheets, no `copyTo`. The sheet list
-   comes first because it decides which tracked-formula ranges the second GET asks for.
+   `Daily Mode Unlocks!A1:AG3`, the header rows of the sheets AG3 looks up,
+   `Daily Unlock Map!E2:I2` and `Daily Mode!H2:L6`). No `openById`, no temp sheets, no
+   `copyTo`. The sheet list comes first because it decides which optional ranges the
+   second GET asks for.
 2. **Plan** (`buildPlan`, pure, tested with hand-built API responses): a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
    (Quick Checklist row 10 blank; destination block left of the source's; a header the
@@ -175,6 +176,11 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   the fills cleared.
 - *Hide sheets* hidden in the source; *IV highlight*: replace `= 31` boolean rules on the dex
   checklists with `=TO_TEXT(topLeft)<>"31"` → red, one rule per range, highest index first.
+- *Sheet order*: the destination's tabs follow the source's order. Sheets in both (matched
+  by title) take the source's relative order in the positions such sheets hold in the
+  destination; sheets only in the destination (new creator tabs) keep their position.
+  Each move is an `updateSheetProperties` index change that moves a tab left, since the
+  API counts a rightward move's index before the move.
 - *Unlock map highlight*: two custom-formula rules over the Daily Unlock Map's biome grid
   (E2 to the grid's end), `=REGEXMATCH(E2, "\([A-Z]")` → light green 2 for unlocks at
   index 0 and `=REGEXMATCH(E2, "\[[A-Z]")` → light orange 2 for charm-only cells under it,
@@ -184,7 +190,7 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   marked only when a stat rolls 31 that the starter's owned IVs, `DAILY_MODE.data` AA:AF,
   do not already have), and a bracketed
   one (`[Ability Charm]`, `[Shiny Charm]`) for the charm waves, added by the map's own
-  E2:I2 formulas from the Daily Mode overrides (`G3:G6` and `K3:K6`). A default shiny of a
+  E2:I2 formulas from the Daily Mode charm waves (`G3:G6` and `K3:K6`). A default shiny of a
   species with rare and epic variants (`hasVariants` in `STATIC:data.SPECIES`) reads
   `Default Shiny` with no marker, so the cell is tinted only when another unlock applies;
   every other shiny reads `<variant> (Shiny)`. The capital letter after each bracket keeps
@@ -211,6 +217,14 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
     it differs. Planning throws when a destination cell holds no formula or one that no
     longer lists the same biome column; a destination without the map sheet is skipped
     with a note.
+- *Daily Mode Unlocks filters*: every checkbox in `D2:L2` is checked, so the sheet lists
+  every unlock category. The nine "New …" headers in D1:L1 (`DAILY_UNLOCKS_FILTER_LABELS`)
+  are checked first, and each cell under one must hold a checkbox value; otherwise
+  planning throws. Skipped with a note when all nine are already checked.
+- *Daily Mode overrides*: the values in `H3:H6` and `L3:L6`, the charm wave overrides under
+  the "Override wave numbers" headers in H2 and L2, are cleared (formats kept). Planning
+  throws when either header has moved; a column already empty gets no request, and a
+  destination without Daily Mode is skipped with a note.
 
 Everything is idempotent (re-running on a migrated copy plans no CF change and
 notes what was already done).
@@ -338,10 +352,13 @@ from your previous version, so its content exists only in the sheets.
 | Daily Mode Unlocks `AG3` (map strings, unlock markers) | Repo: `DAILY_UNLOCKS_AG3_FORMULA` in `trackedFormulas.ts` |
 | Daily Unlock Map `E2:I2` (one formula per column, charm lines) | Repo: `unlockMapColumnFormula` in `trackedFormulas.ts` |
 | Daily Unlock Map CF: unlock (green) and charm (orange) rules over E2 onwards | Repo: `UNLOCK_MAP_RULES` in `migrator.ts` |
+| Daily Mode Unlocks `D2:L2`: every filter checkbox checked | Repo: `DAILY_UNLOCKS_FILTER_*` and `planDailyUnlocksFilters` in `migrator.ts` |
+| Daily Mode `H3:H6` and `L3:L6`: charm wave overrides cleared | Repo: `DAILY_MODE_OVERRIDE_*` and `planDailyModeOverrides` in `migrator.ts` |
 | Starter/Full DEX Checklist CF: IVs other than 31 in red, replacing the creator's `= 31` rule | Repo: `DEX_IV_*` and `planDexIvHighlight` in `migrator.ts` |
 | Quick Checklist: title in A1, Ribbons hidden, banding stretched over image column B | Repo: `migrator.ts` |
 | Quick Checklist rows 1–10: formats, row heights, hidden rows, column widths, row 1 and row 10 formulas | Previous sheet |
 | Which sheets are hidden | Previous sheet |
+| Tab order | Previous sheet |
 | Bound script: `OfflineDexBound.js`, `OfflineDexUpload.html`, one line in `onOpen.js` | Repo: `bound/` |
 
 ## Things that took some figuring out

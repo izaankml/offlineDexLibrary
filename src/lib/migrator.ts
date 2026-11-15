@@ -28,6 +28,7 @@ import {
   type GridData,
   type GridRange,
   type Request,
+  type SheetInfo,
   type SheetsClient,
   type SpreadsheetInfo,
   a1,
@@ -155,6 +156,30 @@ export const AG3_LOOKUP_SHEETS: {
   },
 ]
 
+// Daily Mode Unlocks: the checkboxes in D2:L2, under the "New …" headers in
+// D1:L1, choose which unlock categories the sheet lists. All are turned on.
+export const DAILY_UNLOCKS_FILTER_ROW = 2
+export const DAILY_UNLOCKS_FILTER_FIRST_COLUMN = 4 // D
+export const DAILY_UNLOCKS_FILTER_LABELS = [
+  'New Caught',
+  'New Fought',
+  'New Shiny',
+  'New Ability',
+  'New Hidden Ability',
+  'New Nature',
+  'New Form',
+  'New Gender',
+  'New IVs',
+]
+
+// Daily Mode: the charm wave overrides under the "Override wave numbers"
+// headers in H2 and L2. A migrated copy starts with them empty.
+export const DAILY_MODE_SHEET = 'Daily Mode'
+export const DAILY_MODE_OVERRIDE_HEADER = 'Override wave numbers'
+export const DAILY_MODE_OVERRIDE_HEADER_ROW = 2
+export const DAILY_MODE_OVERRIDE_LAST_ROW = 6
+export const DAILY_MODE_OVERRIDE_COLUMNS = [8, 12] // H, L
+
 /** One human-visible migration step and the batchUpdate requests that implement it. */
 export type MigrationOp = { label: string; requests: Request[]; note?: string }
 export type MigrationPlan = {
@@ -273,7 +298,7 @@ export function readSource(
   sourceSpreadsheetId: string,
 ): SourceInfo {
   const meta = client.get(sourceSpreadsheetId, {
-    fields: 'sheets(properties(sheetId,title,hidden,gridProperties))',
+    fields: 'sheets(properties(sheetId,title,index,hidden,gridProperties))',
   })
   // The metadata read comes first: it says which tracked-formula sheets exist.
   // The tracked formulas are read only to compare with the repo's copies.
@@ -315,7 +340,7 @@ export function readDestination(
 ): DestInfo {
   const meta = client.get(destSpreadsheetId, {
     fields:
-      'sheets(properties(sheetId,title,hidden,gridProperties),bandedRanges,conditionalFormats)',
+      'sheets(properties(sheetId,title,index,hidden,gridProperties),bandedRanges,conditionalFormats)',
   })
   const grid = client.get(destSpreadsheetId, {
     ranges: [
@@ -335,11 +360,19 @@ export function readDestination(
       ...(sheetByTitle(meta, UNLOCK_MAP_SHEET)
         ? [sheetRange(UNLOCK_MAP_SHEET, unlockMapFormulaCells())]
         : []),
+      ...(sheetByTitle(meta, DAILY_MODE_SHEET)
+        ? [sheetRange(DAILY_MODE_SHEET, dailyModeOverrideBlock())]
+        : []),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
   })
   return { meta, grid }
+}
+
+/** H2:L6 on Daily Mode: both override headers and the cells under them. */
+function dailyModeOverrideBlock(): string {
+  return `${a1(DAILY_MODE_OVERRIDE_HEADER_ROW, Math.min(...DAILY_MODE_OVERRIDE_COLUMNS))}:${a1(DAILY_MODE_OVERRIDE_LAST_ROW, Math.max(...DAILY_MODE_OVERRIDE_COLUMNS))}`
 }
 
 // ---------------------------------------------------------------------------
@@ -356,9 +389,12 @@ export function buildPlan(
   ops.push(...planQuickChecklist(source, dest, destVersion))
   ops.push(...planQuickChecklistBanding(dest, notes))
   ops.push(...planHiddenSheets(source, dest, notes))
+  ops.push(...planSheetOrder(source, dest, notes))
   ops.push(...planDexIvHighlight(dest, notes))
   ops.push(...planUnlockMapHighlight(dest, notes))
   ops.push(...planDailyUnlocksFormula(source, dest, notes))
+  ops.push(...planDailyUnlocksFilters(dest, notes))
+  ops.push(...planDailyModeOverrides(dest, notes))
   ops.push(...planUnlockMapFormulas(source, dest, notes))
   return { ops, notes }
 }
@@ -800,6 +836,70 @@ export function planHiddenSheets(
   ]
 }
 
+/** A spreadsheet's sheets in tab order. */
+function sheetsInTabOrder(spreadsheet: SpreadsheetInfo): SheetInfo[] {
+  return (spreadsheet.sheets ?? [])
+    .map((sheet, position) => ({
+      sheet,
+      tabIndex: sheet.properties.index ?? position,
+    }))
+    .sort((left, right) => left.tabIndex - right.tabIndex)
+    .map(({ sheet }) => sheet)
+}
+
+/**
+ * Arrange the destination's tabs in the source's order. Sheets in both,
+ * matched by title, take the source's relative order in the positions such
+ * sheets hold in the destination; sheets only in the destination stay put.
+ */
+export function planSheetOrder(
+  source: SourceInfo,
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const destSheets = sheetsInTabOrder(dest.meta)
+  const destSheetsByTitle = new Map(
+    destSheets.map((sheet) => [sheet.properties.title, sheet]),
+  )
+  const sharedInSourceOrder = sheetsInTabOrder(source.meta)
+    .map((sheet) => destSheetsByTitle.get(sheet.properties.title))
+    .filter((sheet) => sheet !== undefined)
+  const shared = new Set(sharedInSourceOrder)
+  let nextShared = 0
+  const targetOrder = destSheets.map((sheet) =>
+    shared.has(sheet) ? sharedInSourceOrder[nextShared++]! : sheet,
+  )
+  // Each sheet moves left into its final position, where the API's
+  // before-the-move index equals the target index.
+  const currentOrder = [...destSheets]
+  const requests: Request[] = []
+  const movedTitles: string[] = []
+  targetOrder.forEach((sheet, targetIndex) => {
+    const currentIndex = currentOrder.indexOf(sheet)
+    if (currentIndex === targetIndex) return
+    currentOrder.splice(currentIndex, 1)
+    currentOrder.splice(targetIndex, 0, sheet)
+    requests.push({
+      updateSheetProperties: {
+        properties: { sheetId: sheet.properties.sheetId, index: targetIndex },
+        fields: 'index',
+      },
+    })
+    movedTitles.push(sheet.properties.title)
+  })
+  if (!requests.length) {
+    notes.push('Sheet order: already matching the previous version')
+    return []
+  }
+  return [
+    {
+      label: 'Sheet order: match the previous version',
+      note: `moved ${movedTitles.join(', ')}`,
+      requests,
+    },
+  ]
+}
+
 /** Replace the "perfect IV" (= 31 → yellow) rules on the dex checklists with "≠ 31 → red" over the same ranges. */
 export function planDexIvHighlight(
   dest: DestInfo,
@@ -1088,6 +1188,154 @@ export function planDailyUnlocksFormula(
           DAILY_UNLOCKS_AG3_FORMULA,
         ),
       ],
+    },
+  ]
+}
+
+/**
+ * Check every Daily Mode Unlocks filter checkbox (D2:L2) in the destination.
+ * Throws when a "New …" header above them is not where expected, or a cell
+ * under one holds no checkbox value.
+ */
+export function planDailyUnlocksFilters(
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const headerRow = DAILY_UNLOCKS_FILTER_ROW - 1
+  const lastColumn =
+    DAILY_UNLOCKS_FILTER_FIRST_COLUMN + DAILY_UNLOCKS_FILTER_LABELS.length - 1
+  const filterRange = `${a1(DAILY_UNLOCKS_FILTER_ROW, DAILY_UNLOCKS_FILTER_FIRST_COLUMN)}:${a1(DAILY_UNLOCKS_FILTER_ROW, lastColumn)}`
+  const destSheet = requireFound(
+    sheetByTitle(dest.grid, DAILY_UNLOCKS_SHEET),
+    `${DAILY_UNLOCKS_SHEET} not found in the destination`,
+  )
+  const destGrid = gridAt(destSheet, 0, 0)
+  const checkedStates = DAILY_UNLOCKS_FILTER_LABELS.map((label, offset) => {
+    const column = DAILY_UNLOCKS_FILTER_FIRST_COLUMN + offset
+    const header = displayText(
+      cellAt(destGrid, headerRow - 1, column - 1),
+    ).trim()
+    if (header !== label)
+      throw new Error(
+        `${DAILY_UNLOCKS_SHEET}: expected "${label}" at ${a1(headerRow, column)} in the destination, found "${header}"; layout changed, ${filterRange} filters not checked`,
+      )
+    const checked = cellAt(destGrid, DAILY_UNLOCKS_FILTER_ROW - 1, column - 1)
+      .userEnteredValue?.boolValue
+    if (checked === undefined)
+      throw new Error(
+        `${DAILY_UNLOCKS_SHEET}: ${a1(DAILY_UNLOCKS_FILTER_ROW, column)} holds no checkbox in the destination; layout changed, ${filterRange} filters not checked`,
+      )
+    return checked
+  })
+  if (checkedStates.every((checked) => checked)) {
+    notes.push(
+      `${DAILY_UNLOCKS_SHEET}: ${filterRange} filters already all checked`,
+    )
+    return []
+  }
+  return [
+    {
+      label: `${DAILY_UNLOCKS_SHEET}: ${filterRange} filters`,
+      note: 'all checked',
+      requests: [
+        {
+          updateCells: {
+            range: {
+              sheetId: destSheet.properties.sheetId,
+              startRowIndex: DAILY_UNLOCKS_FILTER_ROW - 1,
+              endRowIndex: DAILY_UNLOCKS_FILTER_ROW,
+              startColumnIndex: DAILY_UNLOCKS_FILTER_FIRST_COLUMN - 1,
+              endColumnIndex: lastColumn,
+            },
+            rows: [
+              {
+                values: DAILY_UNLOCKS_FILTER_LABELS.map(() => ({
+                  userEnteredValue: { boolValue: true },
+                })),
+              },
+            ],
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+    },
+  ]
+}
+
+/**
+ * Clear the Daily Mode charm wave overrides (H3:H6, L3:L6) in the destination,
+ * keeping their formats. Throws when an "Override wave numbers" header is not
+ * where expected; skipped with a note when the destination has no Daily Mode.
+ */
+export function planDailyModeOverrides(
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const destGridSheet = sheetByTitle(dest.grid, DAILY_MODE_SHEET)
+  if (!destGridSheet) {
+    notes.push(
+      `Daily Mode overrides: "${DAILY_MODE_SHEET}" not found, skipping`,
+    )
+    return []
+  }
+  const firstColumn = Math.min(...DAILY_MODE_OVERRIDE_COLUMNS)
+  const destGrid = gridAt(
+    destGridSheet,
+    DAILY_MODE_OVERRIDE_HEADER_ROW - 1,
+    firstColumn - 1,
+  )
+  const overrideRanges = DAILY_MODE_OVERRIDE_COLUMNS.map(
+    (column) =>
+      `${a1(DAILY_MODE_OVERRIDE_HEADER_ROW + 1, column)}:${a1(DAILY_MODE_OVERRIDE_LAST_ROW, column)}`,
+  )
+  const requests: Request[] = []
+  const clearedRanges: string[] = []
+  DAILY_MODE_OVERRIDE_COLUMNS.forEach((column, columnOffset) => {
+    const header = displayText(cellAt(destGrid, 0, column - firstColumn)).trim()
+    if (header !== DAILY_MODE_OVERRIDE_HEADER)
+      throw new Error(
+        `${DAILY_MODE_SHEET}: expected "${DAILY_MODE_OVERRIDE_HEADER}" at ${a1(DAILY_MODE_OVERRIDE_HEADER_ROW, column)} in the destination, found "${header}"; layout changed, ${overrideRanges.join(' and ')} overrides not cleared`,
+      )
+    let holdsValue = false
+    for (
+      let row = DAILY_MODE_OVERRIDE_HEADER_ROW + 1;
+      row <= DAILY_MODE_OVERRIDE_LAST_ROW;
+      row++
+    ) {
+      const cell = cellAt(
+        destGrid,
+        row - DAILY_MODE_OVERRIDE_HEADER_ROW,
+        column - firstColumn,
+      )
+      if (cell.userEnteredValue !== undefined) holdsValue = true
+    }
+    if (!holdsValue) return
+    // updateCells without rows clears the named fields over the range.
+    requests.push({
+      updateCells: {
+        range: {
+          sheetId: destGridSheet.properties.sheetId,
+          startRowIndex: DAILY_MODE_OVERRIDE_HEADER_ROW,
+          endRowIndex: DAILY_MODE_OVERRIDE_LAST_ROW,
+          startColumnIndex: column - 1,
+          endColumnIndex: column,
+        },
+        fields: 'userEnteredValue',
+      },
+    })
+    clearedRanges.push(overrideRanges[columnOffset]!)
+  })
+  if (!requests.length) {
+    notes.push(
+      `${DAILY_MODE_SHEET}: ${overrideRanges.join(' and ')} overrides already empty`,
+    )
+    return []
+  }
+  return [
+    {
+      label: `${DAILY_MODE_SHEET}: clear wave overrides`,
+      note: clearedRanges.join(', '),
+      requests,
     },
   ]
 }

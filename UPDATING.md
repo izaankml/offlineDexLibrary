@@ -175,7 +175,12 @@ brings it along.)
 - **"A creator baseline for X is already recorded".** You already ran the update for
   this version. If you only need to re-push: `cd bound && clasp push -f`. To redo the
   baseline deliberately: `git branch -f creator creator~1` and re-run.
-- **Daily Mode sheet.** The port leaves it exactly as the creator ships it.
+- **Daily Mode sheet.** The port only clears the charm wave overrides (H3:H6 and L3:L6,
+  under the "Override wave numbers" headers in H2 and L2); everything else stays as the
+  creator ships it. If either header has moved, planning stops and nothing is written.
+- **Daily Mode Unlocks filters.** The port checks every filter checkbox in D2:L2. The
+  nine "New …" headers above them (D1:L1) are checked first; if one has moved, or a cell
+  under one holds no checkbox, planning stops and nothing is written.
 - **Daily Mode Unlocks AG3 and the Daily Unlock Map's E2:I2.** These formulas are
   written from the repo (`src/lib/trackedFormulas.ts`), not copied from your previous
   version. Edit them there and paste the result into your current sheet; an edit made only

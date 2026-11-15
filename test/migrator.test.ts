@@ -3,6 +3,9 @@ import { test } from 'node:test'
 import './fake-gas.ts'
 import {
   AG3_LOOKUP_SHEETS,
+  DAILY_UNLOCKS_FILTER_FIRST_COLUMN,
+  DAILY_UNLOCKS_FILTER_LABELS,
+  DAILY_UNLOCKS_FILTER_ROW,
   DAILY_UNLOCKS_LANDMARKS,
   type DestInfo,
   type SourceInfo,
@@ -10,6 +13,7 @@ import {
   buildPlan,
   describePlan,
   planQuickChecklist,
+  planSheetOrder,
 } from '../src/lib/migrator.ts'
 import {
   DAILY_UNLOCKS_AG3_FORMULA,
@@ -44,6 +48,10 @@ const str = (text: string, format?: CellFormat): CellData => ({
 const num = (value: number): CellData => ({
   userEnteredValue: { numberValue: value },
   formattedValue: String(value),
+})
+const checkbox = (checked: boolean): CellData => ({
+  userEnteredValue: { boolValue: checked },
+  formattedValue: checked ? 'TRUE' : 'FALSE',
 })
 const formula = (formulaText: string, shown = ''): CellData => ({
   userEnteredValue: { formulaValue: formulaText },
@@ -159,15 +167,59 @@ function unlockMapFormulaGrid(
 const creatorMapFormula = (_column: number, biomeColumn: string): string =>
   `=BYROW(${unlockMapBiomeRange(biomeColumn)}, LAMBDA(biome, IF(biome="",, biome)))`
 
-/** Daily Mode Unlocks A1:AG3: the header landmarks in rows 1-2, the map-string formula at AG3. */
-function dailyUnlocksHeaderGrid(agFormula: string): GridData {
+/** The creator's D2:L2 filter checkboxes on Daily Mode Unlocks, some unchecked. */
+const CREATOR_FILTERS = [
+  true,
+  true,
+  false,
+  true,
+  true,
+  false,
+  true,
+  true,
+  false,
+]
+const ALL_FILTERS_CHECKED = DAILY_UNLOCKS_FILTER_LABELS.map(() => true)
+
+/**
+ * Daily Mode Unlocks A1:AG3: the header landmarks in rows 1-2, the filter
+ * headers over their checkboxes in D1:L2, the map-string formula at AG3.
+ */
+function dailyUnlocksHeaderGrid(
+  agFormula: string,
+  filtersChecked: boolean[],
+): GridData {
   const rows: CellData[][] = Array.from({ length: 3 }, () =>
     Array.from({ length: 33 }, () => empty()),
   )
   for (const landmark of DAILY_UNLOCKS_LANDMARKS)
     rows[landmark.row - 1]![landmark.column - 1] = str(landmark.label)
+  DAILY_UNLOCKS_FILTER_LABELS.forEach((label, offset) => {
+    const columnIndex = DAILY_UNLOCKS_FILTER_FIRST_COLUMN - 1 + offset
+    rows[DAILY_UNLOCKS_FILTER_ROW - 2]![columnIndex] = str(label)
+    rows[DAILY_UNLOCKS_FILTER_ROW - 1]![columnIndex] = checkbox(
+      filtersChecked[offset]!,
+    )
+  })
   rows[2]![32] = formula(agFormula)
   return grid(0, 0, rows)
+}
+
+/** Daily Mode H2:L6: the two "Override wave numbers" headers and the waves under them. */
+function dailyModeOverrideGrid(
+  abilityOverrides: CellData[],
+  shinyOverrides: CellData[],
+): GridData {
+  const rows: CellData[][] = Array.from({ length: 5 }, () =>
+    Array.from({ length: 5 }, () => empty()),
+  )
+  rows[0]![0] = str('Override wave numbers') // H2
+  rows[0]![4] = str('Override wave numbers') // L2
+  for (let rowOffset = 0; rowOffset < 4; rowOffset++) {
+    rows[rowOffset + 1]![0] = abilityOverrides[rowOffset] ?? empty()
+    rows[rowOffset + 1]![4] = shinyOverrides[rowOffset] ?? empty()
+  }
+  return grid(1, 7, rows)
 }
 
 function source(): SourceInfo {
@@ -299,12 +351,15 @@ function freshDest(): DestInfo {
         }),
         sheet('Daily Mode Unlocks', 18, {
           columnCount: 40,
-          data: [dailyUnlocksHeaderGrid(CREATOR_AG_FORMULA)],
+          data: [dailyUnlocksHeaderGrid(CREATOR_AG_FORMULA, CREATOR_FILTERS)],
         }),
         ...lookupSheets(),
         sheet('Daily Unlock Map', 17, {
           columnCount: 10,
           data: [unlockMapFormulaGrid(creatorMapFormula)],
+        }),
+        sheet('Daily Mode', 12, {
+          data: [dailyModeOverrideGrid([num(15), empty(), num(42)], [num(23)])],
         }),
       ],
     },
@@ -366,8 +421,24 @@ function migratedDest(): DestInfo {
       format: { backgroundColor: backgroundColor as Record<string, number> },
     },
   }))
-  dest.grid.sheets![1]!.data = [dailyUnlocksHeaderGrid(REQUOTED_AG_FORMULA)]
+  dest.grid.sheets![1]!.data = [
+    dailyUnlocksHeaderGrid(REQUOTED_AG_FORMULA, ALL_FILTERS_CHECKED),
+  ]
   dest.grid.sheets![4]!.data = [unlockMapFormulaGrid(unlockMapColumnFormula)]
+  dest.grid.sheets![5]!.data = [dailyModeOverrideGrid([], [])]
+  // Tabs already in the source's order, with the creator's DEX sheets in place.
+  const tabOrder = [
+    'Quick Checklist',
+    'Daily Mode',
+    'newJSON',
+    'IMPORT:data.SPECIES',
+    'Starter DEX Checklist',
+    'Full DEX Checklist',
+    'Daily Mode Unlocks',
+    'Daily Unlock Map',
+  ]
+  for (const sheetInfo of dest.meta.sheets!)
+    sheetInfo.properties.index = tabOrder.indexOf(sheetInfo.properties.title)
   return dest
 }
 
@@ -379,7 +450,7 @@ const requestsOfKind = (
 
 // ---------------------------------------------------------------------------
 
-test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alone', () => {
+test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode overrides cleared', () => {
   const { ops, notes } = buildPlan(source(), freshDest(), '6.03')
   const labels = ops.map((op) => op.label)
   assert.deepEqual(labels, [
@@ -387,10 +458,13 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alo
     'Quick Checklist title',
     'Quick Checklist banding over the image column',
     'Hide 1 sheet(s)',
+    'Sheet order: match the previous version',
     'Starter DEX Checklist: IV highlight → red when not 31',
     'Full DEX Checklist: IV highlight → red when not 31',
     'Daily Unlock Map: highlight cells with a marker',
     'Daily Mode Unlocks: AG3 formula',
+    'Daily Mode Unlocks: D2:L2 filters',
+    'Daily Mode: clear wave overrides',
     'Daily Unlock Map: column formulas',
   ])
   assert.deepEqual(notes, [])
@@ -423,7 +497,8 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alo
     'each column reads its own biome column and header cell; the wave regex keeps its backslash',
   )
 
-  // Daily Mode Unlocks: the repo's AG3 formula replaces the creator's, nothing else on that sheet.
+  // Daily Mode Unlocks: the repo's AG3 formula replaces the creator's, and
+  // every D2:L2 filter is checked; nothing else on that sheet.
   const unlocksWrites = requestsOfKind(ops, 'updateCells')
     .map(
       (request) =>
@@ -434,7 +509,7 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alo
         },
     )
     .filter((write) => write.range.sheetId === 18)
-  assert.equal(unlocksWrites.length, 1)
+  assert.equal(unlocksWrites.length, 2)
   assert.deepEqual(unlocksWrites[0]!.range, {
     sheetId: 18,
     startRowIndex: 2,
@@ -446,6 +521,18 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alo
   assert.equal(
     unlocksWrites[0]!.rows[0]!.values[0]!.userEnteredValue!.formulaValue,
     DAILY_UNLOCKS_AG3_FORMULA,
+  )
+  assert.deepEqual(unlocksWrites[1]!.range, {
+    sheetId: 18,
+    startRowIndex: 1,
+    endRowIndex: 2,
+    startColumnIndex: 3,
+    endColumnIndex: 12,
+  })
+  assert.equal(unlocksWrites[1]!.fields, 'userEnteredValue')
+  assert.deepEqual(
+    unlocksWrites[1]!.rows[0]!.values.map((cell) => cell.userEnteredValue),
+    Array.from({ length: 9 }, () => ({ boolValue: true })),
   )
 
   // Unlock map: the unlock rule at index 0, the charm rule under it, both over
@@ -634,19 +721,72 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode left alo
   }
   assert.equal(band.bandedRange.range['startColumnIndex'], 1)
   assert.equal(requestsOfKind(ops, 'repeatCell').length, 1)
-  // Daily Mode (sheet 12) stays as the creator ships it.
+  // Daily Mode (sheet 12): only the values of the wave overrides that hold
+  // any are cleared, formats kept; nothing else on that sheet.
+  const dailyModeOp = ops.find(
+    (op) => op.label === 'Daily Mode: clear wave overrides',
+  )!
+  assert.equal(dailyModeOp.note, 'H3:H6, L3:L6')
+  assert.deepEqual(dailyModeOp.requests, [
+    {
+      updateCells: {
+        range: {
+          sheetId: 12,
+          startRowIndex: 2,
+          endRowIndex: 6,
+          startColumnIndex: 7,
+          endColumnIndex: 8,
+        },
+        fields: 'userEnteredValue',
+      },
+    },
+    {
+      updateCells: {
+        range: {
+          sheetId: 12,
+          startRowIndex: 2,
+          endRowIndex: 6,
+          startColumnIndex: 11,
+          endColumnIndex: 12,
+        },
+        fields: 'userEnteredValue',
+      },
+    },
+  ])
   assert.ok(
-    !ops.some((op) => /"sheetId":12\b/.test(JSON.stringify(op.requests))),
-    'no request touches Daily Mode',
+    !ops.some(
+      (op) =>
+        op !== dailyModeOp &&
+        /"sheetId":12\b/.test(JSON.stringify(op.requests)),
+    ),
+    'no other request touches Daily Mode',
   )
   // Hidden sheets: newJSON gets hidden; IMPORT already hidden; _snapshot_ has no counterpart.
-  const hide = requestsOfKind(ops, 'updateSheetProperties')
+  const hide = requestsOfKind(ops, 'updateSheetProperties').filter(
+    (request) =>
+      (request['updateSheetProperties'] as { fields: string }).fields ===
+      'hidden',
+  )
   assert.equal(hide.length, 1)
   assert.equal(
     (hide[0]!['updateSheetProperties'] as { properties: { sheetId: number } })
       .properties.sheetId,
     13,
   )
+  // Sheet order: the source has Daily Mode Unlocks before the map, the fresh
+  // copy after it, so Daily Mode Unlocks moves left one tab.
+  const orderOp = ops.find(
+    (op) => op.label === 'Sheet order: match the previous version',
+  )!
+  assert.equal(orderOp.note, 'moved Daily Mode Unlocks')
+  assert.deepEqual(orderOp.requests, [
+    {
+      updateSheetProperties: {
+        properties: { sheetId: 18, index: 6 },
+        fields: 'index',
+      },
+    },
+  ])
   // IV: Starter rule index 1 (2 ranges) → delete 1 + add 2; Full rule index 0 (1 range) → delete 1 + add 1.
   // The unlock map's own added rule (sheet 17) is checked above.
   assert.equal(requestsOfKind(ops, 'deleteConditionalFormatRule').length, 2)
@@ -746,6 +886,15 @@ test('already-migrated destination: idempotent plan (banding/CF already done)', 
     notes.includes(
       "Daily Unlock Map: E2:I2 formulas already matching the repo's",
     ),
+  )
+  assert.ok(
+    notes.includes('Daily Mode Unlocks: D2:L2 filters already all checked'),
+  )
+  assert.ok(
+    notes.includes('Daily Mode: H3:H6 and L3:L6 overrides already empty'),
+  )
+  assert.ok(
+    notes.includes('Sheet order: already matching the previous version'),
   )
   assert.equal(
     requestsOfKind(ops, 'updateCells').filter((request) =>
@@ -854,6 +1003,109 @@ test('a 6.03 → 6.03 port (same layout, block at F in both) needs no formula sh
   )
 })
 
+/**
+ * Apply index moves the way the Sheets API does: the requested index counts
+ * positions before the move, so a sheet moving right lands one left of it.
+ */
+function applyIndexMoves(order: number[], requests: Request[]): number[] {
+  const result = [...order]
+  for (const request of requests) {
+    const { sheetId, index } = (
+      request['updateSheetProperties'] as {
+        properties: { sheetId: number; index: number }
+      }
+    ).properties
+    const fromIndex = result.indexOf(sheetId)
+    result.splice(fromIndex, 1)
+    result.splice(index > fromIndex ? index - 1 : index, 0, sheetId)
+  }
+  return result
+}
+
+test('sheet order: shared tabs follow the source, tabs only in the new copy stay put', () => {
+  const sheetsTitled = (titles: string[], firstSheetId: number): SheetInfo[] =>
+    titles.map((title, offset) => sheet(title, firstSheetId + offset))
+  const sourceInfo: SourceInfo = {
+    meta: {
+      sheets: sheetsTitled(
+        [
+          'Daily Mode',
+          'Quick Checklist',
+          'Party Checklist',
+          'My Notes',
+          'Full DEX Checklist',
+          'Starter DEX Checklist',
+        ],
+        1,
+      ),
+    },
+    grid: {},
+  }
+  const destSheets = sheetsTitled(
+    [
+      'Quick Checklist',
+      'Starter DEX Checklist',
+      'Full DEX Checklist',
+      'Daily Mode',
+      'Creator New Sheet',
+      'Party Checklist',
+    ],
+    11,
+  )
+  destSheets.forEach((sheetInfo, tabIndex) => {
+    sheetInfo.properties.index = tabIndex
+  })
+  // The API's sheet list order is not relied on; the index property is.
+  const destInfo: DestInfo = {
+    meta: { sheets: [...destSheets].reverse() },
+    grid: {},
+  }
+
+  const { 0: orderOp } = planSheetOrder(sourceInfo, destInfo, [])
+  const titleOf = new Map(
+    destSheets.map((sheetInfo) => [
+      sheetInfo.properties.sheetId,
+      sheetInfo.properties.title,
+    ]),
+  )
+  const finalOrder = applyIndexMoves(
+    destSheets.map((sheetInfo) => sheetInfo.properties.sheetId),
+    orderOp!.requests,
+  ).map((sheetId) => titleOf.get(sheetId))
+  assert.deepEqual(finalOrder, [
+    'Daily Mode',
+    'Quick Checklist',
+    'Party Checklist',
+    'Full DEX Checklist',
+    'Creator New Sheet',
+    'Starter DEX Checklist',
+  ])
+  assert.equal(
+    orderOp!.note,
+    'moved Daily Mode, Party Checklist, Full DEX Checklist, Creator New Sheet',
+  )
+
+  // Planning again on the reordered copy changes nothing.
+  const reorderedSheets = finalOrder.map((title) =>
+    destSheets.find((sheetInfo) => sheetInfo.properties.title === title)!,
+  )
+  reorderedSheets.forEach((sheetInfo, tabIndex) => {
+    sheetInfo.properties.index = tabIndex
+  })
+  const notes: string[] = []
+  assert.deepEqual(
+    planSheetOrder(
+      sourceInfo,
+      { meta: { sheets: reorderedSheets }, grid: {} },
+      notes,
+    ),
+    [],
+  )
+  assert.deepEqual(notes, [
+    'Sheet order: already matching the previous version',
+  ])
+})
+
 test('planning refuses unknown layouts before anything is written', () => {
   const blankRow10 = freshDest()
   blankRow10.grid.sheets![0]!.data![0]!.rowData![9]!.values = Array.from(
@@ -889,6 +1141,42 @@ test('planning refuses unknown layouts before anything is written', () => {
   assert.throws(
     () => buildPlan(source(), noCreatorFormula, '6.03'),
     /AG3 holds no formula in the destination/,
+  )
+
+  // Daily Mode Unlocks filters: a moved "New …" header, or a cell without a
+  // checkbox under one, stops the port.
+  const natureMoved = freshDest()
+  natureMoved.grid.sheets![1]!.data![0]!.rowData![0]!.values![8] =
+    str('New Moves')
+  assert.throws(
+    () => buildPlan(source(), natureMoved, '6.03'),
+    /Daily Mode Unlocks: expected "New Nature" at I1 in the destination, found "New Moves"; layout changed, D2:L2 filters not checked/,
+  )
+  const filterNotCheckbox = freshDest()
+  filterNotCheckbox.grid.sheets![1]!.data![0]!.rowData![1]!.values![11] =
+    str('All')
+  assert.throws(
+    () => buildPlan(source(), filterNotCheckbox, '6.03'),
+    /Daily Mode Unlocks: L2 holds no checkbox in the destination/,
+  )
+
+  // Daily Mode: a moved "Override wave numbers" header stops the port; a
+  // destination without Daily Mode skips the clear with a note.
+  const overrideHeaderMoved = freshDest()
+  overrideHeaderMoved.grid.sheets![5]!.data![0]!.rowData![0]!.values![4] =
+    str('Shiny Charm')
+  assert.throws(
+    () => buildPlan(source(), overrideHeaderMoved, '6.03'),
+    /Daily Mode: expected "Override wave numbers" at L2 in the destination, found "Shiny Charm"; layout changed, H3:H6 and L3:L6 overrides not cleared/,
+  )
+  const withoutDailyMode = freshDest()
+  withoutDailyMode.grid.sheets = withoutDailyMode.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode',
+  )
+  assert.ok(
+    buildPlan(source(), withoutDailyMode, '6.03').notes.includes(
+      'Daily Mode overrides: "Daily Mode" not found, skipping',
+    ),
   )
 
   // The sheets AG3 looks up: a moved header, or a missing sheet, stops the port too.

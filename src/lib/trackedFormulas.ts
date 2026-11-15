@@ -81,8 +81,8 @@ export function unlockMapBiomeRange(biomeColumn: string): string {
 
 /**
  * One Daily Unlock Map cell: the biome name, then every unlock string from
- * Daily Mode Unlocks!AG and every ability/shiny charm override from Daily Mode
- * (G3:G6, K3:K6) whose wave falls in the column's ten waves, sorted by wave and
+ * Daily Mode Unlocks!AG and every ability/shiny charm wave from Daily Mode
+ * (G3:G6, K3:K6) that falls in the column's ten waves, sorted by wave and
  * padded to three lines.
  */
 export function unlockMapColumnFormula(
