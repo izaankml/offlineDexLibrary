@@ -619,10 +619,7 @@ async function doUpdate(args: Args): Promise<void> {
 
   if (!baselineChanged) {
     note(
-      `creator's bound code is identical to the ${previousBaseline ?? 'previous'} baseline; nothing to merge` +
-        (previousBaseline
-          ? ` (they didn't change any of the tracked files between ${previousBaseline} and ${version})`
-          : ''),
+      "creator's bound code is unchanged since the last recorded baseline; nothing to merge",
     )
     if (args.push) claspPush()
     printFinishSetup(scriptInfo?.sheetId ?? null, version)
