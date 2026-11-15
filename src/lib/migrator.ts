@@ -24,7 +24,9 @@ import {
 import { shiftFormulaColumns } from './formulaShift.ts'
 import { finishFlow, startStep } from './progress.ts'
 import {
+  type CellData,
   type ConditionalFormatRule,
+  type ExtendedValue,
   type GridData,
   type GridRange,
   type Request,
@@ -180,6 +182,14 @@ export const DAILY_MODE_OVERRIDE_HEADER_ROW = 2
 export const DAILY_MODE_OVERRIDE_LAST_ROW = 6
 export const DAILY_MODE_OVERRIDE_COLUMNS = [8, 12] // H, L
 
+// Party Checklist: column A holds the Pokémon typed in by hand under the
+// "Pokemon" header in A2, each name in a two-row merge (A3:A4, A5:A6, …);
+// the rest of each row is looked up from it.
+export const PARTY_CHECKLIST_SHEET = 'Party Checklist'
+export const PARTY_CHECKLIST_NAME_HEADER = 'Pokemon'
+export const PARTY_CHECKLIST_HEADER_ROW = 2
+export const PARTY_CHECKLIST_ROWS_PER_NAME = 2
+
 /** One human-visible migration step and the batchUpdate requests that implement it. */
 export type MigrationOp = { label: string; requests: Request[]; note?: string }
 export type MigrationPlan = {
@@ -300,17 +310,25 @@ export function readSource(
   const meta = client.get(sourceSpreadsheetId, {
     fields: 'sheets(properties(sheetId,title,index,hidden,gridProperties))',
   })
-  // The metadata read comes first: it says which tracked-formula sheets exist.
+  // The metadata read comes first: it says which optional sheets exist.
   // The tracked formulas are read only to compare with the repo's copies.
   const grid = client.get(sourceSpreadsheetId, {
     ranges: [
       `'${QUICK_CHECKLIST_SHEET}'!1:${QUICK_CHECKLIST_HEADER_ROWS}`,
       ...trackedFormulaRanges(meta),
+      ...partyChecklistNameRanges(meta),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
   })
   return { meta, grid }
+}
+
+/** The Party Checklist name column from its header down, if `meta` has the sheet. */
+function partyChecklistNameRanges(meta: SpreadsheetInfo): string[] {
+  return sheetByTitle(meta, PARTY_CHECKLIST_SHEET)
+    ? [sheetRange(PARTY_CHECKLIST_SHEET, `A${PARTY_CHECKLIST_HEADER_ROW}:A`)]
+    : []
 }
 
 /** Ranges holding the tracked formulas, on the sheets of `meta` that exist. */
@@ -363,6 +381,7 @@ export function readDestination(
       ...(sheetByTitle(meta, DAILY_MODE_SHEET)
         ? [sheetRange(DAILY_MODE_SHEET, dailyModeOverrideBlock())]
         : []),
+      ...partyChecklistNameRanges(meta),
     ],
     includeGridData: true,
     fields: GRID_FIELDS,
@@ -395,6 +414,7 @@ export function buildPlan(
   ops.push(...planDailyUnlocksFormula(source, dest, notes))
   ops.push(...planDailyUnlocksFilters(dest, notes))
   ops.push(...planDailyModeOverrides(dest, notes))
+  ops.push(...planPartyChecklistNames(source, dest, notes))
   ops.push(...planUnlockMapFormulas(source, dest, notes))
   return { ops, notes }
 }
@@ -1336,6 +1356,143 @@ export function planDailyModeOverrides(
       label: `${DAILY_MODE_SHEET}: clear wave overrides`,
       note: clearedRanges.join(', '),
       requests,
+    },
+  ]
+}
+
+/** Party Checklist column A from the header row down, or null without the sheet. */
+function partyChecklistNameColumn(
+  spreadsheet: SpreadsheetInfo,
+): CellData[] | null {
+  const sheet = sheetByTitle(spreadsheet, PARTY_CHECKLIST_SHEET)
+  if (!sheet) return null
+  const grid = gridAt(sheet, PARTY_CHECKLIST_HEADER_ROW - 1, 0)
+  return (grid?.rowData ?? []).map((row) => row.values?.[0] ?? {})
+}
+
+/** Offset of the last cell holding a value, or -1 when none does. */
+function lastOffsetWithValue(cells: CellData[]): number {
+  for (let offset = cells.length - 1; offset >= 0; offset--)
+    if (cells[offset]!.userEnteredValue !== undefined) return offset
+  return -1
+}
+
+/**
+ * Copy the Party Checklist names (column A from row 3) from the source, so the
+ * destination's column A holds exactly the source's values; formats are kept.
+ * Throws when either "Pokemon" header is not in A2, a value sits in the lower
+ * row of a name's merge on either side, the destination's column holds a
+ * formula, or the source's names run past the destination's rows. Skipped
+ * with a note when either side has no Party Checklist.
+ */
+export function planPartyChecklistNames(
+  source: SourceInfo,
+  dest: DestInfo,
+  notes: string[],
+): MigrationOp[] {
+  const sourceColumn = partyChecklistNameColumn(source.grid)
+  const destColumn = partyChecklistNameColumn(dest.grid)
+  if (!sourceColumn || !destColumn) {
+    notes.push(
+      `Party Checklist names: "${PARTY_CHECKLIST_SHEET}" not found in the ${sourceColumn ? 'destination' : 'source'}, skipping`,
+    )
+    return []
+  }
+  const firstNameRow = PARTY_CHECKLIST_HEADER_ROW + 1
+  const columns = [
+    { cells: sourceColumn, spreadsheetRole: 'source' },
+    { cells: destColumn, spreadsheetRole: 'destination' },
+  ]
+  for (const { cells, spreadsheetRole } of columns) {
+    const header = displayText(cells[0] ?? {}).trim()
+    if (header !== PARTY_CHECKLIST_NAME_HEADER)
+      throw new Error(
+        `${PARTY_CHECKLIST_SHEET}: expected "${PARTY_CHECKLIST_NAME_HEADER}" at A${PARTY_CHECKLIST_HEADER_ROW} in the ${spreadsheetRole}, found "${header}"; layout changed, names not copied`,
+      )
+  }
+  const sourceNames = sourceColumn.slice(1)
+  const destNames = destColumn.slice(1)
+  const destFormulaOffset = destNames.findIndex(
+    (cell) => cell.userEnteredValue?.formulaValue !== undefined,
+  )
+  if (destFormulaOffset >= 0)
+    throw new Error(
+      `${PARTY_CHECKLIST_SHEET}: A${firstNameRow + destFormulaOffset} holds a formula in the destination, so column A is no longer typed in by hand; names not copied`,
+    )
+  // A value off the first row of a merge means the names no longer pair up.
+  for (const { cells, spreadsheetRole } of [
+    { cells: sourceNames, spreadsheetRole: 'source' },
+    { cells: destNames, spreadsheetRole: 'destination' },
+  ]) {
+    const offMergeOffset = cells.findIndex(
+      (cell, offset) =>
+        offset % PARTY_CHECKLIST_ROWS_PER_NAME !== 0 &&
+        cell.userEnteredValue !== undefined,
+    )
+    if (offMergeOffset >= 0)
+      throw new Error(
+        `${PARTY_CHECKLIST_SHEET}: A${firstNameRow + offMergeOffset} holds a value in the ${spreadsheetRole}, but each name fills a ${PARTY_CHECKLIST_ROWS_PER_NAME}-row merge from A${firstNameRow}; layout changed, names not copied`,
+      )
+  }
+  const lastNameOffset = Math.max(
+    lastOffsetWithValue(sourceNames),
+    lastOffsetWithValue(destNames),
+  )
+  // Through the last name's whole merge.
+  const rowsToWrite =
+    lastNameOffset < 0 ? 0 : lastNameOffset + PARTY_CHECKLIST_ROWS_PER_NAME
+  if (rowsToWrite === 0) {
+    notes.push(
+      `${PARTY_CHECKLIST_SHEET}: column A holds no names in either version; nothing to copy`,
+    )
+    return []
+  }
+  const lastRow = firstNameRow + rowsToWrite - 1
+  const destRowCount = sheetByTitle(dest.meta, PARTY_CHECKLIST_SHEET)
+    ?.properties.gridProperties?.rowCount
+  if (destRowCount !== undefined && lastRow > destRowCount)
+    throw new Error(
+      `${PARTY_CHECKLIST_SHEET}: the source's names reach row ${lastRow} but the destination has ${destRowCount} rows; names not copied`,
+    )
+  const values: (ExtendedValue | undefined)[] = Array.from(
+    { length: rowsToWrite },
+    (_, offset) => sourceNames[offset]?.userEnteredValue,
+  )
+  const nameRange = `A${firstNameRow}:A${lastRow}`
+  const alreadyMatching = values.every(
+    (value, offset) =>
+      JSON.stringify(value ?? null) ===
+      JSON.stringify(destNames[offset]?.userEnteredValue ?? null),
+  )
+  if (alreadyMatching) {
+    notes.push(
+      `${PARTY_CHECKLIST_SHEET}: ${nameRange} names already matching the previous version`,
+    )
+    return []
+  }
+  const nameCount = values.filter((value) => value !== undefined).length
+  return [
+    {
+      label: `${PARTY_CHECKLIST_SHEET}: column A names`,
+      note: `${nameRange} from the previous version (${nameCount} names)`,
+      requests: [
+        {
+          updateCells: {
+            range: {
+              sheetId: sheetByTitle(dest.meta, PARTY_CHECKLIST_SHEET)!
+                .properties.sheetId,
+              startRowIndex: firstNameRow - 1,
+              endRowIndex: lastRow,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+            rows: values.map((value) => ({
+              values: [value === undefined ? {} : { userEnteredValue: value }],
+            })),
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
     },
   ]
 }

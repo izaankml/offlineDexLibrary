@@ -222,6 +222,20 @@ function dailyModeOverrideGrid(
   return grid(1, 7, rows)
 }
 
+/** Party Checklist A2 down: the "Pokemon" header, then one cell per row from A3. */
+function partyNameGrid(names: CellData[]): GridData {
+  return grid(1, 0, [[str('Pokemon')], ...names.map((name) => [name])])
+}
+
+/** The previous version's party names; each name is merged over two rows. */
+const SOURCE_PARTY_NAMES = [
+  str('Arceus'),
+  empty(),
+  str('Charcadet'),
+  empty(),
+  str('Mew'),
+]
+
 function source(): SourceInfo {
   return {
     meta: {
@@ -233,6 +247,7 @@ function source(): SourceInfo {
         sheet('_snapshot_QuickChecklist', 5, { hidden: true }),
         sheet('Daily Mode Unlocks', 6, { columnCount: 40 }),
         sheet('Daily Unlock Map', 7, { columnCount: 10 }),
+        sheet('Party Checklist', 8),
       ],
     },
     grid: {
@@ -248,6 +263,9 @@ function source(): SourceInfo {
         sheet('Daily Unlock Map', 7, {
           columnCount: 10,
           data: [unlockMapFormulaGrid(unlockMapColumnFormula)],
+        }),
+        sheet('Party Checklist', 8, {
+          data: [partyNameGrid(SOURCE_PARTY_NAMES)],
         }),
       ],
     },
@@ -341,6 +359,7 @@ function freshDest(): DestInfo {
         }),
         sheet('Daily Unlock Map', 17, { columnCount: 10 }),
         sheet('Daily Mode Unlocks', 18, { columnCount: 40 }),
+        sheet('Party Checklist', 19),
       ],
     },
     grid: {
@@ -360,6 +379,20 @@ function freshDest(): DestInfo {
         }),
         sheet('Daily Mode', 12, {
           data: [dailyModeOverrideGrid([num(15), empty(), num(42)], [num(23)])],
+        }),
+        // The creator's copy ships a sample name further down than ours reach.
+        sheet('Party Checklist', 19, {
+          data: [
+            partyNameGrid([
+              str('Pikachu'),
+              empty(),
+              empty(),
+              empty(),
+              empty(),
+              empty(),
+              str('Eevee'),
+            ]),
+          ],
         }),
       ],
     },
@@ -426,6 +459,7 @@ function migratedDest(): DestInfo {
   ]
   dest.grid.sheets![4]!.data = [unlockMapFormulaGrid(unlockMapColumnFormula)]
   dest.grid.sheets![5]!.data = [dailyModeOverrideGrid([], [])]
+  dest.grid.sheets![6]!.data = [partyNameGrid(SOURCE_PARTY_NAMES)]
   // Tabs already in the source's order, with the creator's DEX sheets in place.
   const tabOrder = [
     'Quick Checklist',
@@ -436,6 +470,7 @@ function migratedDest(): DestInfo {
     'Full DEX Checklist',
     'Daily Mode Unlocks',
     'Daily Unlock Map',
+    'Party Checklist',
   ]
   for (const sheetInfo of dest.meta.sheets!)
     sheetInfo.properties.index = tabOrder.indexOf(sheetInfo.properties.title)
@@ -465,9 +500,41 @@ test('fresh 6.03 copy: block shifted +1, banding/CF handled, Daily Mode override
     'Daily Mode Unlocks: AG3 formula',
     'Daily Mode Unlocks: D2:L2 filters',
     'Daily Mode: clear wave overrides',
+    'Party Checklist: column A names',
     'Daily Unlock Map: column formulas',
   ])
   assert.deepEqual(notes, [])
+
+  // Party Checklist: column A from row 3 takes the source's values, through
+  // the merge of the creator's last sample name (A9:A10), which is cleared.
+  const partyOp = ops.find(
+    (op) => op.label === 'Party Checklist: column A names',
+  )!
+  assert.equal(partyOp.note, 'A3:A10 from the previous version (3 names)')
+  assert.deepEqual(partyOp.requests, [
+    {
+      updateCells: {
+        range: {
+          sheetId: 19,
+          startRowIndex: 2,
+          endRowIndex: 10,
+          startColumnIndex: 0,
+          endColumnIndex: 1,
+        },
+        rows: [
+          { values: [{ userEnteredValue: { stringValue: 'Arceus' } }] },
+          { values: [{}] },
+          { values: [{ userEnteredValue: { stringValue: 'Charcadet' } }] },
+          { values: [{}] },
+          { values: [{ userEnteredValue: { stringValue: 'Mew' } }] },
+          { values: [{}] },
+          { values: [{}] },
+          { values: [{}] },
+        ],
+        fields: 'userEnteredValue',
+      },
+    },
+  ])
 
   // Daily Unlock Map: the repo's formula replaces the creator's in each of E2:I2.
   const mapWrites = requestsOfKind(ops, 'updateCells')
@@ -896,6 +963,11 @@ test('already-migrated destination: idempotent plan (banding/CF already done)', 
   assert.ok(
     notes.includes('Sheet order: already matching the previous version'),
   )
+  assert.ok(
+    notes.includes(
+      'Party Checklist: A3:A8 names already matching the previous version',
+    ),
+  )
   assert.equal(
     requestsOfKind(ops, 'updateCells').filter((request) =>
       [17, 18].includes(
@@ -1169,6 +1241,70 @@ test('planning refuses unknown layouts before anything is written', () => {
     () => buildPlan(source(), overrideHeaderMoved, '6.03'),
     /Daily Mode: expected "Override wave numbers" at L2 in the destination, found "Shiny Charm"; layout changed, H3:H6 and L3:L6 overrides not cleared/,
   )
+  // Party Checklist: a header other than "Pokemon" in A2 on either side, a
+  // value in the lower row of a merge, a formula in the destination's column,
+  // or names past its last row stop the port; a side without the sheet skips
+  // the copy with a note.
+  const partyGridSheet = (info: SourceInfo | DestInfo) =>
+    info.grid.sheets!.find(
+      (sheetInfo) => sheetInfo.properties.title === 'Party Checklist',
+    )!
+  const sourceHeaderRenamed = source()
+  partyGridSheet(sourceHeaderRenamed).data = [
+    grid(1, 0, [[str('Species')], [str('Arceus')]]),
+  ]
+  assert.throws(
+    () => buildPlan(sourceHeaderRenamed, freshDest(), '6.03'),
+    /Party Checklist: expected "Pokemon" at A2 in the source, found "Species"; layout changed, names not copied/,
+  )
+  const destHeaderRenamed = freshDest()
+  partyGridSheet(destHeaderRenamed).data = [grid(1, 0, [[str('Name')]])]
+  assert.throws(
+    () => buildPlan(source(), destHeaderRenamed, '6.03'),
+    /Party Checklist: expected "Pokemon" at A2 in the destination, found "Name"/,
+  )
+  const sourceOffMerge = source()
+  partyGridSheet(sourceOffMerge).data = [
+    partyNameGrid([str('Arceus'), str('Mew')]),
+  ]
+  assert.throws(
+    () => buildPlan(sourceOffMerge, freshDest(), '6.03'),
+    /Party Checklist: A4 holds a value in the source, but each name fills a 2-row merge from A3; layout changed, names not copied/,
+  )
+  const destOffMerge = freshDest()
+  partyGridSheet(destOffMerge).data = [
+    partyNameGrid([empty(), empty(), empty(), str('Pikachu')]),
+  ]
+  assert.throws(
+    () => buildPlan(source(), destOffMerge, '6.03'),
+    /Party Checklist: A6 holds a value in the destination/,
+  )
+  const destNameFormula = freshDest()
+  partyGridSheet(destNameFormula).data = [
+    partyNameGrid([empty(), empty(), formula('=Daily!B2')]),
+  ]
+  assert.throws(
+    () => buildPlan(source(), destNameFormula, '6.03'),
+    /Party Checklist: A5 holds a formula in the destination/,
+  )
+  const destTooShort = freshDest()
+  destTooShort.meta.sheets!.find(
+    (sheetInfo) => sheetInfo.properties.title === 'Party Checklist',
+  )!.properties.gridProperties!.rowCount = 5
+  assert.throws(
+    () => buildPlan(source(), destTooShort, '6.03'),
+    /Party Checklist: the source's names reach row 10 but the destination has 5 rows/,
+  )
+  const sourceWithoutParty = source()
+  sourceWithoutParty.grid.sheets = sourceWithoutParty.grid.sheets!.filter(
+    (sheetInfo) => sheetInfo.properties.title !== 'Party Checklist',
+  )
+  assert.ok(
+    buildPlan(sourceWithoutParty, freshDest(), '6.03').notes.includes(
+      'Party Checklist names: "Party Checklist" not found in the source, skipping',
+    ),
+  )
+
   const withoutDailyMode = freshDest()
   withoutDailyMode.grid.sheets = withoutDailyMode.grid.sheets!.filter(
     (sheetInfo) => sheetInfo.properties.title !== 'Daily Mode',

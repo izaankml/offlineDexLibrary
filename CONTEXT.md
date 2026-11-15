@@ -149,13 +149,13 @@ Ports customizations from an old version of the spreadsheet to a new one. Since 
 is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets API v4):
 
 1. **Read**: 2 GETs on the source (sheet list; formats/formulas of the customized
-   ranges: `Quick Checklist!1:10`, and the tracked formulas `Daily Mode Unlocks!AG3` and
-   `Daily Unlock Map!E2:I2`, only to compare with the repo's) and 2 on the destination
-   (sheet list + banding + CF rules; the Quick Checklist header,
-   `Daily Mode Unlocks!A1:AG3`, the header rows of the sheets AG3 looks up,
-   `Daily Unlock Map!E2:I2` and `Daily Mode!H2:L6`). No `openById`, no temp sheets, no
-   `copyTo`. The sheet list comes first because it decides which optional ranges the
-   second GET asks for.
+   ranges: `Quick Checklist!1:10`, `Party Checklist!A2:A`, and the tracked formulas
+   `Daily Mode Unlocks!AG3` and `Daily Unlock Map!E2:I2`, only to compare with the
+   repo's) and 2 on the destination (sheet list + banding + CF rules; the Quick Checklist
+   header, `Daily Mode Unlocks!A1:AG3`, the header rows of the sheets AG3 looks up,
+   `Daily Unlock Map!E2:I2`, `Daily Mode!H2:L6` and `Party Checklist!A2:A`). No
+   `openById`, no temp sheets, no `copyTo`. The sheet list comes first because it decides
+   which optional ranges the second GET asks for.
 2. **Plan** (`buildPlan`, pure, tested with hand-built API responses): a list of `MigrationOp`s
    (label + batchUpdate requests). Planning **throws** when a landmark doesn't fit
    (Quick Checklist row 10 blank; destination block left of the source's; a header the
@@ -225,6 +225,14 @@ is a **plan, preview, apply** pipeline on the Sheets advanced service (Sheets AP
   the "Override wave numbers" headers in H2 and L2, are cleared (formats kept). Planning
   throws when either header has moved; a column already empty gets no request, and a
   destination without Daily Mode is skipped with a note.
+- *Party Checklist names*: column A from row 3, the Pokémon typed in by hand, one per
+  two-row merge (A3:A4, A5:A6, …; the rest of each row is looked up from it), takes the
+  source's values through the merge of the last name on either side, so leftover
+  destination entries are cleared; formats, including hand highlights, are kept.
+  Planning throws when A2 is not "Pokemon" on either side, a value sits in the lower row
+  of a merge on either side (the names no longer pair up), the destination's column
+  holds a formula, or the source's names run past the destination's last row. Skipped
+  with a note when already matching or when either side has no Party Checklist.
 
 Everything is idempotent (re-running on a migrated copy plans no CF change and
 notes what was already done).
@@ -359,6 +367,7 @@ from your previous version, so its content exists only in the sheets.
 | Quick Checklist rows 1–10: formats, row heights, hidden rows, column widths, row 1 and row 10 formulas | Previous sheet |
 | Which sheets are hidden | Previous sheet |
 | Tab order | Previous sheet |
+| Party Checklist column A: the Pokémon names typed in from A3 | Previous sheet |
 | Bound script: `OfflineDexBound.js`, `OfflineDexUpload.html`, one line in `onOpen.js` | Repo: `bound/` |
 
 ## Things that took some figuring out

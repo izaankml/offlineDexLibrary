@@ -181,6 +181,11 @@ brings it along.)
 - **Daily Mode Unlocks filters.** The port checks every filter checkbox in D2:L2. The
   nine "New …" headers above them (D1:L1) are checked first; if one has moved, or a cell
   under one holds no checkbox, planning stops and nothing is written.
+- **Party Checklist names.** The port copies column A from row 3 (the Pokémon you typed
+  in, one per two-row merge: A3:A4, A5:A6, …) from your previous version, values only,
+  so your highlights there are untouched. If A2 is not "Pokemon" in either version, a
+  value sits in the lower row of a merge, the new copy's column A holds a formula, or
+  your names run past the new copy's last row, planning stops and nothing is written.
 - **Daily Mode Unlocks AG3 and the Daily Unlock Map's E2:I2.** These formulas are
   written from the repo (`src/lib/trackedFormulas.ts`), not copied from your previous
   version. Edit them there and paste the result into your current sheet; an edit made only
